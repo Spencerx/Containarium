@@ -1,32 +1,186 @@
 # Containarium
 
-> SSH Jump Server + LXC Container Platform for Multi-User Development Environments
+Run hundreds of isolated Linux development environments on a single VM.
+Built with LXC, SSH jump hosts, and cloud-native automation.
 
-**Containarium** is a production-ready platform that provides isolated development environments using LXC containers on cloud VMs. It combines infrastructure-as-code (Terraform), type-safe operations (Protobuf + Go), and container efficiency (LXC) to deliver **92% cost savings** compared to traditional VM-per-user approaches.
+🚫 No Kubernetes
+🚫 No VM-per-user
+✅ Just fast, cheap, isolated Linux environments
 
-## 🚀 Key Features
+## Why Containarium?
 
-- **💰 Massive Cost Savings**: 92% reduction in cloud costs vs VM-per-user
-  - Single VM: **$98/month** for 50 users (vs $1,250 traditional)
-  - 3 Servers: **$312/month** for 150 users (vs $3,750 traditional)
-- **⚡ Fast Provisioning**: Create isolated environments in < 60 seconds
-- **📈 Horizontal Scaling**: Deploy multiple jump servers with load balancing
-- **🔒 Strong Isolation**: Unprivileged LXC containers with resource limits
-- **🛡️ Secure Multi-Tenant**: Proxy-only jump server accounts (no shell access)
-  - Separate jump account per user with `/usr/sbin/nologin`
-  - SSH ProxyJump transparency
-  - Automatic account lifecycle management
-- **🐳 Docker Support**: Each container can run Docker containers
-- **☁️ Spot Instances**: 76% cheaper with automatic recovery from termination
-- **💾 Persistent Storage**: Containers survive spot instance restarts
-- **🏗️ Infrastructure as Code**: Deploy with Terraform (GCE ready, AWS coming)
-- **🛠️ Type-Safe**: Protobuf contracts for all operations
-- **📦 Unified Binary**: Single binary for local and remote operations
-  - **Local Mode**: Direct Incus access via Unix socket
-  - **Remote Mode**: gRPC + mTLS from anywhere (CI/CD ready)
-  - **Daemon Mode**: Systemd service for remote management
+Most teams still provision one VM per developer for SSH-based development.
 
-## 📊 Architecture Design
+That approach is:
+
+💸 Expensive
+
+🐢 Slow to provision
+
+🧱 Wasteful (idle CPU, memory, disk)
+
+Containarium replaces that model with multi-tenant system containers (LXC):
+
+One VM → many isolated Linux environments → massive cost savings
+
+In real deployments, this reduces infrastructure costs by up to 90%.
+
+## What It Does
+
+Containarium is a container-based development environment platform that:
+
+- Hosts many isolated Linux environments on a single cloud VM
+- Gives each user SSH access to their own container
+- Uses LXC system containers (not Docker app containers)
+- Keeps containers persistent, even across VM restarts
+- Is managed via a single Go CLI + gRPC
+
+Each container behaves like a lightweight VM:
+
+- Full Linux OS
+- User accounts
+- SSH access
+- Can run Docker, build tools, ML workloads, etc.
+
+## Architecture (High Level)
+
+```
+Developer Laptop
+      |
+      |  ssh (ProxyJump)
+      v
++-------------------+
+|   SSH Jump Host   |  (no shell access)
++-------------------+
+          |
+          v
++----------------------------------+
+|        Cloud VM (Host)            |
+|                                  |
+|  +---------+  +---------+        |
+|  | LXC #1  |  | LXC #2  |  ...   |
+|  | user A  |  | user B  |        |
+|  +---------+  +---------+        |
+|                                  |
+|  ZFS-backed persistent storage   |
++----------------------------------+
+```
+
+## Key Features
+
+🚀 Fast Provisioning
+
+- Create a full Linux environment in seconds
+- No VM boot, no OS installation per user
+
+🔐 Strong Isolation
+
+- Unprivileged LXC containers
+- Separate users, filesystems, and processes
+- SSH jump host prevents direct host access
+
+💾 Persistent Storage
+
+- Containers survive:
+  - VM restarts
+  - Spot/preemptible instance termination
+- Backed by ZFS persistent disks
+
+⚙️ Simple Management
+
+- Single Go binary
+- gRPC-based control plane
+- Terraform for infrastructure provisioning
+
+💰 Cost Efficient
+
+Example (illustrative):
+
+| Setup | Monthly Cost |
+|-------|--------------|
+| 50 VMs (1 per user) | $$$$ |
+| 1 VM + 50 LXC containers | $$ |
+
+## Why LXC (Not Docker, Not Kubernetes)
+
+Containarium uses LXC system containers because:
+
+- Each container runs a full Linux OS
+- Better fit for:
+  - SSH-based workflows
+  - Long-running dev environments
+  - "Feels like a VM" usage
+
+This is not:
+
+- A Kubernetes cluster
+- An application container platform
+- A web IDE
+
+It is intentionally simple.
+
+## Use Cases
+
+👩‍💻 Shared developer environments
+
+🧑‍🎓 Education, bootcamps, workshops
+
+🧪 AI / ML experimentation sandboxes
+
+🧑‍💼 Intern or contractor onboarding
+
+🏢 Cost-sensitive enterprises with SSH workflows
+
+## How It's Different
+
+| Tool | What It Optimizes For |
+|------|----------------------|
+| Kubernetes | Application orchestration |
+| Docker | App packaging |
+| Proxmox | General virtualization |
+| Codespaces | Browser IDEs |
+| Containarium | Cheap, fast, SSH-based dev environments |
+
+## Status
+
+- Actively used internally
+- Early-stage open source
+- APIs and CLI may evolve
+- Contributions and feedback welcome
+
+## Getting Started
+
+⚠️ Currently optimized for Linux hosts and cloud VMs.
+
+1. Provision infrastructure with Terraform
+2. Install Containarium CLI
+3. Create LXC containers
+4. Assign users
+5. Connect via SSH
+
+👉 See `docs/` for detailed setup instructions.
+
+## Philosophy
+
+Containarium follows the same principle as Footprint-AI's platform:
+
+**Do more with less compute.**
+
+- Less idle.
+- Less waste.
+- Less cost.
+
+## License
+
+Apache 2.0
+
+## About Footprint-AI
+
+Containarium is an open-source project by Footprint-AI, focused on resource-efficient computing for modern development and AI workloads.
+
+---
+
+## 📊 Detailed Architecture Design
 
 ### Overview
 
@@ -1854,16 +2008,32 @@ terraform apply
 
 ## 🗺️ Roadmap
 
-- [x] **Phase 1**: Protobuf contracts
-- [x] **Phase 2**: Go CLI framework
-- [x] **Phase 3**: Terraform GCE deployment
-- [x] **Phase 4**: Spot instances + persistent disk
-- [x] **Phase 5**: Horizontal scaling with load balancer
-- [ ] **Phase 6**: Container management implementation (Incus integration)
-- [ ] **Phase 7**: End-to-end testing
-- [ ] **Phase 8**: AWS support
-- [ ] **Phase 9**: Web UI dashboard
-- [ ] **Phase 10**: gRPC API for automation
+### Completed
+
+- [x] **Phase 1**: Protobuf contracts - Type-safe gRPC contracts for container operations
+- [x] **Phase 2**: Go CLI framework - Full-featured CLI with create, delete, list, info, resize commands
+- [x] **Phase 3**: Terraform GCE deployment - Single-server and horizontal scaling configurations
+- [x] **Phase 4**: Spot instances + persistent disk - ZFS-backed storage surviving spot termination
+- [x] **Phase 5**: Horizontal scaling with load balancer - Multi-server SSH load balancing
+- [x] **Phase 6**: Container management (Incus integration) - Complete LXC container lifecycle management
+- [x] **Phase 7**: End-to-end testing - Terraform-based E2E tests with ZFS persistence validation
+- [x] **Phase 8**: gRPC daemon with mTLS - Remote container management with mutual TLS authentication
+- [x] **Phase 9**: Secure multi-tenant architecture - Proxy-only jump server accounts, per-user isolation
+- [x] **Phase 10**: Production deployment guides - Complete documentation for production deployments
+
+### In Progress
+
+- [ ] **Phase 11**: Monitoring & observability - Metrics, alerts, and dashboards for production systems
+- [ ] **Phase 12**: Automated backup & disaster recovery - Scheduled snapshots and recovery procedures
+
+### Planned
+
+- [ ] **Phase 13**: AWS support - Terraform modules for AWS EC2 deployment
+- [ ] **Phase 14**: Azure support - Terraform modules for Azure VM deployment
+- [ ] **Phase 15**: Web UI dashboard - Browser-based container management interface
+- [ ] **Phase 16**: Container templates - Pre-configured environments (ML, web dev, data science)
+- [ ] **Phase 17**: Resource usage analytics - Per-user and per-container cost tracking
+- [ ] **Phase 18**: Auto-scaling - Dynamic server provisioning based on demand
 
 ## 🎯 Production Features
 
