@@ -27,7 +27,7 @@ variable "machine_type" {
   default     = "n2-standard-8" # 8 vCPU, 32GB RAM - can host 50+ containers
 
   validation {
-    condition     = can(regex("^(n2|n2d|e2|n1)-(standard|highmem|highcpu)-[0-9]+$", var.machine_type))
+    condition     = can(regex("^(n2|n2d|e2|n1|c4)-(standard|highmem|highcpu)-[0-9]+$", var.machine_type))
     error_message = "Must be a valid GCE machine type"
   }
 }
@@ -55,8 +55,8 @@ variable "boot_disk_type" {
   default     = "pd-balanced" # Good balance of price/performance
 
   validation {
-    condition     = contains(["pd-standard", "pd-balanced", "pd-ssd"], var.boot_disk_type)
-    error_message = "Boot disk type must be pd-standard, pd-balanced, or pd-ssd"
+    condition     = contains(["pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced", "hyperdisk-throughput"], var.boot_disk_type)
+    error_message = "Boot disk type must be pd-standard, pd-balanced, pd-ssd, hyperdisk-balanced, or hyperdisk-throughput"
   }
 }
 
@@ -154,8 +154,8 @@ variable "data_disk_type" {
   default     = "pd-balanced"
 
   validation {
-    condition     = contains(["pd-standard", "pd-balanced", "pd-ssd"], var.data_disk_type)
-    error_message = "Data disk type must be pd-standard, pd-balanced, or pd-ssd"
+    condition     = contains(["pd-standard", "pd-balanced", "pd-ssd", "hyperdisk-balanced", "hyperdisk-throughput"], var.data_disk_type)
+    error_message = "Data disk type must be pd-standard, pd-balanced, pd-ssd, hyperdisk-balanced, or hyperdisk-throughput"
   }
 }
 
