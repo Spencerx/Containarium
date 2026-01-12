@@ -4,38 +4,174 @@ package containarium.v1;
 
 import "containarium/v1/container.proto";
 import "containarium/v1/config.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
 
-option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;continariumv1";
+option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "Containarium API";
+    version: "1.0";
+    description: "Container management API for LXC-based development environments. Provides both gRPC and REST interfaces for managing containers, SSH keys, and system resources.";
+    contact: {
+      name: "Containarium";
+      url: "https://github.com/footprintai/containarium";
+    };
+    license: {
+      name: "Apache 2.0";
+      url: "https://github.com/footprintai/containarium/blob/main/LICENSE";
+    };
+  };
+  schemes: HTTPS;
+  schemes: HTTP;
+  consumes: "application/json";
+  produces: "application/json";
+  security_definitions: {
+    security: {
+      key: "bearer";
+      value: {
+        type: TYPE_API_KEY;
+        in: IN_HEADER;
+        name: "Authorization";
+        description: "Bearer token authentication. Format: 'Bearer <token>'";
+      }
+    }
+  };
+  security: {
+    security_requirement: {
+      key: "bearer";
+      value: {};
+    }
+  };
+};
 
 // ContainerService provides container management operations
 service ContainerService {
   // CreateContainer creates a new container for a user
-  rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse);
+  rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Create a new container";
+      description: "Creates a new LXC container with specified resources and configuration. The container will be started automatically after creation.";
+      tags: "Containers";
+    };
+  }
 
   // ListContainers lists all containers with optional filtering
-  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse) {
+    option (google.api.http) = {
+      get: "/v1/containers"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List all containers";
+      description: "Returns a list of containers with optional filtering by state, username, or labels. Use query parameters to filter results.";
+      tags: "Containers";
+    };
+  }
 
   // GetContainer gets detailed information about a specific container
-  rpc GetContainer(GetContainerRequest) returns (GetContainerResponse);
+  rpc GetContainer(GetContainerRequest) returns (GetContainerResponse) {
+    option (google.api.http) = {
+      get: "/v1/containers/{username}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get container details";
+      description: "Returns detailed information about a specific container including state, resources, network info, and current metrics.";
+      tags: "Containers";
+    };
+  }
 
   // DeleteContainer deletes a container
-  rpc DeleteContainer(DeleteContainerRequest) returns (DeleteContainerResponse);
+  rpc DeleteContainer(DeleteContainerRequest) returns (DeleteContainerResponse) {
+    option (google.api.http) = {
+      delete: "/v1/containers/{username}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Delete a container";
+      description: "Permanently deletes a container. Use force=true query parameter to delete running containers.";
+      tags: "Containers";
+    };
+  }
 
   // StartContainer starts a stopped container
-  rpc StartContainer(StartContainerRequest) returns (StartContainerResponse);
+  rpc StartContainer(StartContainerRequest) returns (StartContainerResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers/{username}/start"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Start a container";
+      description: "Starts a stopped container. The container must exist and be in STOPPED state.";
+      tags: "Container Operations";
+    };
+  }
 
   // StopContainer stops a running container
-  rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+  rpc StopContainer(StopContainerRequest) returns (StopContainerResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers/{username}/stop"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Stop a container";
+      description: "Gracefully stops a running container with optional timeout and force parameters. The container can be started again later.";
+      tags: "Container Operations";
+    };
+  }
 
   // AddSSHKey adds an SSH public key to a container
-  rpc AddSSHKey(AddSSHKeyRequest) returns (AddSSHKeyResponse);
+  rpc AddSSHKey(AddSSHKeyRequest) returns (AddSSHKeyResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers/{username}/ssh-keys"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Add SSH key";
+      description: "Adds an SSH public key to a container's authorized_keys file, allowing SSH access with the corresponding private key.";
+      tags: "SSH Management";
+    };
+  }
 
   // RemoveSSHKey removes an SSH public key from a container
-  rpc RemoveSSHKey(RemoveSSHKeyRequest) returns (RemoveSSHKeyResponse);
+  rpc RemoveSSHKey(RemoveSSHKeyRequest) returns (RemoveSSHKeyResponse) {
+    option (google.api.http) = {
+      delete: "/v1/containers/{username}/ssh-keys/{ssh_public_key}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Remove SSH key";
+      description: "Removes an SSH public key from a container's authorized_keys file, revoking SSH access for that key. The ssh_public_key should be URL-encoded.";
+      tags: "SSH Management";
+    };
+  }
 
   // GetMetrics gets runtime metrics for containers
-  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {
+    option (google.api.http) = {
+      get: "/v1/metrics"
+      additional_bindings {
+        get: "/v1/metrics/{username}"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get container metrics";
+      description: "Returns runtime metrics (CPU, memory, disk, network usage) for containers. Specify username to get metrics for a specific container, or omit to get all containers.";
+      tags: "Monitoring";
+    };
+  }
 
   // GetSystemInfo gets information about the Incus host
-  rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
+  rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse) {
+    option (google.api.http) = {
+      get: "/v1/system/info"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get system information";
+      description: "Returns information about the host system including Incus version, available resources, and container counts.";
+      tags: "System";
+    };
+  }
 }

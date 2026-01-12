@@ -472,3 +472,9 @@ func (m *Manager) Resize(containerName, cpu, memory, disk string, verbose bool) 
 func (m *Manager) GetInfo(containerName string) (*incus.ContainerInfo, error) {
 	return m.incus.GetContainer(containerName)
 }
+
+// ContainerExists checks if a container exists
+func (m *Manager) ContainerExists(containerName string) bool {
+	_, err := m.incus.GetContainer(containerName)
+	return err == nil
+}

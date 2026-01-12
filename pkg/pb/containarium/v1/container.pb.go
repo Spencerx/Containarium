@@ -245,7 +245,7 @@ type Container struct {
 	UpdatedAt int64 `protobuf:"varint,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	// Custom labels for categorization and metadata
 	Labels map[string]string `protobuf:"bytes,9,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Image used to create the container (e.g., "ubuntu:24.04")
+	// Image used to create the container (e.g., "images:ubuntu/24.04")
 	Image string `protobuf:"bytes,10,opt,name=image,proto3" json:"image,omitempty"`
 	// Whether Docker support is enabled (nesting)
 	DockerEnabled bool `protobuf:"varint,11,opt,name=docker_enabled,json=dockerEnabled,proto3" json:"docker_enabled,omitempty"`
@@ -489,7 +489,7 @@ type CreateContainerRequest struct {
 	SshKeys []string `protobuf:"bytes,3,rep,name=ssh_keys,json=sshKeys,proto3" json:"ssh_keys,omitempty"`
 	// Custom labels (optional)
 	Labels map[string]string `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Container image to use (optional, defaults to ubuntu:24.04)
+	// Container image to use (optional, defaults to images:ubuntu/24.04)
 	Image string `protobuf:"bytes,5,opt,name=image,proto3" json:"image,omitempty"`
 	// Enable Docker support (optional, defaults to true)
 	EnableDocker  bool `protobuf:"varint,6,opt,name=enable_docker,json=enableDocker,proto3" json:"enable_docker,omitempty"`
@@ -1634,8 +1634,7 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"\x18CONTAINER_STATE_CREATING\x10\x04\x1a\f\x8a\xb5\x18\bCreating\x12$\n" +
 	"\x15CONTAINER_STATE_ERROR\x10\x05\x1a\t\x8a\xb5\x18\x05Error:B\n" +
 	"\n" +
-	"state_name\x12!.google.protobuf.EnumValueOptions\x18ц\x03 \x01(\tR\tstateNameB\xcd\x01\n" +
-	"\x13com.containarium.v1B\x0eContainerProtoP\x01ZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1\xa2\x02\x03CXX\xaa\x02\x0fContainarium.V1\xca\x02\x0fContainarium\\V1\xe2\x02\x1bContainarium\\V1\\GPBMetadata\xea\x02\x10Containarium::V1b\x06proto3"
+	"state_name\x12!.google.protobuf.EnumValueOptions\x18ц\x03 \x01(\tR\tstateNameBKZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1b\x06proto3"
 
 var (
 	file_containarium_v1_container_proto_rawDescOnce sync.Once

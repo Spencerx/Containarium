@@ -1,59 +1,65 @@
 package cmd
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/mtls"
 	"github.com/footprintai/containarium/internal/server"
-	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
 var (
-	daemonAddress    string
-	daemonPort       int
-	enableMTLS       bool
-	daemonCertsDir   string
+	daemonAddress  string
+	daemonPort     int
+	daemonHTTPPort int
+	enableMTLS     bool
+	enableREST     bool
+	daemonCertsDir string
+	jwtSecret      string
+	jwtSecretFile  string
+	swaggerDir     string
 )
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Run Containarium as a gRPC daemon service",
-	Long: `Start the Containarium gRPC API server for remote management.
+	Short: "Run Containarium as a dual-protocol daemon service (gRPC + REST)",
+	Long: `Start the Containarium daemon with both gRPC and REST/HTTP APIs for container management.
 
-The daemon provides a gRPC API that allows remote clients to manage containers
-without needing SSH access to the jump server. This enables:
-  - Remote container management from your laptop
-  - API access for automation and scripting
-  - Foundation for a Web UI
-  - Multi-server management from a single client
-
-The daemon runs on each jump server and listens for gRPC connections.
+The daemon provides both gRPC and REST APIs for maximum flexibility:
+  - gRPC API for high-performance programmatic access (mTLS authentication)
+  - REST/HTTP API for web clients and easy integration (Bearer token authentication)
+  - Interactive Swagger UI for API exploration and testing
+  - OpenAPI spec generation for client code generation
 
 Security:
-  By default, the daemon uses mutual TLS (mTLS) for authentication. Certificates
-  must be generated first using 'containarium cert generate'.
+  - gRPC: Uses mutual TLS (mTLS) for certificate-based authentication
+  - REST: Uses Bearer tokens (JWT) for HTTP authentication
+  - Both protocols can run simultaneously on different ports
 
 Examples:
-  # Run daemon with mTLS (recommended)
-  containarium daemon --mtls
+  # Run with both gRPC and REST APIs
+  containarium daemon --mtls --rest --jwt-secret your-secret-key
 
-  # Run daemon without mTLS (insecure, for testing only)
-  containarium daemon
+  # Run gRPC only (original behavior)
+  containarium daemon --mtls --rest=false
 
-  # Run on specific address and port
-  containarium daemon --address 0.0.0.0 --port 50051 --mtls
+  # Run REST only (development)
+  containarium daemon --rest --jwt-secret dev-secret
 
-  # Use custom certificate directory
-  containarium daemon --mtls --certs-dir /custom/path/certs
+  # Use JWT secret from file
+  containarium daemon --mtls --rest --jwt-secret-file /etc/containarium/jwt.secret
+
+  # Custom ports
+  containarium daemon --port 50051 --http-port 8080 --rest --jwt-secret secret
 
   # Run as systemd service (recommended for production)
   sudo systemctl start containarium`,
@@ -63,10 +69,22 @@ Examples:
 func init() {
 	rootCmd.AddCommand(daemonCmd)
 
+	// gRPC settings
 	daemonCmd.Flags().StringVar(&daemonAddress, "address", "0.0.0.0", "Address to listen on")
-	daemonCmd.Flags().IntVar(&daemonPort, "port", 50051, "Port to listen on")
-	daemonCmd.Flags().BoolVar(&enableMTLS, "mtls", false, "Enable mutual TLS authentication (recommended)")
+	daemonCmd.Flags().IntVar(&daemonPort, "port", 50051, "gRPC port to listen on")
+	daemonCmd.Flags().BoolVar(&enableMTLS, "mtls", false, "Enable mutual TLS authentication for gRPC (recommended)")
 	daemonCmd.Flags().StringVar(&daemonCertsDir, "certs-dir", mtls.DefaultCertsDir, "Directory containing TLS certificates")
+
+	// HTTP/REST settings
+	daemonCmd.Flags().IntVar(&daemonHTTPPort, "http-port", 8080, "HTTP/REST port to listen on")
+	daemonCmd.Flags().BoolVar(&enableREST, "rest", true, "Enable HTTP/REST API gateway")
+
+	// Authentication settings
+	daemonCmd.Flags().StringVar(&jwtSecret, "jwt-secret", "", "JWT secret key for REST API authentication")
+	daemonCmd.Flags().StringVar(&jwtSecretFile, "jwt-secret-file", "", "Path to file containing JWT secret key")
+
+	// Swagger/OpenAPI settings
+	daemonCmd.Flags().StringVar(&swaggerDir, "swagger-dir", "api/swagger", "Directory containing Swagger/OpenAPI files")
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
@@ -89,76 +107,109 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create listen address
-	listenAddr := fmt.Sprintf("%s:%d", daemonAddress, daemonPort)
-
-	// Create TCP listener
-	lis, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
-	}
-
-	// Create gRPC server with optional mTLS
-	var grpcServer *grpc.Server
-	if enableMTLS {
-		// Load TLS credentials
-		certPaths := mtls.CertPathsFromDir(daemonCertsDir)
-
-		// Check if certificates exist
-		if !mtls.CertsExist(certPaths) {
-			return fmt.Errorf("TLS certificates not found in %s. Generate them first with: containarium cert generate", daemonCertsDir)
+	// Load or generate JWT secret if REST is enabled
+	var finalJWTSecret string
+	var isRandomSecret bool
+	if enableREST {
+		// Priority 1: Environment variable (silent - production use)
+		if envSecret := os.Getenv("CONTAINARIUM_JWT_SECRET"); envSecret != "" {
+			finalJWTSecret = envSecret
+			log.Printf("Using JWT secret from CONTAINARIUM_JWT_SECRET environment variable")
+		} else if jwtSecretFile != "" {
+			// Priority 2: Secret file (production use)
+			secretBytes, err := os.ReadFile(jwtSecretFile)
+			if err != nil {
+				return fmt.Errorf("failed to read JWT secret file %s: %w", jwtSecretFile, err)
+			}
+			finalJWTSecret = strings.TrimSpace(string(secretBytes))
+			log.Printf("Loaded JWT secret from file: %s", jwtSecretFile)
+		} else if jwtSecret != "" {
+			// Priority 3: Command-line flag (testing use)
+			finalJWTSecret = jwtSecret
+			log.Printf("Using JWT secret from --jwt-secret flag")
+		} else {
+			// Priority 4: Generate random (development use)
+			finalJWTSecret = generateRandomSecret()
+			isRandomSecret = true
 		}
-
-		// Load server credentials
-		creds, err := mtls.LoadServerCredentials(certPaths)
-		if err != nil {
-			return fmt.Errorf("failed to load TLS credentials: %w", err)
-		}
-
-		// Create gRPC server with mTLS
-		grpcServer = grpc.NewServer(grpc.Creds(creds))
-		log.Printf("mTLS enabled - client certificate authentication required")
-	} else {
-		// Create insecure gRPC server (not recommended for production)
-		grpcServer = grpc.NewServer()
-		log.Printf("WARNING: mTLS disabled - daemon running in INSECURE mode")
-		log.Printf("WARNING: Anyone can connect to the daemon without authentication")
-		log.Printf("WARNING: Enable mTLS with --mtls flag for production use")
 	}
 
-	// Create and register container service
-	containerServer, err := server.NewContainerServer()
+	// Create dual server config
+	config := &server.DualServerConfig{
+		GRPCAddress: daemonAddress,
+		GRPCPort:    daemonPort,
+		EnableMTLS:  enableMTLS,
+		CertsDir:    daemonCertsDir,
+		HTTPPort:    daemonHTTPPort,
+		EnableREST:  enableREST,
+		JWTSecret:   finalJWTSecret,
+		SwaggerDir:  swaggerDir,
+	}
+
+	// Create dual server
+	dualServer, err := server.NewDualServer(config)
 	if err != nil {
-		return fmt.Errorf("failed to create container server: %w", err)
+		return fmt.Errorf("failed to create server: %w", err)
 	}
-	pb.RegisterContainerServiceServer(grpcServer, containerServer)
 
-	// Register reflection service (useful for grpcurl and debugging)
-	reflection.Register(grpcServer)
+	// Setup graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start server in goroutine
-	errChan := make(chan error, 1)
 	go func() {
-		log.Printf("Containarium daemon starting on %s", listenAddr)
-		log.Printf("gRPC reflection enabled for debugging")
-		log.Printf("Press Ctrl+C to stop")
-		if err := grpcServer.Serve(lis); err != nil {
-			errChan <- fmt.Errorf("failed to serve: %w", err)
-		}
+		<-sigChan
+		log.Println("\nReceived shutdown signal")
+		cancel()
 	}()
 
-	// Wait for signal or error
-	select {
-	case <-sigChan:
-		log.Println("\nReceived shutdown signal, stopping gracefully...")
-		grpcServer.GracefulStop()
-		log.Println("Daemon stopped")
-		return nil
-	case err := <-errChan:
-		return err
+	// Start servers
+	log.Printf("Containarium daemon starting...")
+	log.Printf("  gRPC: %s:%d", daemonAddress, daemonPort)
+	if enableMTLS {
+		log.Printf("  gRPC authentication: mTLS (certificate-based)")
+	} else {
+		log.Printf("  gRPC authentication: INSECURE (no authentication)")
 	}
+	if enableREST {
+		log.Printf("  HTTP/REST: %s:%d", daemonAddress, daemonHTTPPort)
+		log.Printf("  REST authentication: Bearer tokens (JWT)")
+		log.Printf("  Swagger UI: http://localhost:%d/swagger-ui/", daemonHTTPPort)
+		log.Printf("  OpenAPI spec: http://localhost:%d/swagger.json", daemonHTTPPort)
+
+		// If using random secret, print it prominently for easy token generation
+		if isRandomSecret {
+			log.Printf("")
+			log.Printf("═══════════════════════════════════════════════════════════════")
+			log.Printf("  🔐 JWT Secret (Auto-Generated)")
+			log.Printf("═══════════════════════════════════════════════════════════════")
+			log.Printf("")
+			log.Printf("  %s", finalJWTSecret)
+			log.Printf("")
+			log.Printf("⚠️  This secret is random and temporary!")
+			log.Printf("   • Tokens will be invalid after daemon restart")
+			log.Printf("   • For production, use one of these methods:")
+			log.Printf("     - Environment: export CONTAINARIUM_JWT_SECRET='your-secret'")
+			log.Printf("     - File: --jwt-secret-file /etc/containarium/jwt.secret")
+			log.Printf("     - Flag: --jwt-secret 'your-secret'")
+			log.Printf("")
+			log.Printf("Generate a token:")
+			log.Printf("  containarium token generate --username admin --secret '%s'", finalJWTSecret)
+			log.Printf("")
+			log.Printf("═══════════════════════════════════════════════════════════════")
+			log.Printf("")
+		}
+	}
+	log.Printf("Press Ctrl+C to stop")
+
+	return dualServer.Start(ctx)
+}
+
+// generateRandomSecret generates a random secret for development mode
+func generateRandomSecret() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.StdEncoding.EncodeToString(b)
 }

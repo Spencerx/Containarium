@@ -949,8 +949,7 @@ const file_containarium_v1_config_proto_rawDesc = "" +
 	"\x0euptime_seconds\x18\r \x01(\x03R\ruptimeSeconds\"\x16\n" +
 	"\x14GetSystemInfoRequest\"H\n" +
 	"\x15GetSystemInfoResponse\x12/\n" +
-	"\x04info\x18\x01 \x01(\v2\x1b.containarium.v1.SystemInfoR\x04infoB\xca\x01\n" +
-	"\x13com.containarium.v1B\vConfigProtoP\x01ZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1\xa2\x02\x03CXX\xaa\x02\x0fContainarium.V1\xca\x02\x0fContainarium\\V1\xe2\x02\x1bContainarium\\V1\\GPBMetadata\xea\x02\x10Containarium::V1b\x06proto3"
+	"\x04info\x18\x01 \x01(\v2\x1b.containarium.v1.SystemInfoR\x04infoBKZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1b\x06proto3"
 
 var (
 	file_containarium_v1_config_proto_rawDescOnce sync.Once

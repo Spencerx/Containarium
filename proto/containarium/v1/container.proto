@@ -4,7 +4,7 @@ package containarium.v1;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;continariumv1";
+option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1";
 
 // Custom option to attach string names to enum values
 extend google.protobuf.EnumValueOptions {
@@ -88,7 +88,7 @@ message Container {
   // Custom labels for categorization and metadata
   map<string, string> labels = 9;
 
-  // Image used to create the container (e.g., "ubuntu:24.04")
+  // Image used to create the container (e.g., "images:ubuntu/24.04")
   string image = 10;
 
   // Whether Docker support is enabled (nesting)
@@ -139,7 +139,7 @@ message CreateContainerRequest {
   // Custom labels (optional)
   map<string, string> labels = 4;
 
-  // Container image to use (optional, defaults to ubuntu:24.04)
+  // Container image to use (optional, defaults to images:ubuntu/24.04)
   string image = 5;
 
   // Enable Docker support (optional, defaults to true)

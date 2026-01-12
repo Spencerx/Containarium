@@ -49,7 +49,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 
 	// Use defaults if not specified
 	if opts.Image == "" {
-		opts.Image = "ubuntu:24.04"
+		opts.Image = "images:ubuntu/24.04"
 	}
 	if opts.CPU == "" {
 		opts.CPU = "4"
