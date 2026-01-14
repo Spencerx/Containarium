@@ -1,0 +1,929 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Containarium API",
+    "description": "Container management API for LXC-based development environments. Provides both gRPC and REST interfaces for managing containers, SSH keys, and system resources.",
+    "version": "1.0",
+    "contact": {
+      "name": "Containarium",
+      "url": "https://github.com/footprintai/containarium"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://github.com/footprintai/containarium/blob/main/LICENSE"
+    }
+  },
+  "tags": [
+    {
+      "name": "ContainerService"
+    }
+  ],
+  "schemes": [
+    "https",
+    "http"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/containers": {
+      "get": {
+        "summary": "List all containers",
+        "description": "Returns a list of containers with optional filtering by state, username, or labels. Use query parameters to filter results.",
+        "operationId": "ContainerService_ListContainers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListContainersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "state",
+            "description": "Filter by state (optional, empty means all states)\n\n - CONTAINER_STATE_UNSPECIFIED: Unspecified state (should not be used)\n - CONTAINER_STATE_RUNNING: Container is running\n - CONTAINER_STATE_STOPPED: Container is stopped\n - CONTAINER_STATE_FROZEN: Container is frozen (paused)\n - CONTAINER_STATE_CREATING: Container is being created\n - CONTAINER_STATE_ERROR: Container creation failed or is in error state",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "CONTAINER_STATE_UNSPECIFIED",
+              "CONTAINER_STATE_RUNNING",
+              "CONTAINER_STATE_STOPPED",
+              "CONTAINER_STATE_FROZEN",
+              "CONTAINER_STATE_CREATING",
+              "CONTAINER_STATE_ERROR"
+            ],
+            "default": "CONTAINER_STATE_UNSPECIFIED"
+          },
+          {
+            "name": "username",
+            "description": "Filter by username (optional, empty means all users)",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "labelFilter",
+            "description": "Filter by labels (optional, empty means no filter)",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Containers"
+        ]
+      },
+      "post": {
+        "summary": "Create a new container",
+        "description": "Creates a new LXC container with specified resources and configuration. The container will be started automatically after creation.",
+        "operationId": "ContainerService_CreateContainer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateContainerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateContainerRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Containers"
+        ]
+      }
+    },
+    "/v1/containers/{username}": {
+      "get": {
+        "summary": "Get container details",
+        "description": "Returns detailed information about a specific container including state, resources, network info, and current metrics.",
+        "operationId": "ContainerService_GetContainer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetContainerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container to get",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Containers"
+        ]
+      },
+      "delete": {
+        "summary": "Delete a container",
+        "description": "Permanently deletes a container. Use force=true query parameter to delete running containers.",
+        "operationId": "ContainerService_DeleteContainer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteContainerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container to delete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "force",
+            "description": "Force delete even if container is running",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "Containers"
+        ]
+      }
+    },
+    "/v1/containers/{username}/ssh-keys": {
+      "post": {
+        "summary": "Add SSH key",
+        "description": "Adds an SSH public key to a container's authorized_keys file, allowing SSH access with the corresponding private key.",
+        "operationId": "ContainerService_AddSSHKey",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddSSHKeyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddSSHKeyBody"
+            }
+          }
+        ],
+        "tags": [
+          "SSH Management"
+        ]
+      }
+    },
+    "/v1/containers/{username}/ssh-keys/{sshPublicKey}": {
+      "delete": {
+        "summary": "Remove SSH key",
+        "description": "Removes an SSH public key from a container's authorized_keys file, revoking SSH access for that key. The ssh_public_key should be URL-encoded.",
+        "operationId": "ContainerService_RemoveSSHKey",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RemoveSSHKeyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "sshPublicKey",
+            "description": "SSH public key to remove (exact match)",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "SSH Management"
+        ]
+      }
+    },
+    "/v1/containers/{username}/start": {
+      "post": {
+        "summary": "Start a container",
+        "description": "Starts a stopped container. The container must exist and be in STOPPED state.",
+        "operationId": "ContainerService_StartContainer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/StartContainerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container to start",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/StartContainerBody"
+            }
+          }
+        ],
+        "tags": [
+          "Container Operations"
+        ]
+      }
+    },
+    "/v1/containers/{username}/stop": {
+      "post": {
+        "summary": "Stop a container",
+        "description": "Gracefully stops a running container with optional timeout and force parameters. The container can be started again later.",
+        "operationId": "ContainerService_StopContainer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/StopContainerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container to stop",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/StopContainerBody"
+            }
+          }
+        ],
+        "tags": [
+          "Container Operations"
+        ]
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "summary": "Get container metrics",
+        "description": "Returns runtime metrics (CPU, memory, disk, network usage) for containers. Specify username to get metrics for a specific container, or omit to get all containers.",
+        "operationId": "ContainerService_GetMetrics",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetMetricsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container (empty for all containers)",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/metrics/{username}": {
+      "get": {
+        "summary": "Get container metrics",
+        "description": "Returns runtime metrics (CPU, memory, disk, network usage) for containers. Specify username to get metrics for a specific container, or omit to get all containers.",
+        "operationId": "ContainerService_GetMetrics2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetMetricsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "description": "Username of the container (empty for all containers)",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/system/info": {
+      "get": {
+        "summary": "Get system information",
+        "description": "Returns information about the host system including Incus version, available resources, and container counts.",
+        "operationId": "ContainerService_GetSystemInfo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetSystemInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "System"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "AddSSHKeyBody": {
+      "type": "object",
+      "properties": {
+        "sshPublicKey": {
+          "type": "string",
+          "title": "SSH public key to add"
+        }
+      },
+      "title": "AddSSHKeyRequest is the request to add an SSH key to a container"
+    },
+    "AddSSHKeyResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "totalKeys": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total number of SSH keys now authorized"
+        }
+      },
+      "title": "AddSSHKeyResponse is the response from adding an SSH key"
+    },
+    "Any": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "Container": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Unique container name (typically username-container)"
+        },
+        "username": {
+          "type": "string",
+          "title": "Username who owns this container"
+        },
+        "state": {
+          "$ref": "#/definitions/ContainerState",
+          "title": "Current state of the container"
+        },
+        "resources": {
+          "$ref": "#/definitions/ResourceLimits",
+          "title": "Resource limits applied to this container"
+        },
+        "sshKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "SSH public keys authorized for this container"
+        },
+        "network": {
+          "$ref": "#/definitions/NetworkInfo",
+          "title": "Network information"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "Unix timestamp when container was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "Unix timestamp when container was last updated"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Custom labels for categorization and metadata"
+        },
+        "image": {
+          "type": "string",
+          "title": "Image used to create the container (e.g., \"images:ubuntu/24.04\")"
+        },
+        "dockerEnabled": {
+          "type": "boolean",
+          "title": "Whether Docker support is enabled (nesting)"
+        }
+      },
+      "title": "Container represents a complete container instance"
+    },
+    "ContainerMetrics": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Container name"
+        },
+        "cpuUsagePercent": {
+          "type": "number",
+          "format": "double",
+          "title": "Current CPU usage percentage (0-100)"
+        },
+        "memoryUsageBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Current memory usage in bytes"
+        },
+        "memoryLimitBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Memory limit in bytes"
+        },
+        "diskUsageBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Disk usage in bytes"
+        },
+        "diskLimitBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Disk limit in bytes"
+        },
+        "networkRxBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Network bytes received"
+        },
+        "networkTxBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Network bytes transmitted"
+        },
+        "processCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Number of running processes in container"
+        }
+      },
+      "title": "ContainerMetrics contains runtime metrics for a container"
+    },
+    "ContainerState": {
+      "type": "string",
+      "enum": [
+        "CONTAINER_STATE_UNSPECIFIED",
+        "CONTAINER_STATE_RUNNING",
+        "CONTAINER_STATE_STOPPED",
+        "CONTAINER_STATE_FROZEN",
+        "CONTAINER_STATE_CREATING",
+        "CONTAINER_STATE_ERROR"
+      ],
+      "default": "CONTAINER_STATE_UNSPECIFIED",
+      "description": "- CONTAINER_STATE_UNSPECIFIED: Unspecified state (should not be used)\n - CONTAINER_STATE_RUNNING: Container is running\n - CONTAINER_STATE_STOPPED: Container is stopped\n - CONTAINER_STATE_FROZEN: Container is frozen (paused)\n - CONTAINER_STATE_CREATING: Container is being created\n - CONTAINER_STATE_ERROR: Container creation failed or is in error state",
+      "title": "ContainerState represents the current state of a container"
+    },
+    "CreateContainerRequest": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "title": "Username for the container (required)"
+        },
+        "resources": {
+          "$ref": "#/definitions/ResourceLimits",
+          "title": "Resource limits (optional, uses defaults if not specified)"
+        },
+        "sshKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "SSH public keys to authorize (optional, can be added later)"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Custom labels (optional)"
+        },
+        "image": {
+          "type": "string",
+          "title": "Container image to use (optional, defaults to images:ubuntu/24.04)"
+        },
+        "enableDocker": {
+          "type": "boolean",
+          "title": "Enable Docker support (optional, defaults to true)"
+        }
+      },
+      "title": "CreateContainerRequest is the request to create a new container"
+    },
+    "CreateContainerResponse": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/definitions/Container",
+          "title": "The created container"
+        },
+        "message": {
+          "type": "string",
+          "title": "Human-readable message about the creation"
+        },
+        "sshCommand": {
+          "type": "string",
+          "title": "SSH connection string for the user"
+        }
+      },
+      "title": "CreateContainerResponse is the response from creating a container"
+    },
+    "DeleteContainerResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "containerName": {
+          "type": "string",
+          "title": "Name of the deleted container"
+        }
+      },
+      "title": "DeleteContainerResponse is the response from deleting a container"
+    },
+    "GetContainerResponse": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "$ref": "#/definitions/Container",
+          "title": "The requested container"
+        },
+        "metrics": {
+          "$ref": "#/definitions/ContainerMetrics",
+          "title": "Current metrics for the container (optional)"
+        }
+      },
+      "title": "GetContainerResponse is the response from getting a container"
+    },
+    "GetMetricsResponse": {
+      "type": "object",
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ContainerMetrics"
+          },
+          "title": "Metrics for requested container(s)"
+        }
+      },
+      "title": "GetMetricsResponse is the response from getting metrics"
+    },
+    "GetSystemInfoResponse": {
+      "type": "object",
+      "properties": {
+        "info": {
+          "$ref": "#/definitions/SystemInfo",
+          "title": "System information"
+        }
+      },
+      "title": "GetSystemInfoResponse is the response from getting system information"
+    },
+    "ListContainersResponse": {
+      "type": "object",
+      "properties": {
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Container"
+          },
+          "title": "List of containers matching the filter criteria"
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total count of containers"
+        }
+      },
+      "title": "ListContainersResponse is the response from listing containers"
+    },
+    "NetworkInfo": {
+      "type": "object",
+      "properties": {
+        "ipAddress": {
+          "type": "string",
+          "title": "Primary IP address assigned to the container"
+        },
+        "macAddress": {
+          "type": "string",
+          "title": "MAC address of the container's network interface"
+        },
+        "interface": {
+          "type": "string",
+          "title": "Network interface name (e.g., \"eth0\")"
+        },
+        "bridge": {
+          "type": "string",
+          "title": "Network bridge name"
+        }
+      },
+      "title": "NetworkInfo contains network configuration for a container"
+    },
+    "RemoveSSHKeyResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "totalKeys": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total number of SSH keys remaining"
+        }
+      },
+      "title": "RemoveSSHKeyResponse is the response from removing an SSH key"
+    },
+    "ResourceLimits": {
+      "type": "object",
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "title": "CPU limit (e.g., \"4\" for 4 cores)"
+        },
+        "memory": {
+          "type": "string",
+          "title": "Memory limit (e.g., \"4GB\", \"2048MB\")"
+        },
+        "disk": {
+          "type": "string",
+          "title": "Disk/storage limit (e.g., \"50GB\", \"100GB\")"
+        }
+      },
+      "title": "ResourceLimits defines resource constraints for a container"
+    },
+    "StartContainerBody": {
+      "type": "object",
+      "title": "StartContainerRequest is the request to start a container"
+    },
+    "StartContainerResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "container": {
+          "$ref": "#/definitions/Container",
+          "title": "Updated container state"
+        }
+      },
+      "title": "StartContainerResponse is the response from starting a container"
+    },
+    "Status": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Any"
+          }
+        }
+      }
+    },
+    "StopContainerBody": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "title": "Force stop (kill) instead of graceful shutdown"
+        },
+        "timeout": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Timeout in seconds for graceful shutdown (default: 30)"
+        }
+      },
+      "title": "StopContainerRequest is the request to stop a container"
+    },
+    "StopContainerResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "container": {
+          "$ref": "#/definitions/Container",
+          "title": "Updated container state"
+        }
+      },
+      "title": "StopContainerResponse is the response from stopping a container"
+    },
+    "SystemInfo": {
+      "type": "object",
+      "properties": {
+        "incusVersion": {
+          "type": "string",
+          "title": "Incus version"
+        },
+        "os": {
+          "type": "string",
+          "title": "Operating system"
+        },
+        "kernelVersion": {
+          "type": "string",
+          "title": "Kernel version"
+        },
+        "totalCpus": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total CPU cores"
+        },
+        "totalMemoryBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Total memory in bytes"
+        },
+        "availableMemoryBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Available memory in bytes"
+        },
+        "totalDiskBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Total disk space in bytes"
+        },
+        "availableDiskBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "Available disk space in bytes"
+        },
+        "containersRunning": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Number of containers running"
+        },
+        "containersStopped": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Number of containers stopped"
+        },
+        "containersTotal": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total number of containers"
+        },
+        "hostname": {
+          "type": "string",
+          "title": "Hostname of the system"
+        },
+        "uptimeSeconds": {
+          "type": "string",
+          "format": "int64",
+          "title": "Uptime in seconds"
+        }
+      },
+      "title": "SystemInfo contains information about the host system"
+    }
+  },
+  "securityDefinitions": {
+    "bearer": {
+      "type": "apiKey",
+      "description": "Bearer token authentication. Format: 'Bearer \u003ctoken\u003e'",
+      "name": "Authorization",
+      "in": "header"
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ]
+}

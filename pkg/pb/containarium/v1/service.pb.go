@@ -7,6 +7,8 @@
 package containariumv1
 
 import (
+	_ "github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2/options"
+	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -24,20 +26,43 @@ var File_containarium_v1_service_proto protoreflect.FileDescriptor
 
 const file_containarium_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1dcontainarium/v1/service.proto\x12\x0fcontainarium.v1\x1a\x1fcontainarium/v1/container.proto\x1a\x1ccontainarium/v1/config.proto2\xc9\a\n" +
-	"\x10ContainerService\x12d\n" +
-	"\x0fCreateContainer\x12'.containarium.v1.CreateContainerRequest\x1a(.containarium.v1.CreateContainerResponse\x12a\n" +
-	"\x0eListContainers\x12&.containarium.v1.ListContainersRequest\x1a'.containarium.v1.ListContainersResponse\x12[\n" +
-	"\fGetContainer\x12$.containarium.v1.GetContainerRequest\x1a%.containarium.v1.GetContainerResponse\x12d\n" +
-	"\x0fDeleteContainer\x12'.containarium.v1.DeleteContainerRequest\x1a(.containarium.v1.DeleteContainerResponse\x12a\n" +
-	"\x0eStartContainer\x12&.containarium.v1.StartContainerRequest\x1a'.containarium.v1.StartContainerResponse\x12^\n" +
-	"\rStopContainer\x12%.containarium.v1.StopContainerRequest\x1a&.containarium.v1.StopContainerResponse\x12R\n" +
-	"\tAddSSHKey\x12!.containarium.v1.AddSSHKeyRequest\x1a\".containarium.v1.AddSSHKeyResponse\x12[\n" +
-	"\fRemoveSSHKey\x12$.containarium.v1.RemoveSSHKeyRequest\x1a%.containarium.v1.RemoveSSHKeyResponse\x12U\n" +
+	"\x1dcontainarium/v1/service.proto\x12\x0fcontainarium.v1\x1a\x1fcontainarium/v1/container.proto\x1a\x1ccontainarium/v1/config.proto\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto2\xa2\x17\n" +
+	"\x10ContainerService\x12\xae\x02\n" +
+	"\x0fCreateContainer\x12'.containarium.v1.CreateContainerRequest\x1a(.containarium.v1.CreateContainerResponse\"\xc7\x01\x92A\xaa\x01\n" +
 	"\n" +
-	"GetMetrics\x12\".containarium.v1.GetMetricsRequest\x1a#.containarium.v1.GetMetricsResponse\x12^\n" +
-	"\rGetSystemInfo\x12%.containarium.v1.GetSystemInfoRequest\x1a&.containarium.v1.GetSystemInfoResponseB\xcb\x01\n" +
-	"\x13com.containarium.v1B\fServiceProtoP\x01ZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1\xa2\x02\x03CXX\xaa\x02\x0fContainarium.V1\xca\x02\x0fContainarium\\V1\xe2\x02\x1bContainarium\\V1\\GPBMetadata\xea\x02\x10Containarium::V1b\x06proto3"
+	"Containers\x12\x16Create a new container\x1a\x83\x01Creates a new LXC container with specified resources and configuration. The container will be started automatically after creation.\x82\xd3\xe4\x93\x02\x13:\x01*\"\x0e/v1/containers\x12\x9c\x02\n" +
+	"\x0eListContainers\x12&.containarium.v1.ListContainersRequest\x1a'.containarium.v1.ListContainersResponse\"\xb8\x01\x92A\x9e\x01\n" +
+	"\n" +
+	"Containers\x12\x13List all containers\x1a{Returns a list of containers with optional filtering by state, username, or labels. Use query parameters to filter results.\x82\xd3\xe4\x93\x02\x10\x12\x0e/v1/containers\x12\x9e\x02\n" +
+	"\fGetContainer\x12$.containarium.v1.GetContainerRequest\x1a%.containarium.v1.GetContainerResponse\"\xc0\x01\x92A\x9b\x01\n" +
+	"\n" +
+	"Containers\x12\x15Get container details\x1avReturns detailed information about a specific container including state, resources, network info, and current metrics.\x82\xd3\xe4\x93\x02\x1b\x12\x19/v1/containers/{username}\x12\x8a\x02\n" +
+	"\x0fDeleteContainer\x12'.containarium.v1.DeleteContainerRequest\x1a(.containarium.v1.DeleteContainerResponse\"\xa3\x01\x92A\x7f\n" +
+	"\n" +
+	"Containers\x12\x12Delete a container\x1a]Permanently deletes a container. Use force=true query parameter to delete running containers.\x82\xd3\xe4\x93\x02\x1b*\x19/v1/containers/{username}\x12\x89\x02\n" +
+	"\x0eStartContainer\x12&.containarium.v1.StartContainerRequest\x1a'.containarium.v1.StartContainerResponse\"\xa5\x01\x92Ax\n" +
+	"\x14Container Operations\x12\x11Start a container\x1aMStarts a stopped container. The container must exist and be in STOPPED state.\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/v1/containers/{username}/start\x12\xb2\x02\n" +
+	"\rStopContainer\x12%.containarium.v1.StopContainerRequest\x1a&.containarium.v1.StopContainerResponse\"\xd1\x01\x92A\xa4\x01\n" +
+	"\x14Container Operations\x12\x10Stop a container\x1azGracefully stops a running container with optional timeout and force parameters. The container can be started again later.\x82\xd3\xe4\x93\x02#:\x01*\"\x1e/v1/containers/{username}/stop\x12\x9a\x02\n" +
+	"\tAddSSHKey\x12!.containarium.v1.AddSSHKeyRequest\x1a\".containarium.v1.AddSSHKeyResponse\"\xc5\x01\x92A\x94\x01\n" +
+	"\x0eSSH Management\x12\vAdd SSH key\x1auAdds an SSH public key to a container's authorized_keys file, allowing SSH access with the corresponding private key.\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/containers/{username}/ssh-keys\x12\xce\x02\n" +
+	"\fRemoveSSHKey\x12$.containarium.v1.RemoveSSHKeyRequest\x1a%.containarium.v1.RemoveSSHKeyResponse\"\xf0\x01\x92A\xb1\x01\n" +
+	"\x0eSSH Management\x12\x0eRemove SSH key\x1a\x8e\x01Removes an SSH public key from a container's authorized_keys file, revoking SSH access for that key. The ssh_public_key should be URL-encoded.\x82\xd3\xe4\x93\x025*3/v1/containers/{username}/ssh-keys/{ssh_public_key}\x12\xd2\x02\n" +
+	"\n" +
+	"GetMetrics\x12\".containarium.v1.GetMetricsRequest\x1a#.containarium.v1.GetMetricsResponse\"\xfa\x01\x92A\xc9\x01\n" +
+	"\n" +
+	"Monitoring\x12\x15Get container metrics\x1a\xa3\x01Returns runtime metrics (CPU, memory, disk, network usage) for containers. Specify username to get metrics for a specific container, or omit to get all containers.\x82\xd3\xe4\x93\x02'Z\x18\x12\x16/v1/metrics/{username}\x12\v/v1/metrics\x12\x8b\x02\n" +
+	"\rGetSystemInfo\x12%.containarium.v1.GetSystemInfoRequest\x1a&.containarium.v1.GetSystemInfoResponse\"\xaa\x01\x92A\x8f\x01\n" +
+	"\x06System\x12\x16Get system information\x1amReturns information about the host system including Incus version, available resources, and container counts.\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/system/infoB\xa4\x04\x92A\xd5\x03\x12\xc4\x02\n" +
+	"\x10Containarium API\x12\xa0\x01Container management API for LXC-based development environments. Provides both gRPC and REST interfaces for managing containers, SSH keys, and system resources.\";\n" +
+	"\fContainarium\x12+https://github.com/footprintai/containarium*K\n" +
+	"\n" +
+	"Apache 2.0\x12=https://github.com/footprintai/containarium/blob/main/LICENSE2\x031.0*\x02\x02\x012\x10application/json:\x10application/jsonZV\n" +
+	"T\n" +
+	"\x06bearer\x12J\b\x02\x125Bearer token authentication. Format: 'Bearer <token>'\x1a\rAuthorization \x02b\f\n" +
+	"\n" +
+	"\n" +
+	"\x06bearer\x12\x00ZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1b\x06proto3"
 
 var file_containarium_v1_service_proto_goTypes = []any{
 	(*CreateContainerRequest)(nil),  // 0: containarium.v1.CreateContainerRequest

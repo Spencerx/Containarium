@@ -177,13 +177,172 @@ incus --version  # Should show 6.19 or later
 
 ### Quick Start
 
-1. Provision infrastructure with Terraform
-2. Install Containarium CLI
-3. Create LXC containers
-4. Assign users
-5. Connect via SSH
+**Option 1: Manual Installation (Recommended for getting started)**
+
+One-command installation on Ubuntu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/footprintai/containarium/main/hacks/install.sh | sudo bash
+```
+
+This installs Containarium, Incus, and all dependencies. See [`hacks/README.md`](hacks/README.md) for details.
+
+**Option 2: Terraform Deployment (Recommended for production)**
+
+Deploy to GCE with full infrastructure automation:
+
+```bash
+cd terraform/gce
+terraform init
+terraform apply
+```
+
+See [`terraform/gce/README.md`](terraform/gce/README.md) for configuration options.
+
+**After Installation:**
+
+1. Start the daemon: `sudo systemctl start containarium`
+2. Create containers: `sudo containarium create alice --ssh-key ~/.ssh/id_rsa.pub`
+3. Connect via SSH: `ssh alice@container-ip`
+4. Use REST API: `http://localhost:8080/swagger-ui/`
 
 👉 See `docs/` for detailed setup instructions.
+
+## API Access
+
+Containarium provides two APIs for maximum flexibility:
+
+### gRPC API (Port 50051)
+
+For programmatic access and the CLI tool. Uses mTLS for authentication.
+
+```bash
+# Start daemon with mTLS
+containarium daemon --mtls
+
+# Use CLI
+containarium list
+containarium create --username john
+```
+
+### REST API (Port 8080)
+
+For HTTP/JSON access, webhooks, and web UIs. Uses Bearer token authentication.
+
+```bash
+# Start daemon with REST API
+containarium daemon --rest
+
+# The daemon will auto-generate and display a JWT secret on startup
+```
+
+**JWT Secret Configuration (Priority Order):**
+
+1. **Environment Variable** (Production - Recommended)
+   ```bash
+   export CONTAINARIUM_JWT_SECRET="your-secret-key"
+   containarium daemon --rest
+   ```
+
+2. **Secret File** (Production)
+   ```bash
+   # Generate secret
+   openssl rand -base64 32 > /etc/containarium/jwt.secret
+   chmod 600 /etc/containarium/jwt.secret
+
+   # Start daemon
+   containarium daemon --rest --jwt-secret-file /etc/containarium/jwt.secret
+   ```
+
+3. **Command-line Flag** (Testing)
+   ```bash
+   containarium daemon --rest --jwt-secret "test-secret"
+   ```
+
+4. **Auto-Generated** (Development)
+   ```bash
+   # Just start the daemon - it will generate and print a random secret
+   containarium daemon --rest
+
+   # Output includes:
+   # ═══════════════════════════════════════════════════════════════
+   #   🔐 JWT Secret (Auto-Generated)
+   # ═══════════════════════════════════════════════════════════════
+   #   Kx8jP7yN2wR5vT9mQ3hF6nL4sZ1aE0uC8bV5gX2wY4pM7kR=
+   # ...
+   ```
+
+**Generate API Token:**
+
+```bash
+# Using generated/configured secret
+TOKEN=$(containarium token generate \
+  --username admin \
+  --roles admin \
+  --expiry 720h \
+  --secret "your-jwt-secret")
+```
+
+**Use REST API:**
+
+```bash
+# Set token
+export TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# List containers
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/containers
+
+# Create container
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "johndoe",
+    "resources": {
+      "cpu": "4",
+      "memory": "8GB",
+      "disk": "100GB"
+    },
+    "image": "ubuntu:24.04",
+    "enable_docker": true
+  }' \
+  http://localhost:8080/v1/containers
+
+# Get container details
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/containers/johndoe
+
+# Delete container
+curl -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/v1/containers/johndoe
+```
+
+### Interactive API Documentation
+
+Swagger UI is available at: `http://localhost:8080/swagger-ui/`
+
+Features:
+- Interactive API testing
+- Complete endpoint documentation
+- Request/response examples
+- Built-in authentication testing
+
+### Available REST Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/v1/containers` | Create a new container |
+| `GET` | `/v1/containers` | List all containers |
+| `GET` | `/v1/containers/{username}` | Get container details |
+| `DELETE` | `/v1/containers/{username}` | Delete a container |
+| `POST` | `/v1/containers/{username}/start` | Start a container |
+| `POST` | `/v1/containers/{username}/stop` | Stop a container |
+| `POST` | `/v1/containers/{username}/ssh-keys` | Add SSH key |
+| `DELETE` | `/v1/containers/{username}/ssh-keys/{key}` | Remove SSH key |
+| `GET` | `/v1/metrics` | Get container metrics |
+| `GET` | `/v1/system/info` | Get system information |
 
 ## Philosophy
 
@@ -262,10 +421,14 @@ Containarium provides a multi-layer architecture combining cloud infrastructure,
 - **Network**: Bridge networking with isolated namespaces
 - **Security**: AppArmor profiles, resource limits
 
-#### 3. **Management Layer** (Containarium CLI)
+#### 3. **Management Layer** (Containarium CLI + REST API)
 - **Language**: Go with Protobuf contracts
 - **Operations**: Create, delete, list, info, resize, export
-- **API**: Local CLI + optional gRPC daemon
+- **APIs**:
+  - Local CLI (default)
+  - gRPC daemon with mTLS (port 50051)
+  - REST/HTTP API with JWT auth (port 8080)
+  - Interactive Swagger UI for REST API
 - **Automation**: Automated container lifecycle
 
 #### 4. **Access Layer** (SSH)

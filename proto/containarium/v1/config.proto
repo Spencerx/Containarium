@@ -4,7 +4,7 @@ package containarium.v1;
 
 import "containarium/v1/container.proto";
 
-option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;continariumv1";
+option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1";
 
 // Config represents the system-wide configuration for Containarium
 message Config {

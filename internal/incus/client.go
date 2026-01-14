@@ -59,8 +59,9 @@ func NewWithSocket(socketPath string) (*Client, error) {
 
 // parseImageSource parses an image string and returns the appropriate InstanceSource
 // Handles formats like:
-//   - "ubuntu:24.04" or "ubuntu/24.04" -> local alias
 //   - "images:ubuntu/24.04" -> remote from images.linuxcontainers.org
+//   - "ubuntu/24.04" -> defaults to images.linuxcontainers.org (most common)
+//   - "ubuntu:24.04" -> remote from cloud-images.ubuntu.com
 //   - "ubuntu" -> local alias
 func parseImageSource(image string) api.InstanceSource {
 	source := api.InstanceSource{
@@ -91,8 +92,14 @@ func parseImageSource(image string) api.InstanceSource {
 			// Unknown remote, try as local alias
 			source.Alias = image
 		}
+	} else if strings.Contains(image, "/") {
+		// Format like "ubuntu/24.04" without remote prefix
+		// Default to images.linuxcontainers.org which is most commonly used
+		source.Server = "https://images.linuxcontainers.org"
+		source.Protocol = "simplestreams"
+		source.Alias = image
 	} else {
-		// Local image alias
+		// Simple name like "ubuntu" - treat as local alias
 		source.Alias = image
 	}
 
@@ -101,6 +108,9 @@ func parseImageSource(image string) api.InstanceSource {
 
 // CreateContainer creates a new container with the specified configuration
 func (c *Client) CreateContainer(config ContainerConfig) error {
+	// Debug: Log the image being used
+	fmt.Printf("[DEBUG] CreateContainer - Image: '%s'\n", config.Image)
+
 	// Prepare container creation request
 	req := api.InstancesPost{
 		Name: config.Name,
@@ -109,6 +119,10 @@ func (c *Client) CreateContainer(config ContainerConfig) error {
 
 	// Parse image source - handle remote images like "images:ubuntu/24.04"
 	req.Source = parseImageSource(config.Image)
+
+	// Debug: Log the parsed source
+	fmt.Printf("[DEBUG] CreateContainer - Source: Type=%s, Server=%s, Protocol=%s, Alias=%s\n",
+		req.Source.Type, req.Source.Server, req.Source.Protocol, req.Source.Alias)
 
 	// Set container configuration
 	req.Config = make(map[string]string)
@@ -180,14 +194,10 @@ func (c *Client) StartContainer(name string) error {
 
 // StopContainer stops a container
 func (c *Client) StopContainer(name string, force bool) error {
-	action := "stop"
-	if force {
-		action = "stop --force"
-	}
-
 	reqState := api.InstanceStatePut{
-		Action:  action,
+		Action:  "stop",
 		Timeout: 30,
+		Force:   force,
 	}
 
 	op, err := c.server.UpdateInstanceState(name, reqState, "")

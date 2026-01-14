@@ -19,6 +19,7 @@ var (
 	containerImage string
 	enableDocker  bool
 	labels        []string
+	forceRecreate bool
 )
 
 var createCmd = &cobra.Command{
@@ -35,13 +36,16 @@ The container will be created with:
 
 Examples:
   # Create container with default settings
-  containarium create alice
+  containarium create alice --ssh-key ~/.ssh/id_rsa.pub
 
   # Create with custom resources and SSH key
   containarium create bob --ssh-key ~/.ssh/bob.pub --cpu 8 --memory 8GB --disk 100GB
 
   # Create with labels
-  containarium create charlie --labels team=dev,project=web`,
+  containarium create charlie --ssh-key ~/.ssh/id_rsa.pub --labels team=dev,project=web
+
+  # Force recreate if container already exists
+  containarium create alice --ssh-key ~/.ssh/id_rsa.pub --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: runCreate,
 }
@@ -54,9 +58,10 @@ func init() {
 	createCmd.Flags().StringVar(&cpuLimit, "cpu", "4", "CPU limit (number of cores)")
 	createCmd.Flags().StringVar(&memoryLimit, "memory", "4GB", "Memory limit (e.g., 4GB, 2048MB)")
 	createCmd.Flags().StringVar(&diskLimit, "disk", "50GB", "Disk limit (e.g., 50GB, 100GB)")
-	createCmd.Flags().StringVar(&containerImage, "image", "ubuntu:24.04", "Container image to use")
+	createCmd.Flags().StringVar(&containerImage, "image", "images:ubuntu/24.04", "Container image to use")
 	createCmd.Flags().BoolVar(&enableDocker, "docker", true, "Enable Docker support (nesting)")
 	createCmd.Flags().StringSliceVar(&labels, "labels", []string{}, "Labels in key=value format (can be specified multiple times)")
+	createCmd.Flags().BoolVar(&forceRecreate, "force", false, "Delete and recreate if container already exists")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -92,6 +97,66 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	sshKey := string(keyBytes)
 	sshKeys := []string{sshKey}
+
+	// Handle --force flag: delete existing container if it exists
+	if forceRecreate {
+		if verbose {
+			fmt.Println()
+			fmt.Println("Checking if container already exists...")
+		}
+
+		// Check if container exists
+		var containerExists bool
+		if serverAddr != "" {
+			// Remote mode via gRPC
+			grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
+			if err != nil {
+				return fmt.Errorf("failed to connect to remote server: %w", err)
+			}
+			defer grpcClient.Close()
+
+			_, err = grpcClient.GetContainer(username)
+			containerExists = (err == nil)
+		} else {
+			// Local mode via Incus
+			mgr, err := container.New()
+			if err != nil {
+				return fmt.Errorf("failed to connect to Incus: %w", err)
+			}
+			containerName := username + "-container"
+			containerExists = mgr.ContainerExists(containerName)
+		}
+
+		if containerExists {
+			fmt.Printf("Container for user '%s' already exists, deleting due to --force flag...\n", username)
+
+			// Delete the container
+			if serverAddr != "" {
+				// Remote mode via gRPC
+				grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
+				if err != nil {
+					return fmt.Errorf("failed to connect to remote server: %w", err)
+				}
+				defer grpcClient.Close()
+
+				if err := grpcClient.DeleteContainer(username, true); err != nil {
+					return fmt.Errorf("failed to delete existing container: %w", err)
+				}
+			} else {
+				// Local mode via Incus
+				if err := deleteLocal(username, true); err != nil {
+					return fmt.Errorf("failed to delete existing container: %w", err)
+				}
+			}
+
+			fmt.Println("✓ Existing container deleted")
+			if verbose {
+				fmt.Println()
+			}
+		} else if verbose {
+			fmt.Println("Container does not exist, proceeding with creation...")
+		}
+	}
 
 	// Create jump server account (only in local mode)
 	// This creates a proxy-only user account with /usr/sbin/nologin shell

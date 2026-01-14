@@ -42,6 +42,11 @@ proto: ## Generate Go code from protobuf definitions
 	fi
 	@echo "==> Protobuf code generated successfully"
 
+swagger-ui: ## Download and install Swagger UI static files
+	@echo "==> Downloading Swagger UI..."
+	@chmod +x scripts/download-swagger-ui.sh
+	@./scripts/download-swagger-ui.sh
+
 proto-lint: ## Lint protobuf definitions
 	@echo "==> Linting protobuf definitions..."
 	@buf lint
@@ -50,19 +55,25 @@ proto-breaking: ## Check for breaking changes in protobuf definitions
 	@echo "==> Checking for breaking changes..."
 	@buf breaking --against '.git#branch=main'
 
-build: proto ## Build the containarium binary
+build: proto swagger-ui ## Build the containarium binary (includes Swagger UI)
 	@echo "==> Building containarium..."
 	@mkdir -p $(BUILD_DIR)
 	@go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/containarium/main.go
 	@echo "==> Binary built: $(BUILD_DIR)/$(BINARY_NAME)"
 
-build-linux: proto ## Build for Linux (for deployment to GCE)
+build-fast: proto ## Build the containarium binary (skip Swagger UI download, uses CDN)
+	@echo "==> Building containarium (fast mode - CDN fallback)..."
+	@mkdir -p $(BUILD_DIR)
+	@go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/containarium/main.go
+	@echo "==> Binary built: $(BUILD_DIR)/$(BINARY_NAME)"
+
+build-linux: proto swagger-ui ## Build for Linux (for deployment to GCE, includes Swagger UI)
 	@echo "==> Building containarium for Linux..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 cmd/containarium/main.go
 	@echo "==> Binary built: $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64"
 
-build-all: proto ## Build for all platforms
+build-all: proto swagger-ui ## Build for all platforms (includes Swagger UI)
 	@echo "==> Building for all platforms..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 cmd/containarium/main.go
