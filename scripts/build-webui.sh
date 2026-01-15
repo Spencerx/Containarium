@@ -1,0 +1,54 @@
+#!/bin/bash
+set -e
+
+WEBUI_DIR="web-ui"
+OUTPUT_DIR="internal/gateway/webui"
+
+echo "==> Building Web UI..."
+
+# Check if web-ui directory exists
+if [ ! -d "$WEBUI_DIR" ]; then
+    echo "Error: web-ui directory not found"
+    exit 1
+fi
+
+# Install dependencies if needed
+if [ ! -d "$WEBUI_DIR/node_modules" ]; then
+    echo "==> Installing dependencies..."
+    cd "$WEBUI_DIR"
+    npm install
+    cd ..
+fi
+
+# Build the Next.js app with static export
+echo "==> Running Next.js build..."
+cd "$WEBUI_DIR"
+npm run build
+cd ..
+
+# Copy static files to gateway directory
+echo "==> Copying files to ${OUTPUT_DIR}..."
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
+
+# Next.js static export goes to 'out' directory
+if [ -d "$WEBUI_DIR/out" ]; then
+    cp -r "$WEBUI_DIR/out/"* "${OUTPUT_DIR}/"
+else
+    echo "Error: Build output directory not found. Make sure next.config.ts has output: 'export'"
+    exit 1
+fi
+
+# Create a .gitkeep to ensure directory exists
+touch "${OUTPUT_DIR}/.gitkeep"
+
+echo "==> Web UI built successfully!"
+echo ""
+echo "Files installed in: ${OUTPUT_DIR}"
+echo "File count: $(find ${OUTPUT_DIR} -type f | wc -l)"
+echo ""
+echo "Next steps:"
+echo "  1. Rebuild the binary: make build"
+echo "  2. Start daemon: ./bin/containarium daemon --rest --jwt-secret test-secret"
+echo "  3. Access Web UI: http://localhost:8080/webui/"
+echo ""

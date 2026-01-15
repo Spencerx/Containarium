@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Web UI Dashboard** - Modern browser-based container management interface
+  - Real-time container metrics (CPU, Memory, Disk usage with progress bars)
+  - Multi-server management with tab-based interface
+  - Container lifecycle management (create, start, stop, delete)
+  - Browser-based terminal access via WebSocket
+  - Client-side SSH key generation (keys never sent to server)
+  - Embedded in Go binary for single-file deployment
+  - Available at `/webui/` endpoint
+- **Container Metrics API** - Real-time resource monitoring
+  - CPU usage percentage calculation
+  - Memory and disk usage with limits
+  - Network I/O statistics
+  - Process count per container
+- **WebSocket Terminal** - Browser-based container shell access
+  - Direct terminal access without SSH client
+  - Runs as container user via Incus exec
+  - JWT token authentication via query parameter
+- **Makefile improvements**:
+  - `make webui` - Build Next.js web UI for embedding
+  - `make clean-ui` - Clean swagger-ui and webui files
+  - `make clean-all` - Clean all artifacts including UI
 - **REST API support via grpc-gateway** - HTTP/JSON API alongside existing gRPC
   - All 10 container management endpoints exposed via REST
   - Dual-protocol support: gRPC (port 50051) + REST (port 8080)

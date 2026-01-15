@@ -478,3 +478,28 @@ func (m *Manager) ContainerExists(containerName string) bool {
 	_, err := m.incus.GetContainer(containerName)
 	return err == nil
 }
+
+// GetMetrics returns runtime metrics for a container
+func (m *Manager) GetMetrics(username string) (*incus.ContainerMetrics, error) {
+	containerName := username + "-container"
+	return m.incus.GetContainerMetrics(containerName)
+}
+
+// GetAllMetrics returns runtime metrics for all containers
+func (m *Manager) GetAllMetrics() ([]*incus.ContainerMetrics, error) {
+	containers, err := m.incus.ListContainers()
+	if err != nil {
+		return nil, err
+	}
+
+	var metrics []*incus.ContainerMetrics
+	for _, c := range containers {
+		m, err := m.incus.GetContainerMetrics(c.Name)
+		if err != nil {
+			continue // Skip containers that fail
+		}
+		metrics = append(metrics, m)
+	}
+
+	return metrics, nil
+}

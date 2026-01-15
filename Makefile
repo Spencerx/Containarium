@@ -1,4 +1,4 @@
-.PHONY: help proto build clean install test lint fmt run-local
+.PHONY: help proto build clean clean-ui clean-all install test lint fmt run-local webui swagger-ui
 
 # Variables
 BINARY_NAME=containarium
@@ -47,6 +47,11 @@ swagger-ui: ## Download and install Swagger UI static files
 	@chmod +x scripts/download-swagger-ui.sh
 	@./scripts/download-swagger-ui.sh
 
+webui: ## Build Web UI static files for embedding
+	@echo "==> Building Web UI..."
+	@chmod +x scripts/build-webui.sh
+	@./scripts/build-webui.sh
+
 proto-lint: ## Lint protobuf definitions
 	@echo "==> Linting protobuf definitions..."
 	@buf lint
@@ -67,13 +72,13 @@ build-fast: proto ## Build the containarium binary (skip Swagger UI download, us
 	@go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/containarium/main.go
 	@echo "==> Binary built: $(BUILD_DIR)/$(BINARY_NAME)"
 
-build-linux: proto swagger-ui ## Build for Linux (for deployment to GCE, includes Swagger UI)
+build-linux: proto web-ui swagger-ui ## Build for Linux (for deployment to GCE, includes Swagger UI)
 	@echo "==> Building containarium for Linux..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 cmd/containarium/main.go
 	@echo "==> Binary built: $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64"
 
-build-all: proto swagger-ui ## Build for all platforms (includes Swagger UI)
+build-all: proto web-ui swagger-ui ## Build for all platforms (includes Swagger UI)
 	@echo "==> Building for all platforms..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 cmd/containarium/main.go
@@ -91,6 +96,17 @@ clean: ## Clean build artifacts
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(PKG_DIR)
 	@echo "==> Clean complete"
+
+clean-ui: ## Clean embedded UI files (swagger-ui and webui)
+	@echo "==> Cleaning UI files..."
+	@rm -rf internal/gateway/swagger-ui/*
+	@rm -rf internal/gateway/webui/*
+	@touch internal/gateway/swagger-ui/.gitkeep
+	@touch internal/gateway/webui/.gitkeep
+	@echo "==> UI files cleaned (swagger-ui and webui)"
+
+clean-all: clean clean-ui ## Clean all artifacts including UI files
+	@echo "==> All artifacts cleaned"
 
 test: ## Run unit tests
 	@echo "==> Running unit tests..."
