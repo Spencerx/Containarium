@@ -84,3 +84,8 @@ func (am *AuthMiddleware) GRPCStreamInterceptor() grpc.StreamServerInterceptor {
 		return handler(srv, ss)
 	}
 }
+
+// ValidateToken validates a JWT token and returns claims
+func (am *AuthMiddleware) ValidateToken(token string) (*Claims, error) {
+	return am.tokenManager.ValidateToken(token)
+}

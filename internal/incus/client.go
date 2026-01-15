@@ -32,7 +32,21 @@ type ContainerInfo struct {
 	IPAddress string
 	CPU       string
 	Memory    string
+	Disk      string
+	GPU       string // GPU device info (e.g., "nvidia.com/gpu" or GPU ID)
 	CreatedAt time.Time
+}
+
+// ContainerMetrics holds runtime metrics for a container
+type ContainerMetrics struct {
+	Name             string
+	CPUUsageSeconds  int64   // CPU usage in seconds
+	MemoryUsageBytes int64   // Current memory usage in bytes
+	MemoryLimitBytes int64   // Memory limit in bytes
+	DiskUsageBytes   int64   // Root disk usage in bytes
+	NetworkRxBytes   int64   // Network bytes received
+	NetworkTxBytes   int64   // Network bytes transmitted
+	ProcessCount     int32   // Number of running processes
 }
 
 // ServerInfo holds information about the Incus server
@@ -249,6 +263,33 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 			info.Memory = mem
 		}
 
+		// Parse devices for disk and GPU information
+		for deviceName, device := range inst.Devices {
+			deviceType, ok := device["type"]
+			if !ok {
+				continue
+			}
+
+			// Check for disk devices (root disk)
+			if deviceType == "disk" && deviceName == "root" {
+				if size, ok := device["size"]; ok {
+					info.Disk = size
+				}
+			}
+
+			// Check for GPU devices
+			if deviceType == "gpu" {
+				// GPU device found - could be physical GPU passthrough or mdev
+				if id, ok := device["id"]; ok {
+					info.GPU = id
+				} else if pci, ok := device["pci"]; ok {
+					info.GPU = pci
+				} else {
+					info.GPU = "GPU" // Generic GPU indicator
+				}
+			}
+		}
+
 		// Get IP address - need to get state separately
 		// Priority: eth0 (Incus bridge) > other non-docker interfaces > docker0
 		state, _, err := c.server.GetInstanceState(inst.Name)
@@ -326,6 +367,33 @@ func (c *Client) GetContainer(name string) (*ContainerInfo, error) {
 	}
 	if mem, ok := inst.Config["limits.memory"]; ok {
 		info.Memory = mem
+	}
+
+	// Parse devices for disk and GPU information
+	for deviceName, device := range inst.Devices {
+		deviceType, ok := device["type"]
+		if !ok {
+			continue
+		}
+
+		// Check for disk devices (root disk)
+		if deviceType == "disk" && deviceName == "root" {
+			if size, ok := device["size"]; ok {
+				info.Disk = size
+			}
+		}
+
+		// Check for GPU devices
+		if deviceType == "gpu" {
+			// GPU device found - could be physical GPU passthrough or mdev
+			if id, ok := device["id"]; ok {
+				info.GPU = id
+			} else if pci, ok := device["pci"]; ok {
+				info.GPU = pci
+			} else {
+				info.GPU = "GPU" // Generic GPU indicator
+			}
+		}
 	}
 
 	// Get IP address - need to get state separately
@@ -489,6 +557,47 @@ func (c *Client) SetDeviceSize(containerName, deviceName, size string) error {
 	}
 
 	return nil
+}
+
+// GetContainerMetrics gets runtime metrics for a container
+func (c *Client) GetContainerMetrics(name string) (*ContainerMetrics, error) {
+	state, _, err := c.server.GetInstanceState(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container state: %w", err)
+	}
+
+	metrics := &ContainerMetrics{
+		Name:         name,
+		ProcessCount: int32(state.Processes),
+	}
+
+	// CPU usage (in nanoseconds, convert to seconds)
+	if state.CPU.Usage > 0 {
+		metrics.CPUUsageSeconds = state.CPU.Usage / 1000000000
+	}
+
+	// Memory usage
+	if state.Memory.Usage > 0 {
+		metrics.MemoryUsageBytes = state.Memory.Usage
+	}
+	if state.Memory.UsagePeak > 0 {
+		metrics.MemoryLimitBytes = state.Memory.UsagePeak
+	}
+
+	// Disk usage (root filesystem)
+	if rootDisk, ok := state.Disk["root"]; ok {
+		metrics.DiskUsageBytes = rootDisk.Usage
+	}
+
+	// Network usage (sum all interfaces except lo)
+	for netName, network := range state.Network {
+		if netName != "lo" {
+			metrics.NetworkRxBytes += network.Counters.BytesReceived
+			metrics.NetworkTxBytes += network.Counters.BytesSent
+		}
+	}
+
+	return metrics, nil
 }
 
 // CheckVersion checks if the Incus version meets minimum requirements

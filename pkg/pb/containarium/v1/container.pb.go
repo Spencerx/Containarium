@@ -365,22 +365,20 @@ type ContainerMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Container name
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Current CPU usage percentage (0-100)
-	CpuUsagePercent float64 `protobuf:"fixed64,2,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
+	// CPU usage in seconds (cumulative CPU time used)
+	CpuUsageSeconds int64 `protobuf:"varint,2,opt,name=cpu_usage_seconds,json=cpuUsageSeconds,proto3" json:"cpu_usage_seconds,omitempty"`
 	// Current memory usage in bytes
 	MemoryUsageBytes int64 `protobuf:"varint,3,opt,name=memory_usage_bytes,json=memoryUsageBytes,proto3" json:"memory_usage_bytes,omitempty"`
-	// Memory limit in bytes
-	MemoryLimitBytes int64 `protobuf:"varint,4,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`
-	// Disk usage in bytes
+	// Peak memory usage in bytes
+	MemoryPeakBytes int64 `protobuf:"varint,4,opt,name=memory_peak_bytes,json=memoryPeakBytes,proto3" json:"memory_peak_bytes,omitempty"`
+	// Disk usage in bytes (root filesystem)
 	DiskUsageBytes int64 `protobuf:"varint,5,opt,name=disk_usage_bytes,json=diskUsageBytes,proto3" json:"disk_usage_bytes,omitempty"`
-	// Disk limit in bytes
-	DiskLimitBytes int64 `protobuf:"varint,6,opt,name=disk_limit_bytes,json=diskLimitBytes,proto3" json:"disk_limit_bytes,omitempty"`
-	// Network bytes received
-	NetworkRxBytes int64 `protobuf:"varint,7,opt,name=network_rx_bytes,json=networkRxBytes,proto3" json:"network_rx_bytes,omitempty"`
-	// Network bytes transmitted
-	NetworkTxBytes int64 `protobuf:"varint,8,opt,name=network_tx_bytes,json=networkTxBytes,proto3" json:"network_tx_bytes,omitempty"`
+	// Network bytes received (all interfaces except loopback)
+	NetworkRxBytes int64 `protobuf:"varint,6,opt,name=network_rx_bytes,json=networkRxBytes,proto3" json:"network_rx_bytes,omitempty"`
+	// Network bytes transmitted (all interfaces except loopback)
+	NetworkTxBytes int64 `protobuf:"varint,7,opt,name=network_tx_bytes,json=networkTxBytes,proto3" json:"network_tx_bytes,omitempty"`
 	// Number of running processes in container
-	ProcessCount  int32 `protobuf:"varint,9,opt,name=process_count,json=processCount,proto3" json:"process_count,omitempty"`
+	ProcessCount  int32 `protobuf:"varint,8,opt,name=process_count,json=processCount,proto3" json:"process_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -422,9 +420,9 @@ func (x *ContainerMetrics) GetName() string {
 	return ""
 }
 
-func (x *ContainerMetrics) GetCpuUsagePercent() float64 {
+func (x *ContainerMetrics) GetCpuUsageSeconds() int64 {
 	if x != nil {
-		return x.CpuUsagePercent
+		return x.CpuUsageSeconds
 	}
 	return 0
 }
@@ -436,9 +434,9 @@ func (x *ContainerMetrics) GetMemoryUsageBytes() int64 {
 	return 0
 }
 
-func (x *ContainerMetrics) GetMemoryLimitBytes() int64 {
+func (x *ContainerMetrics) GetMemoryPeakBytes() int64 {
 	if x != nil {
-		return x.MemoryLimitBytes
+		return x.MemoryPeakBytes
 	}
 	return 0
 }
@@ -446,13 +444,6 @@ func (x *ContainerMetrics) GetMemoryLimitBytes() int64 {
 func (x *ContainerMetrics) GetDiskUsageBytes() int64 {
 	if x != nil {
 		return x.DiskUsageBytes
-	}
-	return 0
-}
-
-func (x *ContainerMetrics) GetDiskLimitBytes() int64 {
-	if x != nil {
-		return x.DiskLimitBytes
 	}
 	return 0
 }
@@ -492,7 +483,10 @@ type CreateContainerRequest struct {
 	// Container image to use (optional, defaults to images:ubuntu/24.04)
 	Image string `protobuf:"bytes,5,opt,name=image,proto3" json:"image,omitempty"`
 	// Enable Docker support (optional, defaults to true)
-	EnableDocker  bool `protobuf:"varint,6,opt,name=enable_docker,json=enableDocker,proto3" json:"enable_docker,omitempty"`
+	EnableDocker bool `protobuf:"varint,6,opt,name=enable_docker,json=enableDocker,proto3" json:"enable_docker,omitempty"`
+	// Async mode - if true, returns immediately with CREATING state
+	// Client should poll GetContainer to check completion
+	Async         bool `protobuf:"varint,7,opt,name=async,proto3" json:"async,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -565,6 +559,13 @@ func (x *CreateContainerRequest) GetImage() string {
 func (x *CreateContainerRequest) GetEnableDocker() bool {
 	if x != nil {
 		return x.EnableDocker
+	}
+	return false
+}
+
+func (x *CreateContainerRequest) GetAsync() bool {
+	if x != nil {
+		return x.Async
 	}
 	return false
 }
@@ -1545,24 +1546,24 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"\x0edocker_enabled\x18\v \x01(\bR\rdockerEnabled\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfb\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcf\x02\n" +
 	"\x10ContainerMetrics\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12*\n" +
-	"\x11cpu_usage_percent\x18\x02 \x01(\x01R\x0fcpuUsagePercent\x12,\n" +
-	"\x12memory_usage_bytes\x18\x03 \x01(\x03R\x10memoryUsageBytes\x12,\n" +
-	"\x12memory_limit_bytes\x18\x04 \x01(\x03R\x10memoryLimitBytes\x12(\n" +
+	"\x11cpu_usage_seconds\x18\x02 \x01(\x03R\x0fcpuUsageSeconds\x12,\n" +
+	"\x12memory_usage_bytes\x18\x03 \x01(\x03R\x10memoryUsageBytes\x12*\n" +
+	"\x11memory_peak_bytes\x18\x04 \x01(\x03R\x0fmemoryPeakBytes\x12(\n" +
 	"\x10disk_usage_bytes\x18\x05 \x01(\x03R\x0ediskUsageBytes\x12(\n" +
-	"\x10disk_limit_bytes\x18\x06 \x01(\x03R\x0ediskLimitBytes\x12(\n" +
-	"\x10network_rx_bytes\x18\a \x01(\x03R\x0enetworkRxBytes\x12(\n" +
-	"\x10network_tx_bytes\x18\b \x01(\x03R\x0enetworkTxBytes\x12#\n" +
-	"\rprocess_count\x18\t \x01(\x05R\fprocessCount\"\xd1\x02\n" +
+	"\x10network_rx_bytes\x18\x06 \x01(\x03R\x0enetworkRxBytes\x12(\n" +
+	"\x10network_tx_bytes\x18\a \x01(\x03R\x0enetworkTxBytes\x12#\n" +
+	"\rprocess_count\x18\b \x01(\x05R\fprocessCount\"\xe7\x02\n" +
 	"\x16CreateContainerRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12=\n" +
 	"\tresources\x18\x02 \x01(\v2\x1f.containarium.v1.ResourceLimitsR\tresources\x12\x19\n" +
 	"\bssh_keys\x18\x03 \x03(\tR\asshKeys\x12K\n" +
 	"\x06labels\x18\x04 \x03(\v23.containarium.v1.CreateContainerRequest.LabelsEntryR\x06labels\x12\x14\n" +
 	"\x05image\x18\x05 \x01(\tR\x05image\x12#\n" +
-	"\renable_docker\x18\x06 \x01(\bR\fenableDocker\x1a9\n" +
+	"\renable_docker\x18\x06 \x01(\bR\fenableDocker\x12\x14\n" +
+	"\x05async\x18\a \x01(\bR\x05async\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +

@@ -100,29 +100,26 @@ message ContainerMetrics {
   // Container name
   string name = 1;
 
-  // Current CPU usage percentage (0-100)
-  double cpu_usage_percent = 2;
+  // CPU usage in seconds (cumulative CPU time used)
+  int64 cpu_usage_seconds = 2;
 
   // Current memory usage in bytes
   int64 memory_usage_bytes = 3;
 
-  // Memory limit in bytes
-  int64 memory_limit_bytes = 4;
+  // Peak memory usage in bytes
+  int64 memory_peak_bytes = 4;
 
-  // Disk usage in bytes
+  // Disk usage in bytes (root filesystem)
   int64 disk_usage_bytes = 5;
 
-  // Disk limit in bytes
-  int64 disk_limit_bytes = 6;
+  // Network bytes received (all interfaces except loopback)
+  int64 network_rx_bytes = 6;
 
-  // Network bytes received
-  int64 network_rx_bytes = 7;
-
-  // Network bytes transmitted
-  int64 network_tx_bytes = 8;
+  // Network bytes transmitted (all interfaces except loopback)
+  int64 network_tx_bytes = 7;
 
   // Number of running processes in container
-  int32 process_count = 9;
+  int32 process_count = 8;
 }
 
 // CreateContainerRequest is the request to create a new container
@@ -144,6 +141,10 @@ message CreateContainerRequest {
 
   // Enable Docker support (optional, defaults to true)
   bool enable_docker = 6;
+
+  // Async mode - if true, returns immediately with CREATING state
+  // Client should poll GetContainer to check completion
+  bool async = 7;
 }
 
 // CreateContainerResponse is the response from creating a container

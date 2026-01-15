@@ -542,40 +542,35 @@
           "type": "string",
           "title": "Container name"
         },
-        "cpuUsagePercent": {
-          "type": "number",
-          "format": "double",
-          "title": "Current CPU usage percentage (0-100)"
+        "cpuUsageSeconds": {
+          "type": "string",
+          "format": "int64",
+          "title": "CPU usage in seconds (cumulative CPU time used)"
         },
         "memoryUsageBytes": {
           "type": "string",
           "format": "int64",
           "title": "Current memory usage in bytes"
         },
-        "memoryLimitBytes": {
+        "memoryPeakBytes": {
           "type": "string",
           "format": "int64",
-          "title": "Memory limit in bytes"
+          "title": "Peak memory usage in bytes"
         },
         "diskUsageBytes": {
           "type": "string",
           "format": "int64",
-          "title": "Disk usage in bytes"
-        },
-        "diskLimitBytes": {
-          "type": "string",
-          "format": "int64",
-          "title": "Disk limit in bytes"
+          "title": "Disk usage in bytes (root filesystem)"
         },
         "networkRxBytes": {
           "type": "string",
           "format": "int64",
-          "title": "Network bytes received"
+          "title": "Network bytes received (all interfaces except loopback)"
         },
         "networkTxBytes": {
           "type": "string",
           "format": "int64",
-          "title": "Network bytes transmitted"
+          "title": "Network bytes transmitted (all interfaces except loopback)"
         },
         "processCount": {
           "type": "integer",
@@ -631,6 +626,10 @@
         "enableDocker": {
           "type": "boolean",
           "title": "Enable Docker support (optional, defaults to true)"
+        },
+        "async": {
+          "type": "boolean",
+          "title": "Async mode - if true, returns immediately with CREATING state\nClient should poll GetContainer to check completion"
         }
       },
       "title": "CreateContainerRequest is the request to create a new container"

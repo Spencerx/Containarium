@@ -1,0 +1,134 @@
+'use client';
+
+import useSWR from 'swr';
+import { Container, CreateContainerRequest } from '@/src/types/container';
+import { Server } from '@/src/types/server';
+import { getClient } from '@/src/lib/api/client';
+
+export interface CreateContainerProgress {
+  state: string;
+  message: string;
+}
+
+/**
+ * Hook for managing containers for a specific server
+ */
+export function useContainers(server: Server | null) {
+  // Create a stable fetcher for this server
+  const fetcher = async (): Promise<Container[]> => {
+    if (!server) return [];
+    const client = getClient(server);
+    return client.listContainers();
+  };
+
+  // SWR key is based on server endpoint to ensure proper caching
+  const swrKey = server ? 'containers-' + server.id : null;
+
+  const { data, error, isLoading, mutate } = useSWR<Container[]>(
+    swrKey,
+    fetcher,
+    {
+      refreshInterval: 10000, // Poll every 10 seconds
+      revalidateOnFocus: true,
+      dedupingInterval: 5000,
+    }
+  );
+
+  /**
+   * Create a new container with async API and polling for completion
+   */
+  const createContainer = async (
+    request: CreateContainerRequest,
+    onProgress?: (progress: CreateContainerProgress) => void
+  ) => {
+    if (!server) throw new Error('No server selected');
+
+    const client = getClient(server);
+
+    // Notify starting
+    if (onProgress) {
+      onProgress({ state: 'Creating', message: 'Initiating container creation...' });
+    }
+
+    // Initiate async container creation (returns immediately)
+    await client.createContainer(request, true);
+
+    // Poll for completion
+    if (onProgress) {
+      onProgress({ state: 'Creating', message: 'Container is being provisioned...' });
+    }
+
+    const container = await client.waitForContainer(
+      request.username,
+      (state, message) => {
+        if (onProgress) {
+          onProgress({ state, message });
+        }
+      }
+    );
+
+    // Revalidate container list
+    await mutate();
+
+    return container;
+  };
+
+  /**
+   * Delete a container
+   */
+  const deleteContainer = async (username: string, force: boolean = false) => {
+    if (!server) throw new Error('No server selected');
+
+    const client = getClient(server);
+    await client.deleteContainer(username, force);
+
+    // Revalidate container list
+    await mutate();
+  };
+
+  /**
+   * Start a container
+   */
+  const startContainer = async (username: string) => {
+    if (!server) throw new Error('No server selected');
+
+    const client = getClient(server);
+    const container = await client.startContainer(username);
+
+    // Revalidate container list
+    await mutate();
+
+    return container;
+  };
+
+  /**
+   * Stop a container
+   */
+  const stopContainer = async (username: string, force: boolean = false) => {
+    if (!server) throw new Error('No server selected');
+
+    const client = getClient(server);
+    const container = await client.stopContainer(username, force);
+
+    // Revalidate container list
+    await mutate();
+
+    return container;
+  };
+
+  /**
+   * Refresh container list
+   */
+  const refresh = () => mutate();
+
+  return {
+    containers: data || [],
+    isLoading,
+    error,
+    createContainer,
+    deleteContainer,
+    startContainer,
+    stopContainer,
+    refresh,
+  };
+}

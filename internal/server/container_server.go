@@ -3,16 +3,28 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/footprintai/containarium/internal/container"
 	"github.com/footprintai/containarium/internal/incus"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
 
+// PendingCreation tracks an async container creation
+type PendingCreation struct {
+	Username  string
+	StartedAt time.Time
+	Error     error
+	Done      bool
+}
+
 // ContainerServer implements the gRPC ContainerService
 type ContainerServer struct {
 	pb.UnimplementedContainerServiceServer
-	manager *container.Manager
+	manager          *container.Manager
+	pendingCreations map[string]*PendingCreation
+	pendingMu        sync.RWMutex
 }
 
 // NewContainerServer creates a new container server
@@ -21,7 +33,10 @@ func NewContainerServer() (*ContainerServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container manager: %w", err)
 	}
-	return &ContainerServer{manager: mgr}, nil
+	return &ContainerServer{
+		manager:          mgr,
+		pendingCreations: make(map[string]*PendingCreation),
+	}, nil
 }
 
 // CreateContainer creates a new container
@@ -61,17 +76,61 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		opts.Disk = "50GB"
 	}
 
-	// Create the container
+	// Async mode - return immediately and create in background
+	if req.Async {
+		// Check if already creating
+		s.pendingMu.Lock()
+		if pending, exists := s.pendingCreations[req.Username]; exists && !pending.Done {
+			s.pendingMu.Unlock()
+			return nil, fmt.Errorf("container creation already in progress for user %s", req.Username)
+		}
+
+		// Track pending creation
+		s.pendingCreations[req.Username] = &PendingCreation{
+			Username:  req.Username,
+			StartedAt: time.Now(),
+		}
+		s.pendingMu.Unlock()
+
+		// Start async creation
+		go func() {
+			_, err := s.manager.Create(opts)
+
+			s.pendingMu.Lock()
+			if pending, exists := s.pendingCreations[req.Username]; exists {
+				pending.Done = true
+				pending.Error = err
+			}
+			s.pendingMu.Unlock()
+		}()
+
+		// Return immediately with CREATING state
+		return &pb.CreateContainerResponse{
+			Container: &pb.Container{
+				Name:     fmt.Sprintf("%s-container", req.Username),
+				Username: req.Username,
+				State:    pb.ContainerState_CONTAINER_STATE_CREATING,
+				Resources: &pb.ResourceLimits{
+					Cpu:    opts.CPU,
+					Memory: opts.Memory,
+					Disk:   opts.Disk,
+				},
+			},
+			Message: fmt.Sprintf("Container creation started for user %s. Poll GET /v1/containers/%s to check status.", req.Username, req.Username),
+		}, nil
+	}
+
+	// Sync mode - wait for completion
 	info, err := s.manager.Create(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
 
 	// Convert to protobuf
-	container := toProtoContainer(info)
+	protoContainer := toProtoContainer(info)
 
 	return &pb.CreateContainerResponse{
-		Container:  container,
+		Container:  protoContainer,
 		Message:    fmt.Sprintf("Container %s created successfully", info.Name),
 		SshCommand: fmt.Sprintf("ssh %s@%s", req.Username, info.IPAddress),
 	}, nil
@@ -122,9 +181,50 @@ func (s *ContainerServer) GetContainer(ctx context.Context, req *pb.GetContainer
 		return nil, fmt.Errorf("username is required")
 	}
 
+	// Check if there's a pending async creation
+	s.pendingMu.RLock()
+	pending, hasPending := s.pendingCreations[req.Username]
+	s.pendingMu.RUnlock()
+
+	if hasPending && !pending.Done {
+		// Still creating - return CREATING state
+		return &pb.GetContainerResponse{
+			Container: &pb.Container{
+				Name:     fmt.Sprintf("%s-container", req.Username),
+				Username: req.Username,
+				State:    pb.ContainerState_CONTAINER_STATE_CREATING,
+			},
+		}, nil
+	}
+
+	if hasPending && pending.Done && pending.Error != nil {
+		// Creation failed - return ERROR state
+		return &pb.GetContainerResponse{
+			Container: &pb.Container{
+				Name:     fmt.Sprintf("%s-container", req.Username),
+				Username: req.Username,
+				State:    pb.ContainerState_CONTAINER_STATE_ERROR,
+			},
+		}, nil
+	}
+
+	// Try to get from Incus
 	info, err := s.manager.Get(req.Username)
 	if err != nil {
+		// If we had a pending creation that completed, clean it up
+		if hasPending && pending.Done {
+			s.pendingMu.Lock()
+			delete(s.pendingCreations, req.Username)
+			s.pendingMu.Unlock()
+		}
 		return nil, fmt.Errorf("failed to get container: %w", err)
+	}
+
+	// Clean up pending creation if exists
+	if hasPending {
+		s.pendingMu.Lock()
+		delete(s.pendingCreations, req.Username)
+		s.pendingMu.Unlock()
 	}
 
 	return &pb.GetContainerResponse{
@@ -198,8 +298,29 @@ func (s *ContainerServer) RemoveSSHKey(ctx context.Context, req *pb.RemoveSSHKey
 
 // GetMetrics gets runtime metrics for containers
 func (s *ContainerServer) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
-	// TODO: Implement metrics collection
-	return nil, fmt.Errorf("not implemented yet")
+	var protoMetrics []*pb.ContainerMetrics
+
+	if req.Username != "" {
+		// Get metrics for a specific container
+		metrics, err := s.manager.GetMetrics(req.Username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get metrics: %w", err)
+		}
+		protoMetrics = append(protoMetrics, toProtoMetrics(metrics))
+	} else {
+		// Get metrics for all containers
+		allMetrics, err := s.manager.GetAllMetrics()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get metrics: %w", err)
+		}
+		for _, m := range allMetrics {
+			protoMetrics = append(protoMetrics, toProtoMetrics(m))
+		}
+	}
+
+	return &pb.GetMetricsResponse{
+		Metrics: protoMetrics,
+	}, nil
 }
 
 // GetSystemInfo gets information about the Incus host
@@ -246,6 +367,20 @@ func (s *ContainerServer) GetSystemInfo(ctx context.Context, req *pb.GetSystemIn
 	return &pb.GetSystemInfoResponse{
 		Info: info,
 	}, nil
+}
+
+// toProtoMetrics converts internal metrics to protobuf
+func toProtoMetrics(m *incus.ContainerMetrics) *pb.ContainerMetrics {
+	return &pb.ContainerMetrics{
+		Name:             m.Name,
+		CpuUsageSeconds:  m.CPUUsageSeconds,
+		MemoryUsageBytes: m.MemoryUsageBytes,
+		MemoryPeakBytes:  m.MemoryLimitBytes,
+		DiskUsageBytes:   m.DiskUsageBytes,
+		NetworkRxBytes:   m.NetworkRxBytes,
+		NetworkTxBytes:   m.NetworkTxBytes,
+		ProcessCount:     m.ProcessCount,
+	}
 }
 
 // toProtoContainer converts internal container info to protobuf

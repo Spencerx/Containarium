@@ -7,6 +7,59 @@ Built with LXC, SSH jump hosts, and cloud-native automation.
 🚫 No VM-per-user
 ✅ Just fast, cheap, isolated Linux environments
 
+![Containarium Dashboard](docs/screenshots/dashboard.png)
+
+## Quick Start
+
+### Web UI
+
+Access the web-based dashboard at `http://your-server:50051/webui/`
+
+**Features:**
+- Multi-server management with tabs
+- Real-time container metrics (CPU, Memory, Disk)
+- Container lifecycle management
+- Browser-based terminal access
+- Client-side SSH key generation
+
+### Authentication
+
+Containarium uses JWT tokens for API authentication. Tokens are generated via CLI only (not exposed via API).
+
+**Generate a token:**
+```bash
+# On the server running containarium daemon
+containarium token generate \
+  --username admin \
+  --roles admin \
+  --expiry 720h \
+  --secret-file /etc/containarium/jwt.secret
+
+# Or with inline secret (for testing)
+containarium token generate \
+  --username admin \
+  --roles admin \
+  --expiry 24h \
+  --secret 'your-jwt-secret'
+```
+
+**Token options:**
+| Flag | Description |
+|------|-------------|
+| `--username` | Username for the token (required) |
+| `--roles` | Comma-separated roles (default: user) |
+| `--expiry` | Token validity (e.g., 24h, 720h, 0 for no expiry) |
+| `--secret` | JWT secret key |
+| `--secret-file` | Path to file containing JWT secret |
+
+**Use the token:**
+```bash
+# REST API
+curl -H "Authorization: Bearer <token>" http://localhost:50051/v1/containers
+
+# Web UI: Click "Add Server" and paste the token
+```
+
 ## Why Containarium?
 
 Most teams still provision one VM per developer for SSH-based development.
