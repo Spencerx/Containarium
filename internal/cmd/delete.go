@@ -50,8 +50,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 	// Delete container - use remote or local mode
 	var err error
-	if serverAddr != "" {
-		// Remote mode via gRPC
+	if httpMode && serverAddr != "" {
+		// Remote mode via HTTP 
+		err = deleteRemoteHTTP(username, forceDelete)
+	} else if serverAddr != "" {
+		// Remote mode via gRPC 
 		err = deleteRemote(username, forceDelete)
 	} else {
 		// Local mode via Incus
@@ -94,7 +97,7 @@ func deleteLocal(username string, force bool) error {
 	return mgr.Delete(username, force)
 }
 
-// deleteRemote deletes a container using remote gRPC server
+// deleteRemote deletes a container using remote gRPC server 
 func deleteRemote(username string, force bool) error {
 	grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 	if err != nil {
@@ -103,4 +106,15 @@ func deleteRemote(username string, force bool) error {
 	defer grpcClient.Close()
 
 	return grpcClient.DeleteContainer(username, force)
+}
+
+// deleteRemoteHTTP deletes a container using remote HTTP API 
+func deleteRemoteHTTP(username string, force bool) error {
+	httpClient, err := client.NewHTTPClient(serverAddr, authToken)
+	if err != nil {
+		return err
+	}
+	defer httpClient.Close()
+
+	return httpClient.DeleteContainer(username, force)
 }

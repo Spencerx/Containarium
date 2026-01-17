@@ -61,8 +61,26 @@ func showSystemInfo() error {
 	var containers []incus.ContainerInfo
 	var err error
 
-	if serverAddr != "" {
-		// Remote mode via gRPC
+	if httpMode && serverAddr != "" {
+		// Remote mode via HTTP 
+		var httpClient *client.HTTPClient
+		httpClient, err = client.NewHTTPClient(serverAddr, authToken)
+		if err != nil {
+			return fmt.Errorf("failed to create HTTP client: %w", err)
+		}
+		defer httpClient.Close()
+
+		serverInfo, err = httpClient.GetSystemInfo()
+		if err != nil {
+			return fmt.Errorf("failed to get server info: %w", err)
+		}
+
+		containers, err = httpClient.ListContainers()
+		if err != nil {
+			return fmt.Errorf("failed to list containers: %w", err)
+		}
+	} else if serverAddr != "" {
+		// Remote mode via gRPC 
 		var grpcClient *client.GRPCClient
 		grpcClient, err = client.NewGRPCClient(serverAddr, certsDir, insecure)
 		if err != nil {
@@ -148,8 +166,21 @@ func showContainerInfo(username string) error {
 	var info *incus.ContainerInfo
 	var err error
 
-	if serverAddr != "" {
-		// Remote mode via gRPC
+	if httpMode && serverAddr != "" {
+		// Remote mode via HTTP 
+		var httpClient *client.HTTPClient
+		httpClient, err = client.NewHTTPClient(serverAddr, authToken)
+		if err != nil {
+			return fmt.Errorf("failed to create HTTP client: %w", err)
+		}
+		defer httpClient.Close()
+
+		info, err = httpClient.GetContainer(username)
+		if err != nil {
+			return fmt.Errorf("container not found: %w", err)
+		}
+	} else if serverAddr != "" {
+		// Remote mode via gRPC 
 		var grpcClient *client.GRPCClient
 		grpcClient, err = client.NewGRPCClient(serverAddr, certsDir, insecure)
 		if err != nil {

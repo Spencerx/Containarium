@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **HTTP/REST client for CLI** - Alternative to gRPC for remote server communication
+  - `--http` flag to use HTTP/REST API instead of gRPC
+  - `--token` flag for JWT authentication token
+  - Supports all CLI commands: `create`, `list`, `delete`, `info`
+  - Example: `containarium list --server http://host:8080 --http --token <JWT>`
+- **Web UI server management with localStorage persistence**
+  - Server configurations (URL, name, token) stored in browser localStorage
+  - Persists across browser sessions until explicitly removed
+  - Add Server dialog with connection testing
+  - Edit server via pencil icon on server tab
+  - Remove server via X icon on server tab
+  - Multi-server support with tab-based switching
+- **SSH public key input in Web UI** - Option to provide your own SSH public key
+  - Uncheck "Auto-generate SSH key pair" to reveal public key input field
+  - Paste existing SSH public key instead of auto-generating
+
+### Changed
+- CLI now supports both gRPC and HTTP protocols equally (neither marked as deprecated)
+- Server address flag help text updated to reflect dual-protocol support
+
 ## [0.3.0] - 2026-01-15
 
 ### Added
