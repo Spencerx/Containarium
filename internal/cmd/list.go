@@ -51,8 +51,14 @@ func runList(cmd *cobra.Command, args []string) error {
 	var err error
 
 	// Check if using remote server
-	if serverAddr != "" {
-		// Use gRPC client for remote server
+	if httpMode && serverAddr != "" {
+		// Use HTTP client for remote server 
+		containers, err = listRemoteHTTP()
+		if err != nil {
+			return fmt.Errorf("failed to list containers from HTTP API: %w", err)
+		}
+	} else if serverAddr != "" {
+		// Use gRPC client for remote server 
 		containers, err = listRemote()
 		if err != nil {
 			return fmt.Errorf("failed to list containers from remote server: %w", err)
@@ -185,7 +191,7 @@ func listLocal() ([]incus.ContainerInfo, error) {
 	return mgr.List()
 }
 
-// listRemote lists containers from remote gRPC server
+// listRemote lists containers from remote gRPC server 
 func listRemote() ([]incus.ContainerInfo, error) {
 	grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 	if err != nil {
@@ -194,4 +200,15 @@ func listRemote() ([]incus.ContainerInfo, error) {
 	defer grpcClient.Close()
 
 	return grpcClient.ListContainers()
+}
+
+// listRemoteHTTP lists containers from remote HTTP API 
+func listRemoteHTTP() ([]incus.ContainerInfo, error) {
+	httpClient, err := client.NewHTTPClient(serverAddr, authToken)
+	if err != nil {
+		return nil, err
+	}
+	defer httpClient.Close()
+
+	return httpClient.ListContainers()
 }

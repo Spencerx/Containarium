@@ -107,8 +107,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 		// Check if container exists
 		var containerExists bool
-		if serverAddr != "" {
-			// Remote mode via gRPC
+		if httpMode && serverAddr != "" {
+			// Remote mode via HTTP
+			httpClient, err := client.NewHTTPClient(serverAddr, authToken)
+			if err != nil {
+				return fmt.Errorf("failed to create HTTP client: %w", err)
+			}
+			defer httpClient.Close()
+
+			_, err = httpClient.GetContainer(username)
+			containerExists = (err == nil)
+		} else if serverAddr != "" {
+			// Remote mode via gRPC 
 			grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 			if err != nil {
 				return fmt.Errorf("failed to connect to remote server: %w", err)
@@ -131,8 +141,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Container for user '%s' already exists, deleting due to --force flag...\n", username)
 
 			// Delete the container
-			if serverAddr != "" {
-				// Remote mode via gRPC
+			if httpMode && serverAddr != "" {
+				// Remote mode via HTTP
+				httpClient, err := client.NewHTTPClient(serverAddr, authToken)
+				if err != nil {
+					return fmt.Errorf("failed to create HTTP client: %w", err)
+				}
+				defer httpClient.Close()
+
+				if err := httpClient.DeleteContainer(username, true); err != nil {
+					return fmt.Errorf("failed to delete existing container: %w", err)
+				}
+			} else if serverAddr != "" {
+				// Remote mode via gRPC 
 				grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 				if err != nil {
 					return fmt.Errorf("failed to connect to remote server: %w", err)
@@ -179,8 +200,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// Create container - use remote or local mode
 	var info *incus.ContainerInfo
 
-	if serverAddr != "" {
-		// Remote mode via gRPC
+	if httpMode && serverAddr != "" {
+		// Remote mode via HTTP 
+		info, err = createRemoteHTTP(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enableDocker)
+		if err != nil {
+			return fmt.Errorf("failed to create container via HTTP API: %w", err)
+		}
+	} else if serverAddr != "" {
+		// Remote mode via gRPC 
 		info, err = createRemote(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enableDocker)
 		if err != nil {
 			return fmt.Errorf("failed to create container via remote server: %w", err)
@@ -264,7 +291,7 @@ func createLocal(username, image, cpu, memory, disk string, sshKeys []string, en
 	return mgr.Create(opts)
 }
 
-// createRemote creates a container using remote gRPC server
+// createRemote creates a container using remote gRPC server 
 func createRemote(username, image, cpu, memory, disk string, sshKeys []string, enableDocker bool) (*incus.ContainerInfo, error) {
 	grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 	if err != nil {
@@ -273,4 +300,15 @@ func createRemote(username, image, cpu, memory, disk string, sshKeys []string, e
 	defer grpcClient.Close()
 
 	return grpcClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enableDocker)
+}
+
+// createRemoteHTTP creates a container using remote HTTP API 
+func createRemoteHTTP(username, image, cpu, memory, disk string, sshKeys []string, enableDocker bool) (*incus.ContainerInfo, error) {
+	httpClient, err := client.NewHTTPClient(serverAddr, authToken)
+	if err != nil {
+		return nil, err
+	}
+	defer httpClient.Close()
+
+	return httpClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enableDocker)
 }

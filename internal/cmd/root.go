@@ -8,12 +8,15 @@ import (
 )
 
 var (
-	cfgFile    string
-	verbose    bool
-	serverAddr string
-	certsDir   string
-	insecure   bool
+	cfgFile        string
+	verbose        bool
+	serverAddr     string
+	certsDir       string
+	insecure       bool
 	verboseVersion bool
+	// HTTP mode flags
+	httpMode  bool
+	authToken string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -87,10 +90,14 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.containarium.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 
-	// Remote gRPC server flags
-	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "remote gRPC server address (e.g., 35.229.246.67:50051)")
+	// Remote server flags (gRPC mode)
+	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "remote server address (e.g., 35.229.246.67:50051 for gRPC, or http://host:8080 for HTTP)")
 	rootCmd.PersistentFlags().StringVar(&certsDir, "certs-dir", "", "directory containing mTLS certificates (default: ~/.config/containarium/certs)")
 	rootCmd.PersistentFlags().BoolVar(&insecure, "insecure", false, "connect without TLS (not recommended)")
+
+	// Remote server flags (HTTP mode)
+	rootCmd.PersistentFlags().BoolVar(&httpMode, "http", false, "use HTTP/REST API instead of gRPC")
+	rootCmd.PersistentFlags().StringVar(&authToken, "token", "", "JWT authentication token for HTTP API")
 
 	// Version command with verbose flag
 	versionCmd.Flags().BoolVar(&verboseVersion, "verbose", false, "show detailed version information")
