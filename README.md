@@ -16,6 +16,8 @@ Built with LXC, SSH jump hosts, and cloud-native automation.
 ### Network Topology
 ![Network Topology](docs/screenshots/dashboard-3.png)
 
+🌐 **Live Demo:** [https://containarium.kafeido.app/webui/](https://containarium.kafeido.app/webui/)
+
 ## Quick Start
 
 ### Web UI
