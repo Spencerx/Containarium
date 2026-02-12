@@ -99,9 +99,33 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 	// Register container service
 	pb.RegisterContainerServiceServer(grpcServer, containerServer)
 
-	// Create and register AppServer and NetworkServer if app hosting is enabled
-	var appServer *AppServer
+	// Create NetworkServer (always available for network topology)
 	var networkServer *NetworkServer
+	networkIncusClient, err := incus.New()
+	if err != nil {
+		log.Printf("Warning: Failed to create incus client for network service: %v", err)
+	} else {
+		networkCIDR := "10.100.0.0/24"
+		// Get actual network CIDR from incus
+		if subnet, err := networkIncusClient.GetNetworkSubnet("incusbr0"); err == nil {
+			if len(subnet) > 0 {
+				networkCIDR = subnet
+			}
+		}
+		// NetworkServer without app hosting dependencies (no proxy manager or app store)
+		networkServer = NewNetworkServer(
+			networkIncusClient,
+			nil, // proxyManager - will be updated if app hosting is enabled
+			nil, // appStore - will be updated if app hosting is enabled
+			networkCIDR,
+			"", // Proxy IP determined dynamically
+		)
+		pb.RegisterNetworkServiceServer(grpcServer, networkServer)
+		log.Printf("Network service enabled")
+	}
+
+	// Create and register AppServer if app hosting is enabled
+	var appServer *AppServer
 	if config.EnableAppHosting {
 		incusClient, err := incus.New()
 		if err != nil {
@@ -165,20 +189,17 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 				pb.RegisterAppServiceServer(grpcServer, appServer)
 				log.Printf("App hosting service enabled")
 
-				// Create and register NetworkServer
-				var proxyManager *app.ProxyManager
-				if caddyAdminURL != "" {
-					proxyManager = app.NewProxyManager(caddyAdminURL, config.BaseDomain)
+				// Update NetworkServer with app hosting dependencies
+				if networkServer != nil {
+					var proxyManager *app.ProxyManager
+					if caddyAdminURL != "" {
+						proxyManager = app.NewProxyManager(caddyAdminURL, config.BaseDomain)
+					}
+					networkServer.proxyManager = proxyManager
+					networkServer.appStore = appStore
+					networkServer.baseDomain = config.BaseDomain
+					log.Printf("Network service updated with app hosting features")
 				}
-				networkServer = NewNetworkServer(
-					incusClient,
-					proxyManager,
-					appStore,
-					networkCIDR,
-					"", // Proxy IP determined dynamically
-				)
-				pb.RegisterNetworkServiceServer(grpcServer, networkServer)
-				log.Printf("Network service enabled")
 			}
 		}
 	}

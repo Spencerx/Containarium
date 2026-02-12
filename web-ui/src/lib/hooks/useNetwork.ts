@@ -1,7 +1,7 @@
 'use client';
 
 import useSWR from 'swr';
-import { NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo } from '@/src/types/app';
+import { NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo, DNSRecord } from '@/src/types/app';
 import { Server } from '@/src/types/server';
 import { getClient } from '@/src/lib/api/client';
 
@@ -27,10 +27,27 @@ export function useRoutes(server: Server | null, username?: string) {
     }
   );
 
+  const addRoute = async (domain: string, targetIp: string, targetPort: number) => {
+    if (!server) throw new Error('No server selected');
+    const client = getClient(server);
+    const route = await client.addRoute(domain, targetIp, targetPort);
+    await mutate();
+    return route;
+  };
+
+  const deleteRoute = async (domain: string) => {
+    if (!server) throw new Error('No server selected');
+    const client = getClient(server);
+    await client.deleteRoute(domain);
+    await mutate();
+  };
+
   return {
     routes: data || [],
     isLoading,
     error,
+    addRoute,
+    deleteRoute,
     refresh: () => mutate(),
   };
 }
@@ -141,5 +158,35 @@ export function useACLPresets(server: Server | null) {
     presets: data || [],
     isLoading,
     error,
+  };
+}
+
+/**
+ * Hook for getting DNS records (domain suggestions)
+ */
+export function useDNSRecords(server: Server | null) {
+  const fetcher = async (): Promise<{ records: DNSRecord[]; baseDomain: string }> => {
+    if (!server) return { records: [], baseDomain: '' };
+    const client = getClient(server);
+    return client.getDNSRecords();
+  };
+
+  const swrKey = server ? `dns-records-${server.id}` : null;
+
+  const { data, error, isLoading, mutate } = useSWR<{ records: DNSRecord[]; baseDomain: string }>(
+    swrKey,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
+  );
+
+  return {
+    records: data?.records || [],
+    baseDomain: data?.baseDomain || '',
+    isLoading,
+    error,
+    refresh: () => mutate(),
   };
 }

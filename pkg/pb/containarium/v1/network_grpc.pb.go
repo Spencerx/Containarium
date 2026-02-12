@@ -20,6 +20,10 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	NetworkService_GetRoutes_FullMethodName          = "/containarium.v1.NetworkService/GetRoutes"
+	NetworkService_AddRoute_FullMethodName           = "/containarium.v1.NetworkService/AddRoute"
+	NetworkService_UpdateRoute_FullMethodName        = "/containarium.v1.NetworkService/UpdateRoute"
+	NetworkService_DeleteRoute_FullMethodName        = "/containarium.v1.NetworkService/DeleteRoute"
+	NetworkService_ListDNSRecords_FullMethodName     = "/containarium.v1.NetworkService/ListDNSRecords"
 	NetworkService_GetContainerACL_FullMethodName    = "/containarium.v1.NetworkService/GetContainerACL"
 	NetworkService_UpdateContainerACL_FullMethodName = "/containarium.v1.NetworkService/UpdateContainerACL"
 	NetworkService_GetNetworkTopology_FullMethodName = "/containarium.v1.NetworkService/GetNetworkTopology"
@@ -34,6 +38,14 @@ const (
 type NetworkServiceClient interface {
 	// GetRoutes lists all proxy routes (DNS to container mappings)
 	GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error)
+	// AddRoute adds a new proxy route (domain to container mapping)
+	AddRoute(ctx context.Context, in *AddRouteRequest, opts ...grpc.CallOption) (*AddRouteResponse, error)
+	// UpdateRoute updates an existing proxy route
+	UpdateRoute(ctx context.Context, in *UpdateRouteRequest, opts ...grpc.CallOption) (*UpdateRouteResponse, error)
+	// DeleteRoute removes a proxy route
+	DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error)
+	// ListDNSRecords lists DNS records for the configured base domain
+	ListDNSRecords(ctx context.Context, in *ListDNSRecordsRequest, opts ...grpc.CallOption) (*ListDNSRecordsResponse, error)
 	// GetContainerACL gets firewall rules for a DevBox container
 	GetContainerACL(ctx context.Context, in *GetContainerACLRequest, opts ...grpc.CallOption) (*GetContainerACLResponse, error)
 	// UpdateContainerACL updates firewall rules for a DevBox container
@@ -56,6 +68,46 @@ func (c *networkServiceClient) GetRoutes(ctx context.Context, in *GetRoutesReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetRoutesResponse)
 	err := c.cc.Invoke(ctx, NetworkService_GetRoutes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *networkServiceClient) AddRoute(ctx context.Context, in *AddRouteRequest, opts ...grpc.CallOption) (*AddRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddRouteResponse)
+	err := c.cc.Invoke(ctx, NetworkService_AddRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *networkServiceClient) UpdateRoute(ctx context.Context, in *UpdateRouteRequest, opts ...grpc.CallOption) (*UpdateRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateRouteResponse)
+	err := c.cc.Invoke(ctx, NetworkService_UpdateRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *networkServiceClient) DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteRouteResponse)
+	err := c.cc.Invoke(ctx, NetworkService_DeleteRoute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *networkServiceClient) ListDNSRecords(ctx context.Context, in *ListDNSRecordsRequest, opts ...grpc.CallOption) (*ListDNSRecordsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDNSRecordsResponse)
+	err := c.cc.Invoke(ctx, NetworkService_ListDNSRecords_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +162,14 @@ func (c *networkServiceClient) ListACLPresets(ctx context.Context, in *ListACLPr
 type NetworkServiceServer interface {
 	// GetRoutes lists all proxy routes (DNS to container mappings)
 	GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error)
+	// AddRoute adds a new proxy route (domain to container mapping)
+	AddRoute(context.Context, *AddRouteRequest) (*AddRouteResponse, error)
+	// UpdateRoute updates an existing proxy route
+	UpdateRoute(context.Context, *UpdateRouteRequest) (*UpdateRouteResponse, error)
+	// DeleteRoute removes a proxy route
+	DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error)
+	// ListDNSRecords lists DNS records for the configured base domain
+	ListDNSRecords(context.Context, *ListDNSRecordsRequest) (*ListDNSRecordsResponse, error)
 	// GetContainerACL gets firewall rules for a DevBox container
 	GetContainerACL(context.Context, *GetContainerACLRequest) (*GetContainerACLResponse, error)
 	// UpdateContainerACL updates firewall rules for a DevBox container
@@ -130,6 +190,18 @@ type UnimplementedNetworkServiceServer struct{}
 
 func (UnimplementedNetworkServiceServer) GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRoutes not implemented")
+}
+func (UnimplementedNetworkServiceServer) AddRoute(context.Context, *AddRouteRequest) (*AddRouteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddRoute not implemented")
+}
+func (UnimplementedNetworkServiceServer) UpdateRoute(context.Context, *UpdateRouteRequest) (*UpdateRouteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateRoute not implemented")
+}
+func (UnimplementedNetworkServiceServer) DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteRoute not implemented")
+}
+func (UnimplementedNetworkServiceServer) ListDNSRecords(context.Context, *ListDNSRecordsRequest) (*ListDNSRecordsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDNSRecords not implemented")
 }
 func (UnimplementedNetworkServiceServer) GetContainerACL(context.Context, *GetContainerACLRequest) (*GetContainerACLResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetContainerACL not implemented")
@@ -178,6 +250,78 @@ func _NetworkService_GetRoutes_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NetworkServiceServer).GetRoutes(ctx, req.(*GetRoutesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NetworkService_AddRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetworkServiceServer).AddRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NetworkService_AddRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetworkServiceServer).AddRoute(ctx, req.(*AddRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NetworkService_UpdateRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetworkServiceServer).UpdateRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NetworkService_UpdateRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetworkServiceServer).UpdateRoute(ctx, req.(*UpdateRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NetworkService_DeleteRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRouteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetworkServiceServer).DeleteRoute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NetworkService_DeleteRoute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetworkServiceServer).DeleteRoute(ctx, req.(*DeleteRouteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NetworkService_ListDNSRecords_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDNSRecordsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NetworkServiceServer).ListDNSRecords(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NetworkService_ListDNSRecords_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NetworkServiceServer).ListDNSRecords(ctx, req.(*ListDNSRecordsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -264,6 +408,22 @@ var NetworkService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRoutes",
 			Handler:    _NetworkService_GetRoutes_Handler,
+		},
+		{
+			MethodName: "AddRoute",
+			Handler:    _NetworkService_AddRoute_Handler,
+		},
+		{
+			MethodName: "UpdateRoute",
+			Handler:    _NetworkService_UpdateRoute_Handler,
+		},
+		{
+			MethodName: "DeleteRoute",
+			Handler:    _NetworkService_DeleteRoute_Handler,
+		},
+		{
+			MethodName: "ListDNSRecords",
+			Handler:    _NetworkService_ListDNSRecords_Handler,
 		},
 		{
 			MethodName: "GetContainerACL",

@@ -35,15 +35,18 @@ func TestProxyManager_SetServerName(t *testing.T) {
 
 func TestProxyManager_AddRoute(t *testing.T) {
 	// Create test server
-	var receivedPath string
+	var routePath string
 	var receivedBody map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedPath = r.URL.Path
-
-		// Parse request body
-		json.NewDecoder(r.Body).Decode(&receivedBody)
-
+		// Handle route addition
+		if r.URL.Path == "/config/apps/http/servers/srv0/routes" && r.Method == "POST" {
+			routePath = r.URL.Path
+			json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Handle TLS provisioning requests (just return OK)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -57,8 +60,8 @@ func TestProxyManager_AddRoute(t *testing.T) {
 
 	// Verify the path includes the server name
 	expectedPath := "/config/apps/http/servers/srv0/routes"
-	if receivedPath != expectedPath {
-		t.Errorf("request path = %q, want %q", receivedPath, expectedPath)
+	if routePath != expectedPath {
+		t.Errorf("request path = %q, want %q", routePath, expectedPath)
 	}
 
 	// Verify the route ID
@@ -78,10 +81,13 @@ func TestProxyManager_AddRoute(t *testing.T) {
 }
 
 func TestProxyManager_AddRoute_CustomServerName(t *testing.T) {
-	var receivedPath string
+	var routePath string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedPath = r.URL.Path
+		// Capture route addition path
+		if r.URL.Path == "/config/apps/http/servers/main/routes" && r.Method == "POST" {
+			routePath = r.URL.Path
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -96,8 +102,8 @@ func TestProxyManager_AddRoute_CustomServerName(t *testing.T) {
 
 	// Verify the path uses the custom server name
 	expectedPath := "/config/apps/http/servers/main/routes"
-	if receivedPath != expectedPath {
-		t.Errorf("request path = %q, want %q", receivedPath, expectedPath)
+	if routePath != expectedPath {
+		t.Errorf("request path = %q, want %q", routePath, expectedPath)
 	}
 }
 
@@ -131,16 +137,27 @@ func TestProxyManager_RemoveRoute(t *testing.T) {
 
 func TestProxyManager_RemoveRoute_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// For DELETE by ID, return 404
+		if r.Method == "DELETE" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// For GET routes (fallback), return empty list
+		if r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("[]"))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
 	pm := NewProxyManager(server.URL, "containarium.dev")
 
-	// Should not return error for 404 (route might already be deleted)
+	// Should not return error when route doesn't exist
 	err := pm.RemoveRoute("nonexistent")
 	if err != nil {
-		t.Errorf("RemoveRoute() should not error on 404, got: %v", err)
+		t.Errorf("RemoveRoute() should not error when route not found, got: %v", err)
 	}
 }
 
@@ -165,17 +182,17 @@ func TestProxyManager_ListRoutes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 
-		routes := []CaddyRoute{
+		routes := []caddyRouteJSON{
 			{
 				ID: "testuser-app1",
-				Match: []CaddyMatch{
+				Match: []CaddyMatchTyped{
 					{Host: []string{"testuser-app1.containarium.dev"}},
 				},
-				Handle: []map[string]interface{}{
+				Handle: []CaddyReverseProxyHandler{
 					{
-						"handler": "reverse_proxy",
-						"upstreams": []map[string]string{
-							{"dial": "10.100.0.15:3000"},
+						Handler: "reverse_proxy",
+						Upstreams: []CaddyUpstreamTyped{
+							{Dial: "10.100.0.15:3000"},
 						},
 					},
 				},
@@ -216,5 +233,293 @@ func TestProxyManager_ListRoutes(t *testing.T) {
 func TestDefaultCaddyServerName(t *testing.T) {
 	if DefaultCaddyServerName != "srv0" {
 		t.Errorf("DefaultCaddyServerName = %q, want %q", DefaultCaddyServerName, "srv0")
+	}
+}
+
+// Tests for new route management functionality
+
+func TestProxyManager_RemoveRoute_FullDomain(t *testing.T) {
+	// Test that RemoveRoute correctly extracts subdomain from full domain
+	var receivedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	// Pass full domain, should extract "test" as route ID
+	err := pm.RemoveRoute("test.kafeido.app")
+	if err != nil {
+		t.Fatalf("RemoveRoute() error = %v", err)
+	}
+
+	// Should delete by ID "test" (not "test.kafeido.app")
+	expectedPath := "/id/test"
+	if receivedPath != expectedPath {
+		t.Errorf("request path = %q, want %q", receivedPath, expectedPath)
+	}
+}
+
+func TestProxyManager_RemoveRoute_SubdomainOnly(t *testing.T) {
+	// Test that RemoveRoute works with just subdomain
+	var receivedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	err := pm.RemoveRoute("myapp")
+	if err != nil {
+		t.Fatalf("RemoveRoute() error = %v", err)
+	}
+
+	expectedPath := "/id/myapp"
+	if receivedPath != expectedPath {
+		t.Errorf("request path = %q, want %q", receivedPath, expectedPath)
+	}
+}
+
+func TestProxyManager_RemoveRoute_FallbackToIndex(t *testing.T) {
+	// Test that RemoveRoute falls back to finding by domain when ID not found
+	deleteByIDCalled := false
+	listRoutesCalled := false
+	deleteByIndexCalled := false
+	var deleteIndexPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "DELETE" && r.URL.Path == "/id/test":
+			// First attempt: delete by ID returns 404
+			deleteByIDCalled = true
+			w.WriteHeader(http.StatusNotFound)
+
+		case r.Method == "GET" && r.URL.Path == "/config/apps/http/servers/srv0/routes":
+			// List routes to find the one matching our domain
+			listRoutesCalled = true
+			routes := []map[string]interface{}{
+				{
+					"match": []map[string]interface{}{
+						{"host": []string{"other.kafeido.app"}},
+					},
+				},
+				{
+					"match": []map[string]interface{}{
+						{"host": []string{"test.kafeido.app"}},
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(routes)
+
+		case r.Method == "DELETE" && r.URL.Path == "/config/apps/http/servers/srv0/routes/1":
+			// Delete by index (index 1 = test.kafeido.app)
+			deleteByIndexCalled = true
+			deleteIndexPath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			t.Logf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	err := pm.RemoveRoute("test.kafeido.app")
+	if err != nil {
+		t.Fatalf("RemoveRoute() error = %v", err)
+	}
+
+	if !deleteByIDCalled {
+		t.Error("expected delete by ID to be called first")
+	}
+
+	if !listRoutesCalled {
+		t.Error("expected list routes to be called for fallback")
+	}
+
+	if !deleteByIndexCalled {
+		t.Error("expected delete by index to be called as fallback")
+	}
+
+	expectedPath := "/config/apps/http/servers/srv0/routes/1"
+	if deleteIndexPath != expectedPath {
+		t.Errorf("delete index path = %q, want %q", deleteIndexPath, expectedPath)
+	}
+}
+
+func TestProxyManager_AddRoute_FullDomain(t *testing.T) {
+	// Test that AddRoute handles full domain without doubling base domain
+	var receivedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	// Pass full domain - should NOT become "test.kafeido.app.kafeido.app"
+	err := pm.AddRoute("test.kafeido.app", "10.0.3.136", 8080)
+	if err != nil {
+		t.Fatalf("AddRoute() error = %v", err)
+	}
+
+	// Verify the route ID is "test" (subdomain extracted)
+	if id, ok := receivedBody["@id"].(string); !ok || id != "test" {
+		t.Errorf("route @id = %v, want %q", receivedBody["@id"], "test")
+	}
+
+	// Verify host match is the full domain (not doubled)
+	if matches, ok := receivedBody["match"].([]interface{}); ok && len(matches) > 0 {
+		match := matches[0].(map[string]interface{})
+		if hosts, ok := match["host"].([]interface{}); ok && len(hosts) > 0 {
+			if hosts[0] != "test.kafeido.app" {
+				t.Errorf("host = %v, want %q", hosts[0], "test.kafeido.app")
+			}
+		}
+	}
+}
+
+func TestProxyManager_AddRoute_SubdomainOnly(t *testing.T) {
+	// Test that AddRoute correctly appends base domain to subdomain
+	var receivedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	// Pass subdomain only
+	err := pm.AddRoute("myapp", "10.0.3.136", 8080)
+	if err != nil {
+		t.Fatalf("AddRoute() error = %v", err)
+	}
+
+	// Verify the route ID is the subdomain
+	if id, ok := receivedBody["@id"].(string); !ok || id != "myapp" {
+		t.Errorf("route @id = %v, want %q", receivedBody["@id"], "myapp")
+	}
+
+	// Verify host match includes base domain
+	if matches, ok := receivedBody["match"].([]interface{}); ok && len(matches) > 0 {
+		match := matches[0].(map[string]interface{})
+		if hosts, ok := match["host"].([]interface{}); ok && len(hosts) > 0 {
+			if hosts[0] != "myapp.kafeido.app" {
+				t.Errorf("host = %v, want %q", hosts[0], "myapp.kafeido.app")
+			}
+		}
+	}
+}
+
+func TestProxyManager_AddRoute_NoBaseDomain(t *testing.T) {
+	// Test that AddRoute works without base domain configured
+	var receivedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "") // No base domain
+
+	err := pm.AddRoute("custom.example.com", "10.0.3.136", 8080)
+	if err != nil {
+		t.Fatalf("AddRoute() error = %v", err)
+	}
+
+	// Verify the full domain is used as-is
+	if matches, ok := receivedBody["match"].([]interface{}); ok && len(matches) > 0 {
+		match := matches[0].(map[string]interface{})
+		if hosts, ok := match["host"].([]interface{}); ok && len(hosts) > 0 {
+			if hosts[0] != "custom.example.com" {
+				t.Errorf("host = %v, want %q", hosts[0], "custom.example.com")
+			}
+		}
+	}
+}
+
+func TestProxyManager_UpdateRoute(t *testing.T) {
+	// Test UpdateRoute (removes then adds)
+	deleteCalled := false
+	addCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			deleteCalled = true
+			w.WriteHeader(http.StatusOK)
+		} else if r.Method == "POST" {
+			addCalled = true
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	err := pm.UpdateRoute("test", "10.0.3.140", 9000)
+	if err != nil {
+		t.Fatalf("UpdateRoute() error = %v", err)
+	}
+
+	if !deleteCalled {
+		t.Error("expected delete to be called")
+	}
+
+	if !addCalled {
+		t.Error("expected add to be called")
+	}
+}
+
+func TestProxyManager_ListRoutes_Empty(t *testing.T) {
+	// Test ListRoutes with no routes configured
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	routes, err := pm.ListRoutes()
+	if err != nil {
+		t.Fatalf("ListRoutes() error = %v", err)
+	}
+
+	if len(routes) != 0 {
+		t.Errorf("ListRoutes() returned %d routes, want 0", len(routes))
+	}
+}
+
+func TestProxyManager_ListRoutes_BadRequest(t *testing.T) {
+	// Test ListRoutes when Caddy returns 400 (no http app configured)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("invalid traversal path"))
+	}))
+	defer server.Close()
+
+	pm := NewProxyManager(server.URL, "kafeido.app")
+
+	routes, err := pm.ListRoutes()
+	if err != nil {
+		t.Fatalf("ListRoutes() should return empty on 400, got error: %v", err)
+	}
+
+	if len(routes) != 0 {
+		t.Errorf("ListRoutes() returned %d routes, want 0 on 400 response", len(routes))
 	}
 }

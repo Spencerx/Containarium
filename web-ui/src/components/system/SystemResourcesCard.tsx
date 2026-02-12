@@ -35,6 +35,13 @@ export default function SystemResourcesCard({ systemInfo }: SystemResourcesCardP
     return null;
   }
 
+  // Calculate CPU load percentage (load average / total cores * 100)
+  // Load average can exceed 100% if there are more processes than cores
+  const cpuLoad1min = systemInfo.cpuLoad1min || 0;
+  const cpuLoadPercent = systemInfo.totalCpus > 0
+    ? Math.min((cpuLoad1min / systemInfo.totalCpus) * 100, 100)
+    : 0;
+
   // Calculate percentages
   const memoryUsed = (systemInfo.totalMemoryBytes || 0) - (systemInfo.availableMemoryBytes || 0);
   const memoryPercent = systemInfo.totalMemoryBytes
@@ -66,15 +73,25 @@ export default function SystemResourcesCard({ systemInfo }: SystemResourcesCardP
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                 <ComputerIcon fontSize="small" color="action" />
                 <Typography variant="body2" fontWeight="medium">
-                  CPU Cores
+                  CPU Load
                 </Typography>
               </Box>
-              <Typography variant="h6" color="primary">
-                {systemInfo.totalCpus}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Available for containers
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+                <Typography variant="h6">
+                  {cpuLoad1min.toFixed(2)}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  / {systemInfo.totalCpus} cores
+                </Typography>
+              </Box>
+              <Tooltip title={`${cpuLoadPercent.toFixed(1)}% utilized (1-min avg)`}>
+                <LinearProgress
+                  variant="determinate"
+                  value={cpuLoadPercent}
+                  color={getUsageColor(cpuLoadPercent)}
+                  sx={{ mt: 0.5, height: 6, borderRadius: 3 }}
+                />
+              </Tooltip>
             </Grid>
           )}
 

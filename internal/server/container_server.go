@@ -411,6 +411,9 @@ func (s *ContainerServer) GetSystemInfo(ctx context.Context, req *pb.GetSystemIn
 		AvailableMemoryBytes:  sysResources.TotalMemoryBytes - sysResources.UsedMemoryBytes,
 		TotalDiskBytes:        sysResources.TotalDiskBytes,
 		AvailableDiskBytes:    sysResources.TotalDiskBytes - sysResources.UsedDiskBytes,
+		CpuLoad_1Min:          sysResources.CPULoad1Min,
+		CpuLoad_5Min:          sysResources.CPULoad5Min,
+		CpuLoad_15Min:         sysResources.CPULoad15Min,
 	}
 
 	return &pb.GetSystemInfoResponse{

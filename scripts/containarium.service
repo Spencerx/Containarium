@@ -17,8 +17,8 @@ Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/incus
+ProtectHome=false
+ReadWritePaths=/var/lib/incus /etc
 
 # Logging
 StandardOutput=journal

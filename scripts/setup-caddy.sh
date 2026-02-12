@@ -34,6 +34,7 @@ declare -A DNS_MODULES=(
     ["vultr"]="github.com/caddy-dns/vultr"
     ["duckdns"]="github.com/caddy-dns/duckdns"
     ["namecheap"]="github.com/caddy-dns/namecheap"
+    ["godaddy"]="github.com/caddy-dns/godaddy"
 )
 
 # DNS provider to environment variable mapping
@@ -46,13 +47,14 @@ declare -A DNS_ENV_VARS=(
     ["vultr"]="VULTR_API_KEY"
     ["duckdns"]="DUCKDNS_API_TOKEN"
     ["namecheap"]="NAMECHEAP_API_USER, NAMECHEAP_API_KEY"
+    ["godaddy"]="GODADDY_API_TOKEN"
 )
 
 print_usage() {
     echo "Usage: $0 --dns <provider> --domain <domain> --email <email>"
     echo ""
     echo "Options:"
-    echo "  --dns       DNS provider (cloudflare, route53, googleclouddns, digitalocean, azure, vultr, duckdns, namecheap)"
+    echo "  --dns       DNS provider (cloudflare, route53, googleclouddns, digitalocean, azure, vultr, duckdns, namecheap, godaddy)"
     echo "  --domain    Base domain for app hosting (e.g., containarium.dev)"
     echo "  --email     Email for Let's Encrypt notifications"
     echo "  --help      Show this help message"
@@ -182,6 +184,9 @@ create_caddyfile() {
             ;;
         namecheap)
             dns_config="dns namecheap"
+            ;;
+        godaddy)
+            dns_config="dns godaddy { api_token {env.GODADDY_API_TOKEN} }"
             ;;
     esac
 

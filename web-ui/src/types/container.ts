@@ -75,6 +75,10 @@ export interface SystemInfo {
   availableMemoryBytes: number;
   totalDiskBytes: number;
   availableDiskBytes: number;
+  // CPU load averages
+  cpuLoad1min?: number;
+  cpuLoad5min?: number;
+  cpuLoad15min?: number;
 }
 
 /**

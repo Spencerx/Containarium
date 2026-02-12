@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Dashboard CPU Load Metrics
+- Added real-time CPU load display to the System Resources dashboard
+- Shows 1-minute load average with progress bar visualization
+- Displays load as "X.XX / N cores" format for easy interpretation
+- Color-coded utilization: green (<60%), yellow (60-80%), red (>80%)
+- Backend reads load averages from `/proc/loadavg`
+- New proto fields: `cpu_load_1min`, `cpu_load_5min`, `cpu_load_15min` in SystemInfo
+
+#### Disaster Recovery Command
+- New `containarium recover` command for restoring containers after instance recreation
+- Supports two modes:
+  - **Explicit mode**: Specify parameters via CLI flags
+    ```bash
+    containarium recover \
+      --network-cidr 10.0.3.1/24 \
+      --zfs-source incus-pool/containers
+    ```
+  - **Config mode**: Load from persistent storage config file
+    ```bash
+    containarium recover --config /mnt/incus-data/containarium-recovery.yaml
+    ```
+- Recovery process handles:
+  1. Network creation (incusbr0 with correct CIDR)
+  2. Storage pool import via `incus admin recover`
+  3. Default profile configuration (eth0 device)
+  4. Starting all recovered containers
+  5. Syncing SSH jump accounts via `sync-accounts`
+- Recovery config is automatically saved to persistent storage during daemon startup
+- Supports `--dry-run` flag to preview recovery actions
+
+#### Network Route Management
+- Added route management UI to Network tab in Web UI
+- Add/Delete proxy routes through the web interface
+- Domain dropdown shows existing TLS-enabled routes from Caddy
+- Target IP dropdown shows running containers with name and IP
+- Routes managed via Caddy Admin API for dynamic configuration
+- New API endpoint: `GET /v1/network/dns-records` for domain suggestions
+
+#### Automatic TLS Certificate Provisioning
+- New `ProvisionTLS()` method in ProxyManager for automatic SSL certificate provisioning
+- When adding a route, Caddy automatically obtains a TLS certificate for the domain
+- Adds domain to Caddy's TLS automation policy with ACME (Let's Encrypt) and ZeroSSL issuers
+- Graceful fallback: if TLS provisioning fails, route is still added (may use wildcard cert)
+- See [docs/TLS-PROVISIONING.md](docs/TLS-PROVISIONING.md) for detailed documentation
+
+#### Disaster Recovery Command
+- See [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) for detailed documentation
+
+### Changed
+- Dashboard "CPU Cores" section renamed to "CPU Load" with usage visualization
+- Route management moved from Apps tab to Network tab exclusively
+- `RemoveRoute` now properly extracts subdomain from full domain for deletion
+- Added fallback deletion by route index when routes lack `@id` field
+- **Auto-detect Caddy container IP**: When `--app-hosting` is enabled and `--caddy-admin-url` is not specified, the daemon automatically finds a running container with "caddy" in its name and uses its IP for the Caddy Admin API (e.g., `http://10.0.3.111:2019`)
+- **Type-safe Caddy API**: Refactored `proxy.go` to use strongly-typed structs instead of `map[string]interface{}` for Caddy API interactions. New types include `CaddyRouteTyped`, `CaddyReverseProxyHandler`, `CaddyTLSAutomationPolicy`, `CaddyTLSIssuer`, and helper functions like `NewTLSPolicy()` and `NewReverseProxyRoute()`
+
+### Fixed
+- Fixed route deletion when full domain is passed instead of subdomain
+- Fixed routes created via Caddyfile not being deletable (missing @id)
+- Fixed WebUI static files not being embedded correctly after build
+
 ## [0.5.0] - 2026-02-10
 
 ### Security

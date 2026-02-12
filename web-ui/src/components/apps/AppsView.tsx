@@ -144,7 +144,7 @@ export default function AppsView({
         </Box>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete App Confirmation Dialog */}
       <Dialog open={deleteDialog.open} onClose={() => setDeleteDialog({ open: false, username: '', appName: '' })}>
         <DialogTitle>Delete Application</DialogTitle>
         <DialogContent>

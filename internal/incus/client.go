@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -594,6 +596,34 @@ func (c *Client) WaitForNetwork(containerName string, timeout time.Duration) (st
 	return "", fmt.Errorf("timeout waiting for container network")
 }
 
+// GetContainerIP returns the IP address of a container, or empty string if not found
+func (c *Client) GetContainerIP(containerName string) (string, error) {
+	info, err := c.GetContainer(containerName)
+	if err != nil {
+		return "", err
+	}
+	return info.IPAddress, nil
+}
+
+// FindCaddyContainerIP looks for a Caddy container and returns its IP address
+// It searches for containers with "caddy" in the name (case-insensitive)
+func (c *Client) FindCaddyContainerIP() (string, error) {
+	containers, err := c.ListContainers()
+	if err != nil {
+		return "", fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	// Look for containers with "caddy" in the name
+	for _, container := range containers {
+		nameLower := strings.ToLower(container.Name)
+		if strings.Contains(nameLower, "caddy") && container.IPAddress != "" {
+			return container.IPAddress, nil
+		}
+	}
+
+	return "", fmt.Errorf("no running Caddy container found")
+}
+
 // GetServerInfo gets information about the Incus server
 func (c *Client) GetServerInfo() (*api.Server, error) {
 	server, _, err := c.server.GetServer()
@@ -611,6 +641,10 @@ type SystemResources struct {
 	TotalDiskBytes     int64
 	UsedDiskBytes      int64
 	UptimeSeconds      int64
+	// CPU load averages (from /proc/loadavg)
+	CPULoad1Min  float64
+	CPULoad5Min  float64
+	CPULoad15Min float64
 }
 
 // GetSystemResources gets system resource information from Incus
@@ -644,7 +678,43 @@ func (c *Client) GetSystemResources() (*SystemResources, error) {
 		}
 	}
 
+	// Get CPU load averages from /proc/loadavg
+	load1, load5, load15, err := getCPULoadAvg()
+	if err == nil {
+		res.CPULoad1Min = load1
+		res.CPULoad5Min = load5
+		res.CPULoad15Min = load15
+	}
+
 	return res, nil
+}
+
+// getCPULoadAvg reads CPU load averages from /proc/loadavg
+func getCPULoadAvg() (load1, load5, load15 float64, err error) {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) < 3 {
+		return 0, 0, 0, fmt.Errorf("unexpected /proc/loadavg format")
+	}
+
+	load1, err = strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	load5, err = strconv.ParseFloat(fields[1], 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	load15, err = strconv.ParseFloat(fields[2], 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	return load1, load5, load15, nil
 }
 
 // SetConfig sets a configuration key for a container (e.g., limits.cpu, limits.memory)
