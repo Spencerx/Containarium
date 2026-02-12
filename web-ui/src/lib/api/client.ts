@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { Container, ContainerMetrics, CreateContainerRequest, CreateContainerResponse, ListContainersResponse, MetricsResponse, SystemInfo } from '@/src/types/container';
 import { Server } from '@/src/types/server';
-import { App, NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo } from '@/src/types/app';
+import { App, NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo, DNSRecord } from '@/src/types/app';
 
 /**
  * API error response
@@ -344,6 +344,31 @@ export class ContaineriumClient {
   }
 
   /**
+   * Add a new proxy route
+   */
+  async addRoute(domain: string, targetIp: string, targetPort: number): Promise<ProxyRoute> {
+    const response = await this.client.post<{ route?: ProxyRoute }>('/network/routes', {
+      domain,
+      target_ip: targetIp,
+      target_port: targetPort,
+    });
+    return response.data.route || {
+      subdomain: domain,
+      fullDomain: domain,
+      containerIp: targetIp,
+      port: targetPort,
+      active: true,
+    };
+  }
+
+  /**
+   * Delete a proxy route
+   */
+  async deleteRoute(domain: string): Promise<void> {
+    await this.client.delete(`/network/routes/${encodeURIComponent(domain)}`);
+  }
+
+  /**
    * Get ACL for a container (DevBox)
    */
   async getContainerACL(username: string): Promise<NetworkACL> {
@@ -385,6 +410,17 @@ export class ContaineriumClient {
   async getACLPresets(): Promise<ACLPresetInfo[]> {
     const response = await this.client.get<{ presets?: ACLPresetInfo[] }>('/network/acl-presets');
     return response.data.presets || [];
+  }
+
+  /**
+   * Get DNS records for domain suggestions
+   */
+  async getDNSRecords(): Promise<{ records: DNSRecord[]; baseDomain: string }> {
+    const response = await this.client.get<{ records?: DNSRecord[]; baseDomain?: string }>('/network/dns-records');
+    return {
+      records: response.data.records || [],
+      baseDomain: response.data.baseDomain || '',
+    };
   }
 
   // ============================================

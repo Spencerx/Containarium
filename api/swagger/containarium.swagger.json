@@ -894,6 +894,39 @@
         ]
       }
     },
+    "/v1/network/dns-records": {
+      "get": {
+        "summary": "List DNS records",
+        "description": "Returns DNS records configured for the base domain. Useful for selecting available subdomains when creating routes.",
+        "operationId": "NetworkService_ListDNSRecords",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDNSRecordsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "recordType",
+            "description": "Optional record type filter (e.g., \"A\", \"CNAME\")",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Network"
+        ]
+      }
+    },
     "/v1/network/routes": {
       "get": {
         "summary": "List proxy routes",
@@ -927,6 +960,110 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          }
+        ],
+        "tags": [
+          "Network"
+        ]
+      },
+      "post": {
+        "summary": "Add proxy route",
+        "description": "Creates a new DNS/domain to container mapping in the reverse proxy.",
+        "operationId": "NetworkService_AddRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddRouteRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Network"
+        ]
+      }
+    },
+    "/v1/network/routes/{domain}": {
+      "delete": {
+        "summary": "Delete proxy route",
+        "description": "Removes a DNS/domain to container mapping from the reverse proxy.",
+        "operationId": "NetworkService_DeleteRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "domain",
+            "description": "Domain name to delete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Network"
+        ]
+      },
+      "put": {
+        "summary": "Update proxy route",
+        "description": "Updates an existing DNS/domain to container mapping.",
+        "operationId": "NetworkService_UpdateRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "domain",
+            "description": "Domain name to update",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateRouteBody"
+            }
           }
         ],
         "tags": [
@@ -1085,6 +1222,46 @@
         }
       },
       "title": "ACLRule represents a single firewall rule"
+    },
+    "AddRouteRequest": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "title": "Domain name (e.g., \"test.kafeido.app\" or subdomain like \"myapp\")"
+        },
+        "targetIp": {
+          "type": "string",
+          "title": "Target container IP address"
+        },
+        "targetPort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Target port on the container"
+        },
+        "containerName": {
+          "type": "string",
+          "title": "Optional: Associated container name (for display purposes)"
+        },
+        "description": {
+          "type": "string",
+          "title": "Optional: Description"
+        }
+      },
+      "title": "AddRouteRequest adds a new proxy route"
+    },
+    "AddRouteResponse": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/definitions/ProxyRoute",
+          "title": "The created route"
+        },
+        "message": {
+          "type": "string",
+          "title": "Status message"
+        }
+      }
     },
     "AddSSHKeyBody": {
       "type": "object",
@@ -1452,6 +1629,29 @@
       },
       "title": "CreateContainerResponse is the response from creating a container"
     },
+    "DNSRecord": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "title": "Record type (A, CNAME, etc.)"
+        },
+        "name": {
+          "type": "string",
+          "title": "Record name (subdomain or @ for root)"
+        },
+        "data": {
+          "type": "string",
+          "title": "Record data (IP address for A records)"
+        },
+        "ttl": {
+          "type": "integer",
+          "format": "int32",
+          "title": "TTL in seconds"
+        }
+      },
+      "title": "DNSRecord represents a DNS record"
+    },
     "DeleteAppResponse": {
       "type": "object",
       "properties": {
@@ -1474,6 +1674,15 @@
         }
       },
       "title": "DeleteContainerResponse is the response from deleting a container"
+    },
+    "DeleteRouteResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Status message"
+        }
+      }
     },
     "DeployAppRequest": {
       "type": "object",
@@ -1706,6 +1915,28 @@
         }
       },
       "title": "ListContainersResponse is the response from listing containers"
+    },
+    "ListDNSRecordsResponse": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DNSRecord"
+          },
+          "title": "DNS records"
+        },
+        "baseDomain": {
+          "type": "string",
+          "title": "Base domain"
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total count"
+        }
+      }
     },
     "NetworkACL": {
       "type": "object",
@@ -2117,6 +2348,21 @@
         "networkCidr": {
           "type": "string",
           "title": "Container network CIDR (e.g., \"10.100.0.0/24\")"
+        },
+        "cpuLoad1min": {
+          "type": "number",
+          "format": "double",
+          "title": "CPU load average (1 minute)"
+        },
+        "cpuLoad5min": {
+          "type": "number",
+          "format": "double",
+          "title": "CPU load average (5 minutes)"
+        },
+        "cpuLoad15min": {
+          "type": "number",
+          "format": "double",
+          "title": "CPU load average (15 minutes)"
         }
       },
       "title": "SystemInfo contains information about the host system"
@@ -2153,6 +2399,42 @@
         "acl": {
           "$ref": "#/definitions/NetworkACL",
           "title": "Updated ACL"
+        },
+        "message": {
+          "type": "string",
+          "title": "Status message"
+        }
+      }
+    },
+    "UpdateRouteBody": {
+      "type": "object",
+      "properties": {
+        "targetIp": {
+          "type": "string",
+          "title": "New target container IP address"
+        },
+        "targetPort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "New target port"
+        },
+        "containerName": {
+          "type": "string",
+          "title": "Optional: Associated container name"
+        },
+        "description": {
+          "type": "string",
+          "title": "Optional: Description"
+        }
+      },
+      "title": "UpdateRouteRequest updates an existing proxy route"
+    },
+    "UpdateRouteResponse": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/definitions/ProxyRoute",
+          "title": "The updated route"
         },
         "message": {
           "type": "string",

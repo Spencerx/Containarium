@@ -189,6 +189,101 @@ message GetRoutesResponse {
   int32 total_count = 2;
 }
 
+// AddRouteRequest adds a new proxy route
+message AddRouteRequest {
+  // Domain name (e.g., "test.kafeido.app" or subdomain like "myapp")
+  string domain = 1;
+
+  // Target container IP address
+  string target_ip = 2;
+
+  // Target port on the container
+  int32 target_port = 3;
+
+  // Optional: Associated container name (for display purposes)
+  string container_name = 4;
+
+  // Optional: Description
+  string description = 5;
+}
+
+message AddRouteResponse {
+  // The created route
+  ProxyRoute route = 1;
+
+  // Status message
+  string message = 2;
+}
+
+// UpdateRouteRequest updates an existing proxy route
+message UpdateRouteRequest {
+  // Domain name to update
+  string domain = 1;
+
+  // New target container IP address
+  string target_ip = 2;
+
+  // New target port
+  int32 target_port = 3;
+
+  // Optional: Associated container name
+  string container_name = 4;
+
+  // Optional: Description
+  string description = 5;
+}
+
+message UpdateRouteResponse {
+  // The updated route
+  ProxyRoute route = 1;
+
+  // Status message
+  string message = 2;
+}
+
+// DeleteRouteRequest removes a proxy route
+message DeleteRouteRequest {
+  // Domain name to delete
+  string domain = 1;
+}
+
+message DeleteRouteResponse {
+  // Status message
+  string message = 2;
+}
+
+// DNSRecord represents a DNS record
+message DNSRecord {
+  // Record type (A, CNAME, etc.)
+  string type = 1;
+
+  // Record name (subdomain or @ for root)
+  string name = 2;
+
+  // Record data (IP address for A records)
+  string data = 3;
+
+  // TTL in seconds
+  int32 ttl = 4;
+}
+
+// ListDNSRecordsRequest lists DNS records for the configured domain
+message ListDNSRecordsRequest {
+  // Optional record type filter (e.g., "A", "CNAME")
+  string record_type = 1;
+}
+
+message ListDNSRecordsResponse {
+  // DNS records
+  repeated DNSRecord records = 1;
+
+  // Base domain
+  string base_domain = 2;
+
+  // Total count
+  int32 total_count = 3;
+}
+
 // GetContainerACLRequest gets firewall rules for a DevBox container
 message GetContainerACLRequest {
   // Username (container owner)
@@ -269,6 +364,56 @@ service NetworkService {
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
       summary: "List proxy routes";
       description: "Returns all DNS/domain to container mappings configured in the reverse proxy.";
+      tags: "Network";
+    };
+  }
+
+  // AddRoute adds a new proxy route (domain to container mapping)
+  rpc AddRoute(AddRouteRequest) returns (AddRouteResponse) {
+    option (google.api.http) = {
+      post: "/v1/network/routes"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Add proxy route";
+      description: "Creates a new DNS/domain to container mapping in the reverse proxy.";
+      tags: "Network";
+    };
+  }
+
+  // UpdateRoute updates an existing proxy route
+  rpc UpdateRoute(UpdateRouteRequest) returns (UpdateRouteResponse) {
+    option (google.api.http) = {
+      put: "/v1/network/routes/{domain}"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Update proxy route";
+      description: "Updates an existing DNS/domain to container mapping.";
+      tags: "Network";
+    };
+  }
+
+  // DeleteRoute removes a proxy route
+  rpc DeleteRoute(DeleteRouteRequest) returns (DeleteRouteResponse) {
+    option (google.api.http) = {
+      delete: "/v1/network/routes/{domain}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Delete proxy route";
+      description: "Removes a DNS/domain to container mapping from the reverse proxy.";
+      tags: "Network";
+    };
+  }
+
+  // ListDNSRecords lists DNS records for the configured base domain
+  rpc ListDNSRecords(ListDNSRecordsRequest) returns (ListDNSRecordsResponse) {
+    option (google.api.http) = {
+      get: "/v1/network/dns-records"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List DNS records";
+      description: "Returns DNS records configured for the base domain. Useful for selecting available subdomains when creating routes.";
       tags: "Network";
     };
   }

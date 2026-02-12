@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -139,6 +140,26 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Printf("  Profile: default (configured)")
 	}
 
+	// Auto-detect Caddy container IP if app-hosting is enabled and no URL specified
+	if enableAppHosting && caddyAdminURL == "" {
+		log.Printf("Auto-detecting Caddy container IP...")
+		if caddyIP, err := incusClient.FindCaddyContainerIP(); err != nil {
+			log.Printf("Warning: Could not auto-detect Caddy container: %v", err)
+			log.Printf("  App hosting features requiring Caddy (routes, TLS) will not work")
+			log.Printf("  To fix: ensure a container with 'caddy' in its name is running,")
+			log.Printf("  or specify --caddy-admin-url explicitly")
+		} else {
+			caddyAdminURL = fmt.Sprintf("http://%s:2019", caddyIP)
+			log.Printf("  Detected Caddy at: %s", caddyAdminURL)
+		}
+	}
+
+	// Save recovery config to persistent storage (for disaster recovery)
+	if err := saveRecoveryConfigToPersistentStorage(networkSubnet, baseDomain, caddyAdminURL, jwtSecretFile, enableAppHosting); err != nil {
+		// Log warning but don't fail - recovery config is optional
+		log.Printf("Warning: Failed to save recovery config: %v", err)
+	}
+
 	// Load or generate JWT secret if REST is enabled
 	var finalJWTSecret string
 	var isRandomSecret bool
@@ -248,4 +269,43 @@ func generateRandomSecret() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+// saveRecoveryConfigToPersistentStorage saves recovery config to persistent disk
+// This enables auto-recovery after instance recreation
+func saveRecoveryConfigToPersistentStorage(networkCIDR, baseDomain, caddyAdminURL, jwtSecretFile string, appHosting bool) error {
+	// Only save if the persistent storage path exists
+	persistentDir := "/mnt/incus-data"
+	if _, err := os.Stat(persistentDir); os.IsNotExist(err) {
+		// Persistent storage not mounted, skip
+		return nil
+	}
+
+	// Try to get ZFS source from current storage pool
+	zfsSource := ""
+	cmd := exec.Command("incus", "storage", "get", "default", "source")
+	output, err := cmd.Output()
+	if err == nil {
+		zfsSource = strings.TrimSpace(string(output))
+	}
+
+	config := &RecoveryConfig{
+		NetworkName:     "incusbr0",
+		NetworkCIDR:     networkCIDR,
+		StoragePoolName: "default",
+		StorageDriver:   "zfs",
+		ZFSSource:       zfsSource,
+		DaemonFlags: DaemonConfig{
+			Address:       daemonAddress,
+			Port:          daemonPort,
+			HTTPPort:      daemonHTTPPort,
+			BaseDomain:    baseDomain,
+			CaddyAdminURL: caddyAdminURL,
+			JWTSecretFile: jwtSecretFile,
+			AppHosting:    appHosting,
+			SkipInfraInit: true, // Always skip on recovery
+		},
+	}
+
+	return SaveRecoveryConfig(config, DefaultRecoveryConfigPath)
 }

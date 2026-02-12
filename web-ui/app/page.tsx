@@ -20,7 +20,7 @@ import { useServers } from '@/src/lib/hooks/useServers';
 import { useContainers, CreateContainerProgress } from '@/src/lib/hooks/useContainers';
 import { useMetrics } from '@/src/lib/hooks/useMetrics';
 import { useApps } from '@/src/lib/hooks/useApps';
-import { useRoutes, useNetworkTopology, useContainerACL, useACLPresets } from '@/src/lib/hooks/useNetwork';
+import { useRoutes, useNetworkTopology, useContainerACL, useACLPresets, useDNSRecords } from '@/src/lib/hooks/useNetwork';
 import { CreateContainerRequest, ContainerMetricsWithRate } from '@/src/types/container';
 import { Server } from '@/src/types/server';
 import { ACLPreset } from '@/src/types/app';
@@ -79,9 +79,10 @@ export default function Home() {
 
   // Network hooks
   const [includeStopped, setIncludeStopped] = useState(false);
-  const { routes, isLoading: routesLoading, error: routesError, refresh: refreshRoutes } = useRoutes(activeServer);
+  const { routes, isLoading: routesLoading, error: routesError, addRoute, deleteRoute, refresh: refreshRoutes } = useRoutes(activeServer);
   const { topology, isLoading: topologyLoading, error: topologyError, refresh: refreshTopology } = useNetworkTopology(activeServer, includeStopped);
   const { presets, isLoading: presetsLoading } = useACLPresets(activeServer);
+  const { records: dnsRecords, baseDomain, refresh: refreshDNS } = useDNSRecords(activeServer);
 
   // Firewall editor state - now per container (DevBox), not per app
   const [firewallEditorOpen, setFirewallEditorOpen] = useState(false);
@@ -205,6 +206,7 @@ export default function Home() {
   const handleRefreshNetwork = () => {
     refreshRoutes();
     refreshTopology();
+    refreshDNS();
   };
 
   if (serversLoading) {
@@ -288,10 +290,18 @@ export default function Home() {
               <NetworkTopologyView
                 topology={topology}
                 routes={routes}
+                dnsRecords={dnsRecords}
+                baseDomain={baseDomain}
                 isLoading={topologyLoading || routesLoading}
                 error={(topologyError || routesError) as Error | null}
                 includeStopped={includeStopped}
                 onIncludeStoppedChange={setIncludeStopped}
+                onAddRoute={async (domain, targetIp, targetPort) => {
+                  await addRoute(domain, targetIp, targetPort);
+                }}
+                onDeleteRoute={async (domain) => {
+                  await deleteRoute(domain);
+                }}
                 onRefresh={handleRefreshNetwork}
               />
             )}

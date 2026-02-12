@@ -53,6 +53,16 @@ export interface ProxyRoute {
 }
 
 /**
+ * DNS Record for domain suggestions
+ */
+export interface DNSRecord {
+  type: string;
+  name: string;
+  data: string;
+  ttl: number;
+}
+
+/**
  * ACL rule
  */
 export interface ACLRule {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -20,29 +21,28 @@ type ProxyManager struct {
 	httpClient    *http.Client
 }
 
-// Route represents a proxy route configuration
+// Route represents a proxy route configuration (our domain model)
 type Route struct {
-	Subdomain   string `json:"subdomain"`
-	FullDomain  string `json:"full_domain"`
-	UpstreamIP  string `json:"upstream_ip"`
-	UpstreamPort int   `json:"upstream_port"`
+	Subdomain    string `json:"subdomain"`
+	FullDomain   string `json:"full_domain"`
+	UpstreamIP   string `json:"upstream_ip"`
+	UpstreamPort int    `json:"upstream_port"`
 }
 
-// CaddyRoute represents a Caddy route configuration
-type CaddyRoute struct {
-	ID     string                   `json:"@id,omitempty"`
-	Match  []CaddyMatch             `json:"match"`
-	Handle []map[string]interface{} `json:"handle"`
+// caddyRouteJSON is used for JSON marshaling routes to Caddy API
+// It uses a concrete handler type for type safety while remaining JSON-compatible
+type caddyRouteJSON struct {
+	ID     string                       `json:"@id,omitempty"`
+	Match  []CaddyMatchTyped            `json:"match,omitempty"`
+	Handle []CaddyReverseProxyHandler   `json:"handle,omitempty"`
 }
 
-// CaddyMatch represents a Caddy match configuration
-type CaddyMatch struct {
-	Host []string `json:"host,omitempty"`
-}
-
-// CaddyUpstream represents a Caddy upstream configuration
-type CaddyUpstream struct {
-	Dial string `json:"dial"`
+// caddyRouteRaw is used for unmarshaling routes from Caddy API
+// Caddy can return various handler types, so we use json.RawMessage
+type caddyRouteRaw struct {
+	ID     string            `json:"@id,omitempty"`
+	Match  []CaddyMatchTyped `json:"match,omitempty"`
+	Handle []json.RawMessage `json:"handle,omitempty"`
 }
 
 // NewProxyManager creates a new proxy manager
@@ -63,18 +63,29 @@ func (p *ProxyManager) SetServerName(name string) {
 }
 
 // AddRoute adds a new route to Caddy
+// If subdomain contains the base domain, it's used as-is; otherwise base domain is appended
 func (p *ProxyManager) AddRoute(subdomain, containerIP string, port int) error {
-	fullDomain := fmt.Sprintf("%s.%s", subdomain, p.baseDomain)
+	fullDomain := subdomain
+	routeID := subdomain
 
-	route := CaddyRoute{
-		ID: subdomain, // Use subdomain as route ID for easy removal
-		Match: []CaddyMatch{
+	// Check if subdomain already contains the base domain
+	if p.baseDomain != "" && !strings.HasSuffix(subdomain, "."+p.baseDomain) && !strings.HasSuffix(subdomain, p.baseDomain) {
+		fullDomain = fmt.Sprintf("%s.%s", subdomain, p.baseDomain)
+	} else {
+		// Extract subdomain part for route ID if full domain was provided
+		routeID = strings.TrimSuffix(subdomain, "."+p.baseDomain)
+		routeID = strings.TrimSuffix(routeID, p.baseDomain)
+	}
+
+	route := caddyRouteJSON{
+		ID: routeID, // Use subdomain as route ID for easy removal
+		Match: []CaddyMatchTyped{
 			{Host: []string{fullDomain}},
 		},
-		Handle: []map[string]interface{}{
+		Handle: []CaddyReverseProxyHandler{
 			{
-				"handler": "reverse_proxy",
-				"upstreams": []CaddyUpstream{
+				Handler: "reverse_proxy",
+				Upstreams: []CaddyUpstreamTyped{
 					{Dial: fmt.Sprintf("%s:%d", containerIP, port)},
 				},
 			},
@@ -106,13 +117,119 @@ func (p *ProxyManager) AddRoute(subdomain, containerIP string, port int) error {
 		return fmt.Errorf("caddy returned error (status %d): %s", resp.StatusCode, string(body))
 	}
 
+	// Provision TLS certificate for the domain
+	if err := p.ProvisionTLS(fullDomain); err != nil {
+		// Log warning but don't fail - route is added, TLS might work with existing wildcard cert
+		// or the domain might already have a certificate
+		fmt.Printf("Warning: Failed to provision TLS for %s: %v\n", fullDomain, err)
+	}
+
 	return nil
 }
 
-// RemoveRoute removes a route from Caddy by subdomain
-func (p *ProxyManager) RemoveRoute(subdomain string) error {
-	// Delete route by ID
-	url := fmt.Sprintf("%s/id/%s", p.caddyAdminURL, subdomain)
+// ProvisionTLS provisions a TLS certificate for the given domain via Caddy's on-demand TLS
+// or by adding it to the TLS automation policy
+func (p *ProxyManager) ProvisionTLS(domain string) error {
+	// First, check if there's an existing automation policy we can add to
+	// Get current TLS config
+	url := fmt.Sprintf("%s/config/apps/tls/automation/policies", p.caddyAdminURL)
+	resp, err := p.httpClient.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to get TLS policies: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var policies []CaddyTLSAutomationPolicy
+	if resp.StatusCode == http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		json.Unmarshal(body, &policies)
+	}
+
+	// Check if domain is already in a policy
+	for _, policy := range policies {
+		for _, subject := range policy.Subjects {
+			if subject == domain {
+				// Domain already has a policy, no need to add
+				return nil
+			}
+		}
+	}
+
+	// Add domain to a new or existing policy
+	// If there are existing policies, add to the first one that has issuers configured
+	if len(policies) > 0 {
+		// Add domain to the first policy's subjects
+		policies[0].Subjects = append(policies[0].Subjects, domain)
+
+		// Update the policy
+		policyJSON, err := json.Marshal(policies)
+		if err != nil {
+			return fmt.Errorf("failed to marshal policies: %w", err)
+		}
+
+		req, err := http.NewRequest("PATCH", url, bytes.NewReader(policyJSON))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to update TLS policy: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("caddy returned error updating TLS policy (status %d): %s", resp.StatusCode, string(body))
+		}
+
+		return nil
+	}
+
+	// No existing policies, create a new one with ACME issuers
+	newPolicy := NewTLSPolicy([]string{domain})
+
+	policyJSON, err := json.Marshal([]CaddyTLSAutomationPolicy{newPolicy})
+	if err != nil {
+		return fmt.Errorf("failed to marshal new policy: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(policyJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err = p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS policy: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("caddy returned error creating TLS policy (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// RemoveRoute removes a route from Caddy by subdomain or full domain
+func (p *ProxyManager) RemoveRoute(domain string) error {
+	// Extract route ID from domain (same logic as AddRoute)
+	routeID := domain
+	if p.baseDomain != "" {
+		// If domain contains the base domain, extract just the subdomain part
+		if strings.HasSuffix(domain, "."+p.baseDomain) {
+			routeID = strings.TrimSuffix(domain, "."+p.baseDomain)
+		} else if strings.HasSuffix(domain, p.baseDomain) {
+			routeID = strings.TrimSuffix(domain, p.baseDomain)
+		}
+	}
+
+	// First try to delete by ID (for routes created via our API)
+	url := fmt.Sprintf("%s/id/%s", p.caddyAdminURL, routeID)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -122,14 +239,72 @@ func (p *ProxyManager) RemoveRoute(subdomain string) error {
 	if err != nil {
 		return fmt.Errorf("failed to remove route: %w", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	// 404 is acceptable - route might already be deleted
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("caddy returned error (status %d): %s", resp.StatusCode, string(body))
+	// If deleted successfully by ID, we're done
+	if resp.StatusCode == http.StatusOK {
+		return nil
 	}
 
+	// If route not found by ID, try to find and delete by index
+	// This handles routes created via Caddyfile or without @id
+	return p.removeRouteByDomain(domain)
+}
+
+// removeRouteByDomain finds a route by its domain and deletes it by index
+func (p *ProxyManager) removeRouteByDomain(domain string) error {
+	// Get all routes
+	routesURL := fmt.Sprintf("%s/config/apps/http/servers/%s/routes", p.caddyAdminURL, p.serverName)
+	req, err := http.NewRequest("GET", routesURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to list routes: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to list routes (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Parse routes to find the index of the one matching our domain
+	var routes []caddyRouteRaw
+	if err := json.NewDecoder(resp.Body).Decode(&routes); err != nil {
+		return fmt.Errorf("failed to decode routes: %w", err)
+	}
+
+	// Find the route with matching host
+	for i, route := range routes {
+		if len(route.Match) > 0 {
+			for _, host := range route.Match[0].Host {
+				if host == domain {
+					// Found the route, delete by index
+					deleteURL := fmt.Sprintf("%s/config/apps/http/servers/%s/routes/%d", p.caddyAdminURL, p.serverName, i)
+					delReq, err := http.NewRequest("DELETE", deleteURL, nil)
+					if err != nil {
+						return fmt.Errorf("failed to create delete request: %w", err)
+					}
+
+					delResp, err := p.httpClient.Do(delReq)
+					if err != nil {
+						return fmt.Errorf("failed to delete route: %w", err)
+					}
+					delResp.Body.Close()
+
+					if delResp.StatusCode != http.StatusOK {
+						return fmt.Errorf("failed to delete route (status %d)", delResp.StatusCode)
+					}
+					return nil
+				}
+			}
+		}
+	}
+
+	// Route not found - this is acceptable, might already be deleted
 	return nil
 }
 
@@ -157,7 +332,7 @@ func (p *ProxyManager) ListRoutes() ([]Route, error) {
 		return nil, fmt.Errorf("caddy returned error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	var caddyRoutes []CaddyRoute
+	var caddyRoutes []caddyRouteRaw
 	if err := json.NewDecoder(resp.Body).Decode(&caddyRoutes); err != nil {
 		return nil, fmt.Errorf("failed to decode routes: %w", err)
 	}
@@ -171,14 +346,12 @@ func (p *ProxyManager) ListRoutes() ([]Route, error) {
 				FullDomain: fullDomain,
 			}
 
-			// Extract upstream info if available
+			// Extract upstream info from handler if available
 			if len(cr.Handle) > 0 {
-				if upstreams, ok := cr.Handle[0]["upstreams"].([]interface{}); ok && len(upstreams) > 0 {
-					if upstream, ok := upstreams[0].(map[string]interface{}); ok {
-						if dial, ok := upstream["dial"].(string); ok {
-							// Parse dial string (format: "ip:port")
-							route.UpstreamIP = dial
-						}
+				var handler CaddyReverseProxyHandler
+				if err := json.Unmarshal(cr.Handle[0], &handler); err == nil {
+					if len(handler.Upstreams) > 0 {
+						route.UpstreamIP = handler.Upstreams[0].Dial
 					}
 				}
 			}
@@ -225,9 +398,9 @@ func (p *ProxyManager) EnsureServerConfig() error {
 
 // createServerConfig creates the initial Caddy server configuration
 func (p *ProxyManager) createServerConfig() error {
-	config := map[string]interface{}{
-		"listen": []string{":80", ":443"},
-		"routes": []interface{}{},
+	config := CaddyServerConfig{
+		Listen: []string{":80", ":443"},
+		Routes: []CaddyRouteTyped{},
 	}
 
 	configJSON, err := json.Marshal(config)

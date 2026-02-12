@@ -172,6 +172,15 @@ message SystemInfo {
 
   // Container network CIDR (e.g., "10.100.0.0/24")
   string network_cidr = 14;
+
+  // CPU load average (1 minute)
+  double cpu_load_1min = 15;
+
+  // CPU load average (5 minutes)
+  double cpu_load_5min = 16;
+
+  // CPU load average (15 minutes)
+  double cpu_load_15min = 17;
 }
 
 // GetSystemInfoRequest is the request to get system information

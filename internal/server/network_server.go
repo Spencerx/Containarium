@@ -17,6 +17,7 @@ type NetworkServer struct {
 	appStore         app.AppStore
 	containerNetwork string // e.g., "10.100.0.0/24"
 	proxyIP          string // e.g., "10.100.0.1"
+	baseDomain       string // e.g., "kafeido.app"
 }
 
 // NewNetworkServer creates a new network server
@@ -81,6 +82,125 @@ func (s *NetworkServer) GetRoutes(ctx context.Context, req *pb.GetRoutesRequest)
 	return &pb.GetRoutesResponse{
 		Routes:     pbRoutes,
 		TotalCount: int32(len(pbRoutes)),
+	}, nil
+}
+
+// AddRoute adds a new proxy route
+func (s *NetworkServer) AddRoute(ctx context.Context, req *pb.AddRouteRequest) (*pb.AddRouteResponse, error) {
+	// Check if proxy manager is available
+	if s.proxyManager == nil {
+		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
+	}
+
+	// Validate request
+	if req.Domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if req.TargetIp == "" {
+		return nil, fmt.Errorf("target_ip is required")
+	}
+	if req.TargetPort <= 0 {
+		return nil, fmt.Errorf("target_port must be positive")
+	}
+
+	// Add route via proxy manager
+	// Use domain as subdomain identifier
+	if err := s.proxyManager.AddRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
+		return nil, fmt.Errorf("failed to add route: %w", err)
+	}
+
+	return &pb.AddRouteResponse{
+		Route: &pb.ProxyRoute{
+			Subdomain:   req.Domain,
+			FullDomain:  req.Domain,
+			ContainerIp: req.TargetIp,
+			Port:        req.TargetPort,
+			Active:      true,
+		},
+		Message: fmt.Sprintf("Route added: %s -> %s:%d", req.Domain, req.TargetIp, req.TargetPort),
+	}, nil
+}
+
+// UpdateRoute updates an existing proxy route
+func (s *NetworkServer) UpdateRoute(ctx context.Context, req *pb.UpdateRouteRequest) (*pb.UpdateRouteResponse, error) {
+	// Check if proxy manager is available
+	if s.proxyManager == nil {
+		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
+	}
+
+	// Validate request
+	if req.Domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if req.TargetIp == "" {
+		return nil, fmt.Errorf("target_ip is required")
+	}
+	if req.TargetPort <= 0 {
+		return nil, fmt.Errorf("target_port must be positive")
+	}
+
+	// Update route (remove and re-add)
+	if err := s.proxyManager.UpdateRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
+		return nil, fmt.Errorf("failed to update route: %w", err)
+	}
+
+	return &pb.UpdateRouteResponse{
+		Route: &pb.ProxyRoute{
+			Subdomain:   req.Domain,
+			FullDomain:  req.Domain,
+			ContainerIp: req.TargetIp,
+			Port:        req.TargetPort,
+			Active:      true,
+		},
+		Message: fmt.Sprintf("Route updated: %s -> %s:%d", req.Domain, req.TargetIp, req.TargetPort),
+	}, nil
+}
+
+// DeleteRoute removes a proxy route
+func (s *NetworkServer) DeleteRoute(ctx context.Context, req *pb.DeleteRouteRequest) (*pb.DeleteRouteResponse, error) {
+	// Check if proxy manager is available
+	if s.proxyManager == nil {
+		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
+	}
+
+	// Validate request
+	if req.Domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+
+	// Remove route
+	if err := s.proxyManager.RemoveRoute(req.Domain); err != nil {
+		return nil, fmt.Errorf("failed to delete route: %w", err)
+	}
+
+	return &pb.DeleteRouteResponse{
+		Message: fmt.Sprintf("Route deleted: %s", req.Domain),
+	}, nil
+}
+
+// ListDNSRecords returns available domains that have TLS certificates (from existing routes)
+func (s *NetworkServer) ListDNSRecords(ctx context.Context, req *pb.ListDNSRecordsRequest) (*pb.ListDNSRecordsResponse, error) {
+	var records []*pb.DNSRecord
+
+	// Get existing routes from Caddy - these domains have TLS certificates
+	if s.proxyManager != nil {
+		routes, err := s.proxyManager.ListRoutes()
+		if err == nil {
+			for _, route := range routes {
+				records = append(records, &pb.DNSRecord{
+					Type: "A",
+					Name: route.Subdomain,
+					Data: route.FullDomain,
+					Ttl:  600,
+				})
+			}
+		}
+	}
+
+	return &pb.ListDNSRecordsResponse{
+		Records:    records,
+		BaseDomain: s.baseDomain,
+		TotalCount: int32(len(records)),
 	}, nil
 }
 

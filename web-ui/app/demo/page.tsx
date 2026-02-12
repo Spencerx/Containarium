@@ -336,7 +336,7 @@ const mockNetworkTopology: NetworkTopology = {
   gatewayIp: '10.0.100.1',
 };
 
-// Mock proxy routes
+// Mock proxy routes (includes both app-linked routes and manual routes)
 const mockRoutes: ProxyRoute[] = [
   {
     subdomain: 'alice-ml-dashboard',
@@ -377,6 +377,21 @@ const mockRoutes: ProxyRoute[] = [
     appId: 'app-005',
     appName: 'static-docs',
     username: 'alice',
+  },
+  // Manual routes (not linked to apps)
+  {
+    subdomain: 'test',
+    fullDomain: 'test.containarium.dev',
+    containerIp: '10.0.100.50',
+    port: 8080,
+    active: true,
+  },
+  {
+    subdomain: 'staging-api',
+    fullDomain: 'staging-api.containarium.dev',
+    containerIp: '10.0.100.55',
+    port: 3000,
+    active: true,
   },
 ];
 
@@ -474,6 +489,12 @@ export default function DemoPage() {
           error={null}
           includeStopped={includeStopped}
           onIncludeStoppedChange={setIncludeStopped}
+          onAddRoute={async (domain, targetIp, targetPort) => {
+            console.log('Demo: Would add route:', { domain, targetIp, targetPort });
+          }}
+          onDeleteRoute={async (domain) => {
+            console.log('Demo: Would delete route:', domain);
+          }}
           onRefresh={() => {}}
         />
       </TabPanel>

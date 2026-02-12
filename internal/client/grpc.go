@@ -16,9 +16,10 @@ import (
 
 // GRPCClient wraps a gRPC connection to the containarium daemon
 type GRPCClient struct {
-	conn            *grpc.ClientConn
-	client          pb.ContainerServiceClient
-	appClient       pb.AppServiceClient
+	conn          *grpc.ClientConn
+	client        pb.ContainerServiceClient
+	appClient     pb.AppServiceClient
+	networkClient pb.NetworkServiceClient
 }
 
 // NewGRPCClient creates a new gRPC client
@@ -69,11 +70,13 @@ func NewGRPCClient(serverAddr string, certsDir string, insecureConn bool) (*GRPC
 	// Create clients
 	client := pb.NewContainerServiceClient(conn)
 	appClient := pb.NewAppServiceClient(conn)
+	networkClient := pb.NewNetworkServiceClient(conn)
 
 	return &GRPCClient{
-		conn:      conn,
-		client:    client,
-		appClient: appClient,
+		conn:          conn,
+		client:        client,
+		appClient:     appClient,
+		networkClient: networkClient,
 	}, nil
 }
 
@@ -403,4 +406,85 @@ func (c *GRPCClient) GetAppLogs(username, appName string, tailLines int32) ([]st
 	}
 
 	return logs, nil
+}
+
+// ============================================
+// Network Service Methods
+// ============================================
+
+// ListRoutes lists all proxy routes via gRPC
+func (c *GRPCClient) ListRoutes(username string, activeOnly bool) ([]*pb.ProxyRoute, int32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &pb.GetRoutesRequest{
+		Username:   username,
+		ActiveOnly: activeOnly,
+	}
+
+	resp, err := c.networkClient.GetRoutes(ctx, req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list routes: %w", err)
+	}
+
+	return resp.Routes, resp.TotalCount, nil
+}
+
+// AddRoute adds a new proxy route via gRPC
+func (c *GRPCClient) AddRoute(domain, targetIP string, targetPort int32, containerName, description string) (*pb.ProxyRoute, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &pb.AddRouteRequest{
+		Domain:        domain,
+		TargetIp:      targetIP,
+		TargetPort:    targetPort,
+		ContainerName: containerName,
+		Description:   description,
+	}
+
+	resp, err := c.networkClient.AddRoute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add route: %w", err)
+	}
+
+	return resp.Route, nil
+}
+
+// UpdateRoute updates an existing proxy route via gRPC
+func (c *GRPCClient) UpdateRoute(domain, targetIP string, targetPort int32, containerName, description string) (*pb.ProxyRoute, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &pb.UpdateRouteRequest{
+		Domain:        domain,
+		TargetIp:      targetIP,
+		TargetPort:    targetPort,
+		ContainerName: containerName,
+		Description:   description,
+	}
+
+	resp, err := c.networkClient.UpdateRoute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update route: %w", err)
+	}
+
+	return resp.Route, nil
+}
+
+// DeleteRoute deletes a proxy route via gRPC
+func (c *GRPCClient) DeleteRoute(domain string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &pb.DeleteRouteRequest{
+		Domain: domain,
+	}
+
+	_, err := c.networkClient.DeleteRoute(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to delete route: %w", err)
+	}
+
+	return nil
 }
