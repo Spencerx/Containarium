@@ -177,7 +177,7 @@ func (m *Manager) DeployApp(ctx context.Context, req *v1.DeployAppRequest) (*v1.
 		return nil, nil, fmt.Errorf("failed to upload source: %w", err)
 	}
 
-	// Build the Docker image
+	// Build the container image using Podman
 	buildReq := &BuildRequest{
 		ContainerName:   containerName,
 		AppName:         req.AppName,
@@ -198,9 +198,9 @@ func (m *Manager) DeployApp(ctx context.Context, req *v1.DeployAppRequest) (*v1.
 		return nil, nil, fmt.Errorf("build failed: %w", err)
 	}
 
-	app.DockerImage = buildResult.ImageTag
+	app.ContainerImage = buildResult.ImageTag
 
-	// Run the Docker container
+	// Run the Podman container
 	if err := m.runContainer(ctx, containerName, app, req.EnvVars); err != nil {
 		app.State = v1.AppState_APP_STATE_FAILED
 		app.ErrorMessage = fmt.Sprintf("failed to run container: %v", err)
@@ -236,11 +236,11 @@ func (m *Manager) StopApp(ctx context.Context, username, appName string) (*v1.Ap
 		return nil, fmt.Errorf("app is not running (current state: %s)", app.State.String())
 	}
 
-	// Stop the Docker container inside the user's LXC container
-	dockerContainerName := m.dockerContainerName(app)
-	stopCmd := []string{"docker", "stop", dockerContainerName}
+	// Stop the Podman container inside the user's LXC container
+	podmanContainerName := m.podmanContainerName(app)
+	stopCmd := []string{"podman", "stop", podmanContainerName}
 	if err := m.incusClient.Exec(app.ContainerName, stopCmd); err != nil {
-		return nil, fmt.Errorf("failed to stop docker container: %w", err)
+		return nil, fmt.Errorf("failed to stop podman container: %w", err)
 	}
 
 	// Update state
@@ -264,11 +264,11 @@ func (m *Manager) StartApp(ctx context.Context, username, appName string) (*v1.A
 		return nil, fmt.Errorf("app is not stopped (current state: %s)", app.State.String())
 	}
 
-	// Start the Docker container
-	dockerContainerName := m.dockerContainerName(app)
-	startCmd := []string{"docker", "start", dockerContainerName}
+	// Start the Podman container
+	podmanContainerName := m.podmanContainerName(app)
+	startCmd := []string{"podman", "start", podmanContainerName}
 	if err := m.incusClient.Exec(app.ContainerName, startCmd); err != nil {
-		return nil, fmt.Errorf("failed to start docker container: %w", err)
+		return nil, fmt.Errorf("failed to start podman container: %w", err)
 	}
 
 	// Update state
@@ -295,14 +295,14 @@ func (m *Manager) RestartApp(ctx context.Context, username, appName string) (*v1
 		return nil, fmt.Errorf("failed to save state: %w", err)
 	}
 
-	// Restart the Docker container
-	dockerContainerName := m.dockerContainerName(app)
-	restartCmd := []string{"docker", "restart", dockerContainerName}
+	// Restart the Podman container
+	podmanContainerName := m.podmanContainerName(app)
+	restartCmd := []string{"podman", "restart", podmanContainerName}
 	if err := m.incusClient.Exec(app.ContainerName, restartCmd); err != nil {
 		app.State = v1.AppState_APP_STATE_FAILED
 		app.ErrorMessage = fmt.Sprintf("restart failed: %v", err)
 		m.store.Save(ctx, app)
-		return nil, fmt.Errorf("failed to restart docker container: %w", err)
+		return nil, fmt.Errorf("failed to restart podman container: %w", err)
 	}
 
 	// Update state
@@ -323,14 +323,14 @@ func (m *Manager) DeleteApp(ctx context.Context, username, appName string, remov
 		return fmt.Errorf("app not found: %w", err)
 	}
 
-	// Stop and remove Docker container
-	dockerContainerName := m.dockerContainerName(app)
-	rmCmd := []string{"docker", "rm", "-f", dockerContainerName}
+	// Stop and remove Podman container
+	podmanContainerName := m.podmanContainerName(app)
+	rmCmd := []string{"podman", "rm", "-f", podmanContainerName}
 	m.incusClient.Exec(app.ContainerName, rmCmd) // Ignore errors
 
-	// Remove Docker image
-	if app.DockerImage != "" {
-		rmiCmd := []string{"docker", "rmi", "-f", app.DockerImage}
+	// Remove Podman image
+	if app.ContainerImage != "" {
+		rmiCmd := []string{"podman", "rmi", "-f", app.ContainerImage}
 		m.incusClient.Exec(app.ContainerName, rmiCmd) // Ignore errors
 	}
 
@@ -363,8 +363,8 @@ func (m *Manager) GetLogs(ctx context.Context, username, appName string, tailLin
 		tailLines = 100
 	}
 
-	dockerContainerName := m.dockerContainerName(app)
-	logsCmd := []string{"docker", "logs", "--tail", fmt.Sprintf("%d", tailLines), dockerContainerName}
+	podmanContainerName := m.podmanContainerName(app)
+	logsCmd := []string{"podman", "logs", "--tail", fmt.Sprintf("%d", tailLines), podmanContainerName}
 
 	stdout, stderr, err := m.incusClient.ExecWithOutput(app.ContainerName, logsCmd)
 	if err != nil {
@@ -385,7 +385,7 @@ func (m *Manager) GetLogs(ctx context.Context, username, appName string, tailLin
 
 // Helper functions
 
-func (m *Manager) dockerContainerName(app *v1.App) string {
+func (m *Manager) podmanContainerName(app *v1.App) string {
 	return fmt.Sprintf("app-%s-%s", app.Username, app.Name)
 }
 
@@ -458,12 +458,12 @@ func (m *Manager) uploadSource(ctx context.Context, containerName, appDir string
 }
 
 func (m *Manager) runContainer(ctx context.Context, containerName string, app *v1.App, envVars map[string]string) error {
-	dockerContainerName := m.dockerContainerName(app)
+	podmanContainerName := m.podmanContainerName(app)
 
-	// Build docker run command
+	// Build podman run command
 	args := []string{
-		"docker", "run", "-d",
-		"--name", dockerContainerName,
+		"podman", "run", "-d",
+		"--name", podmanContainerName,
 		"--restart", "unless-stopped",
 		"-p", fmt.Sprintf("%d:%d", app.Port, app.Port),
 	}
@@ -474,15 +474,15 @@ func (m *Manager) runContainer(ctx context.Context, containerName string, app *v
 	}
 
 	// Add the image
-	args = append(args, app.DockerImage)
+	args = append(args, app.ContainerImage)
 
 	// Remove existing container if any
-	rmCmd := []string{"docker", "rm", "-f", dockerContainerName}
+	rmCmd := []string{"podman", "rm", "-f", podmanContainerName}
 	m.incusClient.Exec(containerName, rmCmd) // Ignore errors
 
 	// Run the new container
 	if err := m.incusClient.Exec(containerName, args); err != nil {
-		return fmt.Errorf("failed to run docker container: %w", err)
+		return fmt.Errorf("failed to run podman container: %w", err)
 	}
 
 	return nil

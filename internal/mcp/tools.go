@@ -50,9 +50,9 @@ func (s *Server) registerTools() {
 						"type":        "string",
 						"description": "Container image (default: images:ubuntu/24.04)",
 					},
-					"enable_docker": map[string]interface{}{
+					"enable_podman": map[string]interface{}{
 						"type":        "boolean",
-						"description": "Enable Docker support (default: true)",
+						"description": "Enable Podman support (default: true)",
 					},
 				},
 				"required": []string{"username"},
@@ -178,7 +178,7 @@ func handleCreateContainer(client *Client, args map[string]interface{}) (string,
 			Disk:   getStringArg(args, "disk", "50GB"),
 		},
 		Image:        getStringArg(args, "image", "images:ubuntu/24.04"),
-		EnableDocker: getBoolArg(args, "enable_docker", true),
+		EnablePodman: getBoolArg(args, "enable_podman", true),
 	}
 
 	// Handle SSH keys

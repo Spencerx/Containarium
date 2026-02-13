@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/footprintai/containarium/internal/incus"
+	"github.com/footprintai/containarium/internal/stacks"
 )
 
 // Manager handles container lifecycle operations
@@ -24,10 +25,11 @@ type CreateOptions struct {
 	StaticIP               string // Static IP address (e.g., "10.100.0.100") - empty for DHCP
 	SSHKeys                []string
 	Labels                 map[string]string // Kubernetes-style labels
-	EnableDocker           bool
-	EnableDockerPrivileged bool // Full Docker support (privileged + AppArmor disabled)
+	EnablePodman           bool
+	EnablePodmanPrivileged bool // Full Docker support (privileged + AppArmor disabled)
 	AutoStart              bool
 	Verbose                bool
+	Stack                  string // Software stack to install (e.g., "nodejs", "python")
 }
 
 // New creates a new container manager
@@ -58,8 +60,8 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 		Image:                  opts.Image,
 		CPU:                    opts.CPU,
 		Memory:                 opts.Memory,
-		EnableNesting:          opts.EnableDocker,
-		EnableDockerPrivileged: opts.EnableDockerPrivileged,
+		EnableNesting:          opts.EnablePodman,
+		EnablePodmanPrivileged: opts.EnablePodmanPrivileged,
 		AutoStart:              opts.AutoStart,
 	}
 
@@ -141,10 +143,14 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 
 	// Step 5: Install packages
 	if opts.Verbose {
-		fmt.Println("  [5/7] Installing Docker, SSH, and tools...")
+		if opts.Stack != "" {
+			fmt.Printf("  [5/7] Installing Podman, SSH, tools, and %s stack...\n", opts.Stack)
+		} else {
+			fmt.Println("  [5/7] Installing Podman, SSH, and tools...")
+		}
 	}
 
-	if err := m.installPackages(containerName, opts.EnableDocker); err != nil {
+	if err := m.installPackages(containerName, opts.EnablePodman, opts.Stack, opts.Username); err != nil {
 		_ = m.cleanup(containerName)
 		return nil, fmt.Errorf("failed to install packages: %w", err)
 	}
@@ -203,7 +209,7 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 }
 
 // installPackages installs required packages in the container
-func (m *Manager) installPackages(containerName string, enableDocker bool) error {
+func (m *Manager) installPackages(containerName string, enablePodman bool, stackID string, username string) error {
 	// Wait a bit for cloud-init to finish (if present)
 	time.Sleep(5 * time.Second)
 
@@ -224,8 +230,17 @@ func (m *Manager) installPackages(containerName string, enableDocker bool) error
 		"iputils-ping",
 	}
 
-	if enableDocker {
-		packages = append(packages, "docker.io", "docker-compose")
+	if enablePodman {
+		packages = append(packages, "podman", "podman-compose")
+	}
+
+	// Add stack-specific packages
+	if stackID != "" {
+		stackMgr := stacks.GetDefault()
+		stackPkgs, err := stackMgr.GetPackagesForStack(stackID)
+		if err == nil && len(stackPkgs) > 0 {
+			packages = append(packages, stackPkgs...)
+		}
 	}
 
 	// Install packages
@@ -235,12 +250,12 @@ func (m *Manager) installPackages(containerName string, enableDocker bool) error
 	}
 
 	// Enable services
-	if enableDocker {
-		if err := m.incus.Exec(containerName, []string{"systemctl", "enable", "docker"}); err != nil {
-			return fmt.Errorf("failed to enable docker: %w", err)
+	if enablePodman {
+		if err := m.incus.Exec(containerName, []string{"systemctl", "enable", "podman"}); err != nil {
+			return fmt.Errorf("failed to enable podman: %w", err)
 		}
-		if err := m.incus.Exec(containerName, []string{"systemctl", "start", "docker"}); err != nil {
-			return fmt.Errorf("failed to start docker: %w", err)
+		if err := m.incus.Exec(containerName, []string{"systemctl", "start", "podman"}); err != nil {
+			return fmt.Errorf("failed to start podman: %w", err)
 		}
 	}
 
@@ -249,6 +264,20 @@ func (m *Manager) installPackages(containerName string, enableDocker bool) error
 	}
 	if err := m.incus.Exec(containerName, []string{"systemctl", "start", "ssh"}); err != nil {
 		return fmt.Errorf("failed to start ssh: %w", err)
+	}
+
+	// Run stack post-install commands as the user
+	if stackID != "" {
+		stackMgr := stacks.GetDefault()
+		postInstallCmds, err := stackMgr.GetPostInstallCommands(stackID)
+		if err == nil && len(postInstallCmds) > 0 {
+			for _, cmd := range postInstallCmds {
+				// Run as the user (not root) so tools are installed in user's home
+				userCmd := []string{"su", "-", username, "-c", cmd}
+				// Ignore errors for post-install commands (some may fail on first run)
+				_ = m.incus.Exec(containerName, userCmd)
+			}
+		}
 	}
 
 	return nil
@@ -271,8 +300,9 @@ func (m *Manager) createUser(containerName, username string) error {
 		return fmt.Errorf("failed to add user to sudo: %w", err)
 	}
 
-	// Add to docker group (if docker is installed)
-	_ = m.incus.Exec(containerName, []string{"usermod", "-aG", "docker", username})
+	// Note: Podman typically runs rootless and doesn't require a group
+	// But we can optionally add user to 'podman' group if it exists
+	_ = m.incus.Exec(containerName, []string{"usermod", "-aG", "podman", username})
 
 	// Allow passwordless sudo
 	// SECURITY FIX: Use Incus file push API instead of shell echo

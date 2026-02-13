@@ -9,7 +9,7 @@ import (
 	v1 "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
 
-// Builder handles Docker image builds inside user containers
+// Builder handles container image builds inside user containers using Podman
 type Builder struct {
 	incusClient IncusClient
 	detector    *buildpack.Detector
@@ -43,7 +43,7 @@ func NewBuilder(incusClient IncusClient, detector *buildpack.Detector) *Builder 
 	}
 }
 
-// Build builds a Docker image for the app
+// Build builds a container image for the app using Podman
 func (b *Builder) Build(ctx context.Context, req *BuildRequest) (*BuildResult, error) {
 	imageTag := fmt.Sprintf("%s/%s:latest", req.Username, req.AppName)
 	result := &BuildResult{
@@ -60,20 +60,20 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) (*BuildResult, e
 
 	if req.GenerateIfNoDoc {
 		// Generate Dockerfile using buildpack
-		dockerfile, err := b.generateDockerfile(req)
+		containerfile, err := b.generateDockerfile(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate Dockerfile: %w", err)
 		}
 
 		// Write generated Dockerfile to container
-		if err := b.incusClient.WriteFile(req.ContainerName, fullDockerfilePath, []byte(dockerfile), "0644"); err != nil {
+		if err := b.incusClient.WriteFile(req.ContainerName, fullDockerfilePath, []byte(containerfile), "0644"); err != nil {
 			return nil, fmt.Errorf("failed to write Dockerfile: %w", err)
 		}
 	}
 
-	// Build the Docker image
+	// Build the container image using Podman
 	buildCmd := []string{
-		"docker", "build",
+		"podman", "build",
 		"-t", imageTag,
 		"-f", fullDockerfilePath,
 		req.SourceDir,
@@ -83,7 +83,7 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) (*BuildResult, e
 	if err != nil {
 		result.Success = false
 		result.BuildLogs = append(result.BuildLogs, stderr)
-		return nil, fmt.Errorf("docker build failed: %w\nOutput: %s", err, stderr)
+		return nil, fmt.Errorf("podman build failed: %w\nOutput: %s", err, stderr)
 	}
 
 	result.Success = true

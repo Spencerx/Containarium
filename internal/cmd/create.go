@@ -19,22 +19,24 @@ var (
 	diskLimit      string
 	staticIP       string
 	containerImage string
-	enableDocker   bool
+	enablePodman   bool
 	labels         []string
 	forceRecreate  bool
+	stackID        string
 )
 
 var createCmd = &cobra.Command{
 	Use:   "create <username>",
 	Short: "Create a new LXC container for a user",
-	Long: `Create a new LXC container with Ubuntu + Docker support for the specified user.
+	Long: `Create a new LXC container with Ubuntu + Podman support for the specified user.
 
 The container will be created with:
   - Ubuntu 24.04 LTS (or specified image)
-  - Docker and docker-compose installed
+  - Podman and podman-compose installed
   - SSH server configured
   - User account with sudo privileges
   - Configurable resource limits
+  - Optional software stack (nodejs, python, golang, rust, datascience, devops, database, fullstack)
 
 Examples:
   # Create container with default settings
@@ -42,6 +44,12 @@ Examples:
 
   # Create with custom resources and SSH key
   containarium create bob --ssh-key ~/.ssh/bob.pub --cpu 8 --memory 8GB --disk 100GB
+
+  # Create with Node.js development stack
+  containarium create charlie --ssh-key ~/.ssh/id_rsa.pub --stack nodejs
+
+  # Create with full stack web development tools
+  containarium create dave --ssh-key ~/.ssh/id_rsa.pub --stack fullstack
 
   # Create with labels
   containarium create charlie --ssh-key ~/.ssh/id_rsa.pub --labels team=dev,project=web
@@ -62,7 +70,8 @@ func init() {
 	createCmd.Flags().StringVar(&diskLimit, "disk", "50GB", "Disk limit (e.g., 50GB, 100GB)")
 	createCmd.Flags().StringVar(&staticIP, "static-ip", "", "Static IP address (e.g., 10.100.0.100) - empty for DHCP")
 	createCmd.Flags().StringVar(&containerImage, "image", "images:ubuntu/24.04", "Container image to use")
-	createCmd.Flags().BoolVar(&enableDocker, "docker", true, "Enable Docker support (nesting)")
+	createCmd.Flags().BoolVar(&enablePodman, "podman", true, "Enable Podman support (nesting)")
+	createCmd.Flags().StringVar(&stackID, "stack", "", "Software stack to install (nodejs, python, golang, rust, datascience, devops, database, fullstack)")
 	createCmd.Flags().StringSliceVar(&labels, "labels", []string{}, "Labels in key=value format (can be specified multiple times)")
 	createCmd.Flags().BoolVar(&forceRecreate, "force", false, "Delete and recreate if container already exists")
 }
@@ -84,7 +93,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  IP: DHCP\n")
 		}
 		fmt.Printf("  Image: %s\n", containerImage)
-		fmt.Printf("  Docker enabled: %v\n", enableDocker)
+		fmt.Printf("  Podman enabled: %v\n", enablePodman)
+		if stackID != "" {
+			fmt.Printf("  Stack: %s\n", stackID)
+		}
 		if len(parsedLabels) > 0 {
 			fmt.Printf("  Labels:\n")
 			for k, v := range parsedLabels {
@@ -218,14 +230,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	var info *incus.ContainerInfo
 
 	if httpMode && serverAddr != "" {
-		// Remote mode via HTTP 
-		info, err = createRemoteHTTP(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enableDocker)
+		// Remote mode via HTTP
+		info, err = createRemoteHTTP(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enablePodman, stackID)
 		if err != nil {
 			return fmt.Errorf("failed to create container via HTTP API: %w", err)
 		}
 	} else if serverAddr != "" {
-		// Remote mode via gRPC 
-		info, err = createRemote(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enableDocker)
+		// Remote mode via gRPC
+		info, err = createRemote(username, containerImage, cpuLimit, memoryLimit, diskLimit, sshKeys, enablePodman, stackID)
 		if err != nil {
 			return fmt.Errorf("failed to create container via remote server: %w", err)
 		}
@@ -234,7 +246,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if verbose {
 			fmt.Println("Creating container...")
 		}
-		info, err = createLocal(username, containerImage, cpuLimit, memoryLimit, diskLimit, staticIP, sshKeys, parsedLabels, enableDocker)
+		info, err = createLocal(username, containerImage, cpuLimit, memoryLimit, diskLimit, staticIP, sshKeys, parsedLabels, enablePodman, stackID)
 		if err != nil {
 			// Cleanup jump server account on failure
 			_ = container.DeleteJumpServerAccount(username, false)
@@ -256,7 +268,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  State:        %s\n", info.State)
 	fmt.Printf("  CPU:          %s cores\n", info.CPU)
 	fmt.Printf("  Memory:       %s\n", info.Memory)
-	fmt.Printf("  Docker:       %v\n", enableDocker)
+	fmt.Printf("  Podman:       %v\n", enablePodman)
 	fmt.Printf("  Auto-start:   enabled\n")
 	if len(info.Labels) > 0 {
 		fmt.Printf("  Labels:\n")
@@ -293,7 +305,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 }
 
 // createLocal creates a container using local Incus daemon
-func createLocal(username, image, cpu, memory, disk, staticIP string, sshKeys []string, labelMap map[string]string, enableDocker bool) (*incus.ContainerInfo, error) {
+func createLocal(username, image, cpu, memory, disk, staticIP string, sshKeys []string, labelMap map[string]string, enablePodman bool, stack string) (*incus.ContainerInfo, error) {
 	mgr, err := container.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Incus: %w (is Incus running?)", err)
@@ -308,10 +320,11 @@ func createLocal(username, image, cpu, memory, disk, staticIP string, sshKeys []
 		StaticIP:               staticIP,
 		SSHKeys:                sshKeys,
 		Labels:                 labelMap,
-		EnableDocker:           enableDocker,
-		EnableDockerPrivileged: enableDocker, // Enable privileged mode for proper Docker-in-Docker
+		EnablePodman:           enablePodman,
+		EnablePodmanPrivileged: enablePodman, // Enable privileged mode for proper Podman-in-LXC
 		AutoStart:              true,
 		Verbose:                verbose,
+		Stack:                  stack,
 	}
 
 	return mgr.Create(opts)
@@ -333,24 +346,24 @@ func parseLabels(labelSlice []string) map[string]string {
 	return result
 }
 
-// createRemote creates a container using remote gRPC server 
-func createRemote(username, image, cpu, memory, disk string, sshKeys []string, enableDocker bool) (*incus.ContainerInfo, error) {
+// createRemote creates a container using remote gRPC server
+func createRemote(username, image, cpu, memory, disk string, sshKeys []string, enablePodman bool, stack string) (*incus.ContainerInfo, error) {
 	grpcClient, err := client.NewGRPCClient(serverAddr, certsDir, insecure)
 	if err != nil {
 		return nil, err
 	}
 	defer grpcClient.Close()
 
-	return grpcClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enableDocker)
+	return grpcClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enablePodman, stack)
 }
 
-// createRemoteHTTP creates a container using remote HTTP API 
-func createRemoteHTTP(username, image, cpu, memory, disk string, sshKeys []string, enableDocker bool) (*incus.ContainerInfo, error) {
+// createRemoteHTTP creates a container using remote HTTP API
+func createRemoteHTTP(username, image, cpu, memory, disk string, sshKeys []string, enablePodman bool, stack string) (*incus.ContainerInfo, error) {
 	httpClient, err := client.NewHTTPClient(serverAddr, authToken)
 	if err != nil {
 		return nil, err
 	}
 	defer httpClient.Close()
 
-	return httpClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enableDocker)
+	return httpClient.CreateContainer(username, image, cpu, memory, disk, sshKeys, enablePodman, stack)
 }

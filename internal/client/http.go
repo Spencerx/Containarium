@@ -108,7 +108,7 @@ type containerResponse struct {
 	CreatedAt     string            `json:"createdAt"`
 	Labels        map[string]string `json:"labels"`
 	Image         string            `json:"image"`
-	DockerEnabled bool              `json:"dockerEnabled"`
+	PodmanEnabled bool              `json:"dockerEnabled"`
 }
 
 type resourceLimits struct {
@@ -203,7 +203,7 @@ func (c *HTTPClient) ListContainers() ([]incus.ContainerInfo, error) {
 }
 
 // CreateContainer creates a container via HTTP
-func (c *HTTPClient) CreateContainer(username, image, cpu, memory, disk string, sshKeys []string, enableDocker bool) (*incus.ContainerInfo, error) {
+func (c *HTTPClient) CreateContainer(username, image, cpu, memory, disk string, sshKeys []string, enablePodman bool, stack string) (*incus.ContainerInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
@@ -216,7 +216,8 @@ func (c *HTTPClient) CreateContainer(username, image, cpu, memory, disk string, 
 		},
 		"sshKeys":      sshKeys,
 		"image":        image,
-		"enableDocker": enableDocker,
+		"enablePodman": enablePodman,
+		"stack":        stack,
 	}
 
 	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/containers", reqBody)

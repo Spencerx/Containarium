@@ -67,7 +67,7 @@ type ContainerConfig struct {
 	Disk                   *DiskDevice // Root disk configuration
 	NIC                    *NICDevice  // Network interface configuration
 	EnableNesting          bool
-	EnableDockerPrivileged bool // Full Docker support (requires privileged container + AppArmor disabled)
+	EnablePodmanPrivileged bool // Full Docker support (requires privileged container + AppArmor disabled)
 	AutoStart              bool
 }
 
@@ -209,7 +209,7 @@ func (c *Client) CreateContainer(config ContainerConfig) error {
 
 	// Full Docker-in-Docker support (privileged mode with AppArmor disabled)
 	// This is required for Docker to run properly inside the container
-	if config.EnableDockerPrivileged {
+	if config.EnablePodmanPrivileged {
 		req.Config["security.privileged"] = "true"
 		req.Config["raw.lxc"] = "lxc.apparmor.profile=unconfined"
 	}
@@ -379,7 +379,7 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 		}
 
 		// Get IP address - need to get state separately
-		// Priority: eth0 (Incus bridge) > other non-docker interfaces > docker0
+		// Priority: eth0 (Incus bridge) > other non-container interfaces > container bridge (docker0/podman0)
 		state, _, err := c.server.GetInstanceState(inst.Name)
 		if err == nil && state.Network != nil {
 			var fallbackIP string
@@ -396,10 +396,10 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 				}
 			}
 
-			// Second pass: if no eth0, use any non-docker interface
+			// Second pass: if no eth0, use any non-container-bridge interface
 			if info.IPAddress == "" {
 				for netName, network := range state.Network {
-					if netName != "docker0" && netName != "lo" {
+					if netName != "docker0" && netName != "podman0" && netName != "lo" {
 						for _, addr := range network.Addresses {
 							if addr.Family == "inet" && addr.Scope == "global" {
 								fallbackIP = addr.Address
@@ -414,7 +414,7 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 				}
 			}
 
-			// Last resort: use docker0 if nothing else found
+			// Last resort: use container bridge (docker0/podman0) if nothing else found
 			if info.IPAddress == "" && fallbackIP == "" {
 				for _, network := range state.Network {
 					for _, addr := range network.Addresses {
@@ -502,7 +502,7 @@ func (c *Client) GetContainer(name string) (*ContainerInfo, error) {
 	}
 
 	// Get IP address - need to get state separately
-	// Priority: eth0 (Incus bridge) > other non-docker interfaces > docker0
+	// Priority: eth0 (Incus bridge) > other non-container interfaces > container bridge (docker0/podman0)
 	state, _, err := c.server.GetInstanceState(name)
 	if err == nil && state.Network != nil {
 		var fallbackIP string
@@ -519,10 +519,10 @@ func (c *Client) GetContainer(name string) (*ContainerInfo, error) {
 			}
 		}
 
-		// Second pass: if no eth0, use any non-docker interface
+		// Second pass: if no eth0, use any non-container-bridge interface
 		if info.IPAddress == "" {
 			for netName, network := range state.Network {
-				if netName != "docker0" && netName != "lo" {
+				if netName != "docker0" && netName != "podman0" && netName != "lo" {
 					for _, addr := range network.Addresses {
 						if addr.Family == "inet" && addr.Scope == "global" {
 							fallbackIP = addr.Address
@@ -537,7 +537,7 @@ func (c *Client) GetContainer(name string) (*ContainerInfo, error) {
 			}
 		}
 
-		// Last resort: use docker0 if nothing else found
+		// Last resort: use container bridge (docker0/podman0) if nothing else found
 		if info.IPAddress == "" && fallbackIP == "" {
 			for _, network := range state.Network {
 				for _, addr := range network.Addresses {

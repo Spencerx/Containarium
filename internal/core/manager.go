@@ -33,7 +33,7 @@ const (
 	DefaultCoreDisk   = "50GB"
 )
 
-// dockerComposeTemplate is the docker-compose configuration for core services
+// composeTemplate is the compose configuration for core services (compatible with podman-compose)
 const dockerComposeTemplate = `version: '3.8'
 
 services:
@@ -169,7 +169,7 @@ func (m *Manager) createCoreContainer(ctx context.Context, config Config) error 
 		Image:         CoreContainerImage,
 		CPU:           cpu,
 		Memory:        memory,
-		EnableNesting: true, // Required for Docker
+		EnableNesting: true, // Required for Podman
 		AutoStart:     true,
 	}
 
@@ -206,26 +206,26 @@ func (m *Manager) createCoreContainer(ctx context.Context, config Config) error 
 	return nil
 }
 
-// setupCoreServices installs and configures Docker and core services
+// setupCoreServices installs and configures Podman and core services
 func (m *Manager) setupCoreServices(ctx context.Context, postgresPassword string) error {
-	// Install Docker and docker-compose
+	// Install Podman and podman-compose
 	// Note: This is a simplified version. In production, we'd need more error handling
 	installCmd := []string{
 		"/bin/bash", "-c",
-		"apt-get update && apt-get install -y docker.io docker-compose && systemctl enable docker && systemctl start docker",
+		"apt-get update && apt-get install -y podman podman-compose && systemctl enable podman && systemctl start podman",
 	}
 
 	if err := m.incusClient.Exec(CoreContainerName, installCmd); err != nil {
-		return fmt.Errorf("failed to install Docker: %w", err)
+		return fmt.Errorf("failed to install Podman: %w", err)
 	}
 
-	// TODO: Write docker-compose.yml to container
+	// TODO: Write compose.yml to container
 	// For now, we'll assume it's written manually or via another method
 	// This would require implementing a WriteFile method in the incus client
 
-	// Start core services with docker-compose
+	// Start core services with podman-compose
 	// TODO: Implement this once we have file writing capability
-	// startCmd := []string{"/bin/bash", "-c", "cd /root && docker-compose up -d"}
+	// startCmd := []string{"/bin/bash", "-c", "cd /root && podman-compose up -d"}
 	// if err := m.incusClient.Exec(CoreContainerName, startCmd); err != nil {
 	// 	return fmt.Errorf("failed to start core services: %w", err)
 	// }

@@ -55,9 +55,10 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		Image:                  req.Image,
 		SSHKeys:                req.SshKeys,
 		Labels:                 req.Labels,
-		EnableDocker:           req.EnableDocker,
-		EnableDockerPrivileged: req.EnableDocker, // Enable privileged mode for proper Docker-in-Docker support
+		EnablePodman:           req.EnablePodman,
+		EnablePodmanPrivileged: req.EnablePodman, // Enable privileged mode for proper Podman-in-LXC support
 		AutoStart:              true,
+		Stack:                  req.Stack,
 	}
 
 	// Set resource limits
@@ -486,6 +487,7 @@ func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
 		},
 		Labels:        info.Labels,
 		CreatedAt:     info.CreatedAt.Unix(),
-		DockerEnabled: true, // TODO: Get from container config
+		PodmanEnabled: true,  // TODO: Get from container config
+		Stack:         "",    // TODO: Get from container labels
 	}
 }

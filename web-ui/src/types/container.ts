@@ -16,7 +16,8 @@ export interface Container {
   disk: string;
   gpu: string;
   image: string;
-  dockerEnabled: boolean;
+  podmanEnabled: boolean;
+  stack: string;
   createdAt: string;
   updatedAt: string;
   labels: Record<string, string>;
@@ -36,9 +37,35 @@ export interface CreateContainerRequest {
   sshKeys?: string[];
   labels?: Record<string, string>;
   image?: string;
-  enableDocker?: boolean;
+  enablePodman?: boolean;
+  stack?: string; // Software stack to install (e.g., "nodejs", "python", "fullstack")
   staticIp?: string; // Static IP address (e.g., "10.100.0.100") - empty for DHCP
 }
+
+/**
+ * Available software stacks for container provisioning
+ */
+export interface Stack {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+}
+
+/**
+ * Pre-defined software stacks (matching configs/stacks.yaml)
+ */
+export const AVAILABLE_STACKS: Stack[] = [
+  { id: '', name: 'None', description: 'No pre-configured stack', icon: 'none' },
+  { id: 'nodejs', name: 'Node.js Development', description: 'Node.js LTS with npm, yarn, pnpm, TypeScript', icon: 'nodejs' },
+  { id: 'python', name: 'Python Development', description: 'Python 3 with pip, virtualenv, poetry', icon: 'python' },
+  { id: 'golang', name: 'Go Development', description: 'Go with gopls, golangci-lint', icon: 'golang' },
+  { id: 'rust', name: 'Rust Development', description: 'Rust with cargo', icon: 'rust' },
+  { id: 'datascience', name: 'Data Science', description: 'Python with Jupyter, pandas, numpy, scikit-learn', icon: 'jupyter' },
+  { id: 'devops', name: 'DevOps Tools', description: 'kubectl, Terraform, infrastructure tools', icon: 'kubernetes' },
+  { id: 'database', name: 'Database Clients', description: 'PostgreSQL, MySQL, Redis CLI clients', icon: 'database' },
+  { id: 'fullstack', name: 'Full Stack Web', description: 'Node.js, Python, database clients', icon: 'code' },
+];
 
 /**
  * Response from creating a container

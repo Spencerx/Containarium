@@ -84,8 +84,8 @@ func printAppDetails(app *pb.App) {
 	fmt.Printf("Port:           %d\n", app.Port)
 	fmt.Printf("Container:      %s\n", app.ContainerName)
 
-	if app.DockerImage != "" {
-		fmt.Printf("Docker Image:   %s\n", app.DockerImage)
+	if app.ContainerImage != "" {
+		fmt.Printf("Container Image: %s\n", app.ContainerImage)
 	}
 
 	if app.ErrorMessage != "" {

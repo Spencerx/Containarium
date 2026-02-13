@@ -10,12 +10,9 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"github.com/footprintai/containarium/internal/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -94,15 +91,16 @@ func testCreateContainerWithQuota(t *testing.T, ctx context.Context, grpcClient 
 	container, err := grpcClient.CreateContainer(
 		username,
 		"images:ubuntu/24.04",
-		2,                              // 2 CPUs
+		"2",                            // 2 CPUs
 		"2GB",                          // 2GB RAM
-		fmt.Sprintf("%dGB", quotaGB),  // 10GB disk
+		fmt.Sprintf("%dGB", quotaGB),   // 10GB disk
 		[]string{},                     // No SSH keys for test
-		false,                          // No Docker
+		false,                          // No Podman
+		"",                             // No stack
 	)
 	require.NoError(t, err, "Failed to create container")
 	require.NotNil(t, container)
-	assert.Equal(t, username, container.Username)
+	assert.Contains(t, container.Name, username)
 	assert.Equal(t, "Running", container.State)
 
 	// Cleanup
@@ -135,11 +133,12 @@ func testQuotaEnforcement(t *testing.T, ctx context.Context, grpcClient *client.
 	container, err := grpcClient.CreateContainer(
 		username,
 		"images:ubuntu/24.04",
-		1,
+		"1",
 		"1GB",
 		fmt.Sprintf("%dGB", quotaGB),
 		[]string{},
 		false,
+		"",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, container)
@@ -176,11 +175,11 @@ func testMultiContainerIsolation(t *testing.T, ctx context.Context, grpcClient *
 	t.Log("Creating multiple containers to test quota isolation...")
 
 	// Create two containers with different quotas
-	container1, err := grpcClient.CreateContainer(user1, "images:ubuntu/24.04", 1, "1GB", "10GB", []string{}, false)
+	_, err := grpcClient.CreateContainer(user1, "images:ubuntu/24.04", "1", "1GB", "10GB", []string{}, false, "")
 	require.NoError(t, err)
 	defer grpcClient.DeleteContainer(user1, true)
 
-	container2, err := grpcClient.CreateContainer(user2, "images:ubuntu/24.04", 1, "1GB", "15GB", []string{}, false)
+	_, err = grpcClient.CreateContainer(user2, "images:ubuntu/24.04", "1", "1GB", "15GB", []string{}, false, "")
 	require.NoError(t, err)
 	defer grpcClient.DeleteContainer(user2, true)
 
@@ -206,7 +205,7 @@ func testCompression(t *testing.T, ctx context.Context, grpcClient *client.GRPCC
 
 	t.Log("Creating container to test compression...")
 
-	container, err := grpcClient.CreateContainer(username, "images:ubuntu/24.04", 1, "1GB", "10GB", []string{}, false)
+	_, err := grpcClient.CreateContainer(username, "images:ubuntu/24.04", "1", "1GB", "10GB", []string{}, false, "")
 	require.NoError(t, err)
 	defer grpcClient.DeleteContainer(username, true)
 
@@ -229,7 +228,7 @@ func testPrepareRebootData(t *testing.T, ctx context.Context, grpcClient *client
 	t.Logf("Creating container for persistence test: %s", username)
 
 	// Create container
-	container, err := grpcClient.CreateContainer(username, "images:ubuntu/24.04", 2, "2GB", "20GB", []string{}, false)
+	container, err := grpcClient.CreateContainer(username, "images:ubuntu/24.04", "2", "2GB", "20GB", []string{}, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, container)
 
@@ -351,13 +350,9 @@ func createGRPCClient(t *testing.T, serverAddr string) *client.GRPCClient {
 
 	if insecureMode {
 		t.Log("Using insecure connection (no TLS)")
-		conn, err := grpc.Dial(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Use NewGRPCClient with insecure flag for insecure mode
+		grpcClient, err = client.NewGRPCClient(serverAddr, "", true)
 		require.NoError(t, err, "Failed to create gRPC connection")
-
-		grpcClient = &client.GRPCClient{
-			// Note: This requires making the struct fields exported or adding a constructor
-			// For now, we'll note this in the documentation
-		}
 	} else {
 		// Use mTLS
 		certsDir := os.Getenv("CONTAINARIUM_CERTS_DIR")

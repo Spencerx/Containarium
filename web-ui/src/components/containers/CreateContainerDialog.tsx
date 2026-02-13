@@ -21,7 +21,7 @@ import {
   Typography,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
-import { CreateContainerRequest } from '@/src/types/container';
+import { CreateContainerRequest, AVAILABLE_STACKS } from '@/src/types/container';
 import { generateSSHKeyPair, downloadPrivateKey, SSHKeyPair } from '@/src/lib/sshkey';
 import { CreateContainerProgress } from '@/src/lib/hooks/useContainers';
 
@@ -126,6 +126,8 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
   const [cpu, setCpu] = useState('4');
   const [memory, setMemory] = useState('4GB');
   const [disk, setDisk] = useState('50GB');
+  const [stack, setStack] = useState('');
+  const [enablePodman, setEnablePodman] = useState(true);
   const [staticIp, setStaticIp] = useState('');
   const [staticIpError, setStaticIpError] = useState<string | null>(null);
   const [labelsText, setLabelsText] = useState('');
@@ -160,6 +162,8 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
     setCpu('4');
     setMemory('4GB');
     setDisk('50GB');
+    setStack('');
+    setEnablePodman(true);
     setStaticIp('');
     setStaticIpError(null);
     setLabelsText('');
@@ -230,7 +234,8 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
         },
         sshKeys: [publicKey],
         labels: Object.keys(labels).length > 0 ? labels : undefined,
-        enableDocker: true,
+        enablePodman,
+        stack: stack || undefined,
         staticIp: staticIp || undefined,
       };
 
@@ -331,6 +336,37 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
               ))}
             </Select>
           </FormControl>
+
+          <FormControl fullWidth disabled={success || submitting}>
+            <InputLabel>Software Stack (Optional)</InputLabel>
+            <Select
+              value={stack}
+              label="Software Stack (Optional)"
+              onChange={(e) => setStack(e.target.value)}
+            >
+              {AVAILABLE_STACKS.map((s) => (
+                <MenuItem key={s.id} value={s.id}>
+                  <Box>
+                    <Typography variant="body1">{s.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {s.description}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={enablePodman}
+                onChange={(e) => setEnablePodman(e.target.checked)}
+                disabled={success || submitting}
+              />
+            }
+            label="Enable Podman (container runtime for running Docker images)"
+          />
 
           <Box sx={{ display: 'flex', gap: 2 }}>
             <TextField
