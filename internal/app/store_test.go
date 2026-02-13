@@ -27,7 +27,7 @@ func createTestApp(username, name string) *v1.App {
 		FullDomain:    name + ".containarium.dev",
 		Port:          3000,
 		State:         v1.AppState_APP_STATE_RUNNING,
-		DockerImage:   username + "/" + name + ":latest",
+		ContainerImage:   username + "/" + name + ":latest",
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}

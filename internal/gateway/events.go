@@ -240,7 +240,7 @@ func containerToMap(c *pb.Container) map[string]interface{} {
 		"memory":        c.Resources.GetMemory(),
 		"disk":          c.Resources.GetDisk(),
 		"image":         c.Image,
-		"dockerEnabled": c.DockerEnabled,
+		"podmanEnabled": c.PodmanEnabled,
 	}
 }
 

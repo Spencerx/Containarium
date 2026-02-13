@@ -40,7 +40,8 @@ export interface ContainerEventPayload {
     memory?: string;
     disk?: string;
     image?: string;
-    dockerEnabled?: boolean;
+    podmanEnabled?: boolean;
+    stack?: string;
   };
   previousState?: string;
 }

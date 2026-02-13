@@ -91,8 +91,11 @@ message Container {
   // Image used to create the container (e.g., "images:ubuntu/24.04")
   string image = 10;
 
-  // Whether Docker support is enabled (nesting)
-  bool docker_enabled = 11;
+  // Whether Podman support is enabled (nesting)
+  bool podman_enabled = 11;
+
+  // Software stack installed in the container (e.g., "nodejs", "python")
+  string stack = 12;
 }
 
 // ContainerMetrics contains runtime metrics for a container
@@ -139,8 +142,8 @@ message CreateContainerRequest {
   // Container image to use (optional, defaults to images:ubuntu/24.04)
   string image = 5;
 
-  // Enable Docker support (optional, defaults to true)
-  bool enable_docker = 6;
+  // Enable Podman support (optional, defaults to true)
+  bool enable_podman = 6;
 
   // Async mode - if true, returns immediately with CREATING state
   // Client should poll GetContainer to check completion
@@ -150,6 +153,10 @@ message CreateContainerRequest {
   // Must be within the container network CIDR (e.g., 10.0.3.0/24)
   // If empty, DHCP will assign an IP automatically
   string static_ip = 8;
+
+  // Software stack to install (optional, e.g., "nodejs", "python", "fullstack")
+  // See available stacks in configs/stacks.yaml
+  string stack = 9;
 }
 
 // CreateContainerResponse is the response from creating a container

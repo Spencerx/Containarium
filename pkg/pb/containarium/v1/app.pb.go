@@ -32,7 +32,7 @@ const (
 	AppState_APP_STATE_UNSPECIFIED AppState = 0
 	// Source code is being uploaded
 	AppState_APP_STATE_UPLOADING AppState = 1
-	// Docker image is being built
+	// Container image is being built (using Podman)
 	AppState_APP_STATE_BUILDING AppState = 2
 	// App is running and healthy
 	AppState_APP_STATE_RUNNING AppState = 3
@@ -112,8 +112,8 @@ type App struct {
 	Port int32 `protobuf:"varint,7,opt,name=port,proto3" json:"port,omitempty"`
 	// Current state
 	State AppState `protobuf:"varint,8,opt,name=state,proto3,enum=containarium.v1.AppState" json:"state,omitempty"`
-	// Built Docker image tag
-	DockerImage string `protobuf:"bytes,9,opt,name=docker_image,json=dockerImage,proto3" json:"docker_image,omitempty"`
+	// Built container image tag (via Podman)
+	ContainerImage string `protobuf:"bytes,9,opt,name=container_image,json=containerImage,proto3" json:"container_image,omitempty"`
 	// Path to Dockerfile in source
 	DockerfilePath string `protobuf:"bytes,10,opt,name=dockerfile_path,json=dockerfilePath,proto3" json:"dockerfile_path,omitempty"`
 	// Environment variables
@@ -226,9 +226,9 @@ func (x *App) GetState() AppState {
 	return AppState_APP_STATE_UNSPECIFIED
 }
 
-func (x *App) GetDockerImage() string {
+func (x *App) GetContainerImage() string {
 	if x != nil {
-		return x.DockerImage
+		return x.ContainerImage
 	}
 	return ""
 }
@@ -374,7 +374,7 @@ func (x *AppResources) GetDisk() string {
 	return ""
 }
 
-// BuildpackOptions for auto-generating Dockerfiles
+// BuildpackOptions for auto-generating Dockerfiles/Containerfiles
 type BuildpackOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Node.js version (e.g., "18", "20")
@@ -537,7 +537,7 @@ type DeployAppRequest struct {
 	EnvVars map[string]string `protobuf:"bytes,6,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Custom subdomain (optional, defaults to app_name)
 	Subdomain string `protobuf:"bytes,7,opt,name=subdomain,proto3" json:"subdomain,omitempty"`
-	// Buildpack options for auto-generated Dockerfiles
+	// Buildpack options for auto-generated Dockerfiles/Containerfiles
 	Buildpack     *BuildpackOptions `protobuf:"bytes,8,opt,name=buildpack,proto3" json:"buildpack,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1477,7 +1477,7 @@ var File_containarium_v1_app_proto protoreflect.FileDescriptor
 
 const file_containarium_v1_app_proto_rawDesc = "" +
 	"\n" +
-	"\x19containarium/v1/app.proto\x12\x0fcontainarium.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto\x1a\x1dcontainarium/v1/network.proto\"\x81\a\n" +
+	"\x19containarium/v1/app.proto\x12\x0fcontainarium.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto\x1a\x1dcontainarium/v1/network.proto\"\x87\a\n" +
 	"\x03App\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -1487,8 +1487,8 @@ const file_containarium_v1_app_proto_rawDesc = "" +
 	"\vfull_domain\x18\x06 \x01(\tR\n" +
 	"fullDomain\x12\x12\n" +
 	"\x04port\x18\a \x01(\x05R\x04port\x12/\n" +
-	"\x05state\x18\b \x01(\x0e2\x19.containarium.v1.AppStateR\x05state\x12!\n" +
-	"\fdocker_image\x18\t \x01(\tR\vdockerImage\x12'\n" +
+	"\x05state\x18\b \x01(\x0e2\x19.containarium.v1.AppStateR\x05state\x12'\n" +
+	"\x0fcontainer_image\x18\t \x01(\tR\x0econtainerImage\x12'\n" +
 	"\x0fdockerfile_path\x18\n" +
 	" \x01(\tR\x0edockerfilePath\x12<\n" +
 	"\benv_vars\x18\v \x03(\v2!.containarium.v1.App.EnvVarsEntryR\aenvVars\x129\n" +
@@ -1594,11 +1594,11 @@ const file_containarium_v1_app_proto_rawDesc = "" +
 	"\x11APP_STATE_RUNNING\x10\x03\x12\x15\n" +
 	"\x11APP_STATE_STOPPED\x10\x04\x12\x14\n" +
 	"\x10APP_STATE_FAILED\x10\x05\x12\x18\n" +
-	"\x14APP_STATE_RESTARTING\x10\x062\xe9\x0f\n" +
+	"\x14APP_STATE_RESTARTING\x10\x062\xf0\x0f\n" +
 	"\n" +
-	"AppService\x12\x9d\x02\n" +
-	"\tDeployApp\x12!.containarium.v1.DeployAppRequest\x1a\".containarium.v1.DeployAppResponse\"\xc8\x01\x92A\xb1\x01\n" +
-	"\fApplications\x12\x15Deploy an application\x1a\x89\x01Deploys a new application or updates an existing one. Accepts source code + Dockerfile or auto-detects language and generates Dockerfile.\x82\xd3\xe4\x93\x02\r:\x01*\"\b/v1/apps\x12\xdd\x01\n" +
+	"AppService\x12\xa4\x02\n" +
+	"\tDeployApp\x12!.containarium.v1.DeployAppRequest\x1a\".containarium.v1.DeployAppResponse\"\xcf\x01\x92A\xb8\x01\n" +
+	"\fApplications\x12\x15Deploy an application\x1a\x90\x01Deploys a new application or updates an existing one. Accepts source code + Dockerfile/Containerfile or auto-detects language and generates one.\x82\xd3\xe4\x93\x02\r:\x01*\"\b/v1/apps\x12\xdd\x01\n" +
 	"\bListApps\x12 .containarium.v1.ListAppsRequest\x1a!.containarium.v1.ListAppsResponse\"\x8b\x01\x92Ax\n" +
 	"\fApplications\x12\x11List applications\x1aUReturns a list of deployed applications with optional filtering by state or username.\x82\xd3\xe4\x93\x02\n" +
 	"\x12\b/v1/apps\x12\x84\x02\n" +

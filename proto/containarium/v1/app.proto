@@ -17,7 +17,7 @@ enum AppState {
   // Source code is being uploaded
   APP_STATE_UPLOADING = 1;
 
-  // Docker image is being built
+  // Container image is being built (using Podman)
   APP_STATE_BUILDING = 2;
 
   // App is running and healthy
@@ -59,8 +59,8 @@ message App {
   // Current state
   AppState state = 8;
 
-  // Built Docker image tag
-  string docker_image = 9;
+  // Built container image tag (via Podman)
+  string container_image = 9;
 
   // Path to Dockerfile in source
   string dockerfile_path = 10;
@@ -108,7 +108,7 @@ message AppResources {
   string disk = 3;
 }
 
-// BuildpackOptions for auto-generating Dockerfiles
+// BuildpackOptions for auto-generating Dockerfiles/Containerfiles
 message BuildpackOptions {
   // Node.js version (e.g., "18", "20")
   string node_version = 1;
@@ -161,7 +161,7 @@ message DeployAppRequest {
   // Custom subdomain (optional, defaults to app_name)
   string subdomain = 7;
 
-  // Buildpack options for auto-generated Dockerfiles
+  // Buildpack options for auto-generated Dockerfiles/Containerfiles
   BuildpackOptions buildpack = 8;
 }
 
@@ -311,7 +311,7 @@ service AppService {
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
       summary: "Deploy an application";
-      description: "Deploys a new application or updates an existing one. Accepts source code + Dockerfile or auto-detects language and generates Dockerfile.";
+      description: "Deploys a new application or updates an existing one. Accepts source code + Dockerfile/Containerfile or auto-detects language and generates one.";
       tags: "Applications";
     };
   }

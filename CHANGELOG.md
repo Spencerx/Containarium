@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Software Stack Selection
+- New `--stack` flag for `containarium create` command to install pre-configured software stacks
+- Available stacks: `nodejs`, `python`, `golang`, `rust`, `datascience`, `devops`, `database`, `fullstack`
+- Stack definitions in `configs/stacks.yaml` with APT packages and post-install commands
+- New `internal/stacks` package for loading and managing stack configurations
+- Web UI: Stack selection dropdown in Create Container dialog with descriptions
+- Proto: Added `stack` field to `CreateContainerRequest` and `Container` messages
+- Each stack installs relevant packages and tools during container creation:
+  - **nodejs**: Node.js LTS, npm, yarn, pnpm, TypeScript
+  - **python**: Python 3, pip, virtualenv, poetry
+  - **golang**: Go, gopls, golangci-lint
+  - **rust**: Rust toolchain via rustup
+  - **datascience**: Python with Jupyter, pandas, numpy, scikit-learn
+  - **devops**: kubectl, Terraform
+  - **database**: PostgreSQL, MySQL, Redis CLI clients
+  - **fullstack**: Node.js + Python + database clients
+
 #### Port Forwarding CLI Commands
 - New `containarium portforward` command group for managing iptables port forwarding rules
 - `containarium portforward show` - Display current PREROUTING/POSTROUTING rules and IP forwarding status
@@ -77,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - See [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) for detailed documentation
 
 ### Changed
+
+#### Docker to Podman Migration
+- **BREAKING**: Replaced Docker with Podman as the container runtime inside LXC containers
+- Renamed proto fields: `enable_docker` → `enable_podman`, `docker_enabled` → `podman_enabled`
+- Updated CLI flag: `--docker` → `--podman` (default: true)
+- Updated Web UI: "Enable Docker" checkbox → "Enable Podman" checkbox
+- Packages installed: `podman`, `podman-compose` (instead of `docker.io`, `docker-compose`)
+- Podman provides Docker-compatible CLI (`podman` commands work like `docker`)
+- Note: Dockerfile naming kept as standard (works with both Docker and Podman)
+
 - Dashboard "CPU Cores" section renamed to "CPU Load" with usage visualization
 - Route management moved from Apps tab to Network tab exclusively
 - `RemoveRoute` now properly extracts subdomain from full domain for deletion

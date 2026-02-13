@@ -204,7 +204,7 @@ type CreateContainerRequest struct {
 	SSHKeys   []string               `json:"sshKeys,omitempty"`
 	Labels    map[string]string      `json:"labels,omitempty"`
 	Image     string                 `json:"image,omitempty"`
-	EnableDocker bool                `json:"enableDocker,omitempty"`
+	EnablePodman bool                `json:"enablePodman,omitempty"`
 }
 
 type ResourceLimits struct {
@@ -263,7 +263,7 @@ type Container struct {
 	UpdatedAt     int64             `json:"updatedAt,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Image         string            `json:"image,omitempty"`
-	DockerEnabled bool              `json:"dockerEnabled"`
+	PodmanEnabled bool              `json:"podmanEnabled"`
 }
 
 type NetworkInfo struct {
