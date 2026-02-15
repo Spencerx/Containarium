@@ -208,11 +208,17 @@ func (m *Manager) createCoreContainer(ctx context.Context, config Config) error 
 
 // setupCoreServices installs and configures Podman and core services
 func (m *Manager) setupCoreServices(ctx context.Context, postgresPassword string) error {
-	// Install Podman and podman-compose
+	// Install Podman from Kubic repository (provides Podman 5.x) and podman-compose via pip
 	// Note: This is a simplified version. In production, we'd need more error handling
 	installCmd := []string{
 		"/bin/bash", "-c",
-		"apt-get update && apt-get install -y podman podman-compose && systemctl enable podman && systemctl start podman",
+		`apt-get update && apt-get install -y curl gpg python3-pip && \
+mkdir -p /etc/apt/keyrings && \
+curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key | gpg --dearmor -o /etc/apt/keyrings/devel_kubic_libcontainers_unstable.gpg && \
+echo "deb [signed-by=/etc/apt/keyrings/devel_kubic_libcontainers_unstable.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /" > /etc/apt/sources.list.d/devel:kubic:libcontainers:unstable.list && \
+apt-get update && apt-get install -y podman && \
+pip3 install --break-system-packages podman-compose && \
+systemctl enable podman && systemctl start podman`,
 	}
 
 	if err := m.incusClient.Exec(CoreContainerName, installCmd); err != nil {

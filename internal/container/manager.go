@@ -2,6 +2,7 @@ package container
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -230,8 +231,28 @@ func (m *Manager) installPackages(containerName string, enablePodman bool, stack
 		"iputils-ping",
 	}
 
+	// Add Kubic repository for newer Podman versions before installing
 	if enablePodman {
-		packages = append(packages, "podman", "podman-compose")
+		// Install prerequisites for adding repository
+		prereqCmd := []string{"apt-get", "install", "-y", "curl", "gpg"}
+		if err := m.incus.Exec(containerName, prereqCmd); err != nil {
+			return fmt.Errorf("failed to install prerequisites: %w", err)
+		}
+
+		// Add Kubic repository key and source (provides Podman 5.x)
+		// Using the official Podman upstream repository
+		addRepoScript := `
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key | gpg --dearmor -o /etc/apt/keyrings/devel_kubic_libcontainers_unstable.gpg
+echo "deb [signed-by=/etc/apt/keyrings/devel_kubic_libcontainers_unstable.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /" > /etc/apt/sources.list.d/devel:kubic:libcontainers:unstable.list
+apt-get update
+`
+		if err := m.incus.Exec(containerName, []string{"/bin/bash", "-c", addRepoScript}); err != nil {
+			// Fall back to Ubuntu's podman if Kubic repo fails
+			log.Printf("Warning: failed to add Kubic repository, using Ubuntu's podman: %v", err)
+		}
+
+		packages = append(packages, "podman")
 	}
 
 	// Add stack-specific packages
@@ -249,13 +270,24 @@ func (m *Manager) installPackages(containerName string, enablePodman bool, stack
 		return fmt.Errorf("apt-get install failed: %w", err)
 	}
 
-	// Enable services
+	// Enable services and install podman-compose
 	if enablePodman {
 		if err := m.incus.Exec(containerName, []string{"systemctl", "enable", "podman"}); err != nil {
 			return fmt.Errorf("failed to enable podman: %w", err)
 		}
 		if err := m.incus.Exec(containerName, []string{"systemctl", "start", "podman"}); err != nil {
 			return fmt.Errorf("failed to start podman: %w", err)
+		}
+
+		// Install podman-compose via pip (more up-to-date than apt package)
+		pipInstallCmd := []string{"apt-get", "install", "-y", "python3-pip"}
+		if err := m.incus.Exec(containerName, pipInstallCmd); err != nil {
+			log.Printf("Warning: failed to install pip: %v", err)
+		} else {
+			// Install latest podman-compose via pip
+			if err := m.incus.Exec(containerName, []string{"pip3", "install", "--break-system-packages", "podman-compose"}); err != nil {
+				log.Printf("Warning: failed to install podman-compose via pip: %v", err)
+			}
 		}
 	}
 
