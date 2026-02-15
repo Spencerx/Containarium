@@ -132,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed proto fields: `enable_docker` → `enable_podman`, `docker_enabled` → `podman_enabled`
 - Updated CLI flag: `--docker` → `--podman` (default: true)
 - Updated Web UI: "Enable Docker" checkbox → "Enable Podman" checkbox
-- Packages installed: `podman`, `podman-compose` (instead of `docker.io`, `docker-compose`)
+- **Podman 5.x from Kubic repository**: Uses OpenSUSE Kubic unstable repository for latest Podman versions (5.x) instead of Ubuntu's default (4.9.x)
+- **podman-compose via pip**: Installs podman-compose from PyPI for latest version instead of apt package
 - Podman provides Docker-compatible CLI (`podman` commands work like `docker`)
 - Note: Dockerfile naming kept as standard (works with both Docker and Podman)
 
