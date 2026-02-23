@@ -59,6 +59,11 @@ func (s *Store) Close() {
 	}
 }
 
+// Pool returns the underlying connection pool for sharing with other stores
+func (s *Store) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
 // initSchema creates the database schema if it doesn't exist
 func (s *Store) initSchema(ctx context.Context) error {
 	schema := `

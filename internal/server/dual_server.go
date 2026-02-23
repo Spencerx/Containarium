@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/internal/auth"
@@ -43,6 +44,9 @@ type DualServerConfig struct {
 	PostgresConnString   string
 	BaseDomain           string
 	CaddyAdminURL        string
+
+	// Route sync settings
+	RouteSyncInterval time.Duration // Interval for syncing routes to Caddy (default 5s)
 }
 
 // DualServer runs both gRPC and HTTP/REST servers
@@ -57,6 +61,8 @@ type DualServer struct {
 	gatewayServer    *gateway.GatewayServer
 	tokenManager     *auth.TokenManager
 	authMiddleware   *auth.AuthMiddleware
+	routeStore       *app.RouteStore
+	routeSyncJob     *app.RouteSyncJob
 }
 
 // NewDualServer creates a new dual server instance
@@ -155,6 +161,8 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 
 	// Create and register AppServer if app hosting is enabled
 	var appServer *AppServer
+	var routeStore *app.RouteStore
+	var routeSyncJob *app.RouteSyncJob
 	if config.EnableAppHosting {
 		incusClient, err := incus.New()
 		if err != nil {
@@ -221,15 +229,31 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 				// Update NetworkServer with app hosting dependencies
 				if networkServer != nil {
 					var proxyManager *app.ProxyManager
+
 					if caddyAdminURL != "" {
 						proxyManager = app.NewProxyManager(caddyAdminURL, config.BaseDomain)
 						// Ensure Caddy has basic server config for routes
 						if err := proxyManager.EnsureServerConfig(); err != nil {
 							log.Printf("Warning: Failed to ensure Caddy server config: %v", err)
 						}
+
+						// Create RouteStore for persistent route storage
+						routeStore, err = app.NewRouteStore(context.Background(), appStore.Pool())
+						if err != nil {
+							log.Printf("Warning: Failed to create route store: %v", err)
+						} else {
+							// Create RouteSyncJob to sync PostgreSQL -> Caddy
+							syncInterval := config.RouteSyncInterval
+							if syncInterval == 0 {
+								syncInterval = 5 * time.Second
+							}
+							routeSyncJob = app.NewRouteSyncJob(routeStore, proxyManager, syncInterval)
+							log.Printf("Route persistence enabled with %v sync interval", syncInterval)
+						}
 					}
 					networkServer.proxyManager = proxyManager
 					networkServer.appStore = appStore
+					networkServer.routeStore = routeStore
 					networkServer.baseDomain = config.BaseDomain
 					log.Printf("Network service updated with app hosting features")
 				}
@@ -300,6 +324,8 @@ skipAppHosting:
 		gatewayServer:    gatewayServer,
 		tokenManager:     tokenManager,
 		authMiddleware:   authMiddleware,
+		routeStore:       routeStore,
+		routeSyncJob:     routeSyncJob,
 	}, nil
 }
 
@@ -310,6 +336,12 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		if err := ds.trafficCollector.Start(); err != nil {
 			log.Printf("Warning: Failed to start traffic collector: %v", err)
 		}
+	}
+
+	// Start route sync job if available (syncs PostgreSQL -> Caddy)
+	if ds.routeSyncJob != nil {
+		ds.routeSyncJob.Start(ctx)
+		log.Printf("Route sync job started")
 	}
 
 	// Start gRPC server
@@ -346,6 +378,9 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		log.Println("Shutting down servers...")
+		if ds.routeSyncJob != nil {
+			ds.routeSyncJob.Stop()
+		}
 		if ds.trafficCollector != nil {
 			ds.trafficCollector.Stop()
 		}

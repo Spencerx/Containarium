@@ -18,9 +18,10 @@ type NetworkServer struct {
 	proxyManager       *app.ProxyManager
 	passthroughManager *network.PassthroughManager
 	appStore           app.AppStore
-	containerNetwork   string // e.g., "10.100.0.0/24"
-	proxyIP            string // e.g., "10.100.0.1"
-	baseDomain         string // e.g., "kafeido.app"
+	routeStore         *app.RouteStore // Source of truth for routes (PostgreSQL)
+	containerNetwork   string          // e.g., "10.100.0.0/24"
+	proxyIP            string          // e.g., "10.100.0.1"
+	baseDomain         string          // e.g., "kafeido.app"
 	emitter            *events.Emitter
 }
 
@@ -37,18 +38,68 @@ func NewNetworkServer(incusClient *incus.Client, proxyManager *app.ProxyManager,
 	}
 }
 
-// GetRoutes lists all proxy routes
+// GetRoutes lists all proxy routes from PostgreSQL (source of truth)
 func (s *NetworkServer) GetRoutes(ctx context.Context, req *pb.GetRoutesRequest) (*pb.GetRoutesResponse, error) {
-	// Check if proxy manager is available
+	// If RouteStore is available, use it as source of truth
+	if s.routeStore != nil {
+		routes, err := s.routeStore.List(ctx, true) // activeOnly = true
+		if err != nil {
+			return nil, fmt.Errorf("failed to list routes: %w", err)
+		}
+
+		// Build IP -> container name map for lookups
+		ipToContainer := make(map[string]string)
+		if s.incusClient != nil {
+			containers, err := s.incusClient.ListContainers()
+			if err == nil {
+				for _, c := range containers {
+					if c.IPAddress != "" {
+						ipToContainer[c.IPAddress] = c.Name
+					}
+				}
+			}
+		}
+
+		var pbRoutes []*pb.ProxyRoute
+		for _, route := range routes {
+			// Lookup container name by IP
+			containerName := route.ContainerName
+			if containerName == "" {
+				containerName = ipToContainer[route.TargetIP]
+			}
+
+			protocol := pb.RouteProtocol_ROUTE_PROTOCOL_HTTP
+			if route.Protocol == "grpc" {
+				protocol = pb.RouteProtocol_ROUTE_PROTOCOL_GRPC
+			}
+
+			pbRoute := &pb.ProxyRoute{
+				Subdomain:   route.Subdomain,
+				FullDomain:  route.FullDomain,
+				ContainerIp: route.TargetIP,
+				Port:        int32(route.TargetPort),
+				Active:      route.Active,
+				Protocol:    protocol,
+				AppName:     containerName,
+			}
+			pbRoutes = append(pbRoutes, pbRoute)
+		}
+
+		return &pb.GetRoutesResponse{
+			Routes:     pbRoutes,
+			TotalCount: int32(len(pbRoutes)),
+		}, nil
+	}
+
+	// Fallback to Caddy if RouteStore not available
 	if s.proxyManager == nil {
-		// No proxy configured, return empty routes
 		return &pb.GetRoutesResponse{
 			Routes:     []*pb.ProxyRoute{},
 			TotalCount: 0,
 		}, nil
 	}
 
-	// Get routes from proxy manager
+	// Get routes from proxy manager (legacy fallback)
 	routes, err := s.proxyManager.ListRoutes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list routes: %w", err)
@@ -109,13 +160,8 @@ func (s *NetworkServer) GetRoutes(ctx context.Context, req *pb.GetRoutesRequest)
 	}, nil
 }
 
-// AddRoute adds a new proxy route
+// AddRoute adds a new proxy route (saves to PostgreSQL, sync job updates Caddy)
 func (s *NetworkServer) AddRoute(ctx context.Context, req *pb.AddRouteRequest) (*pb.AddRouteResponse, error) {
-	// Check if proxy manager is available
-	if s.proxyManager == nil {
-		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
-	}
-
 	// Validate request
 	if req.Domain == "" {
 		return nil, fmt.Errorf("domain is required")
@@ -127,22 +173,53 @@ func (s *NetworkServer) AddRoute(ctx context.Context, req *pb.AddRouteRequest) (
 		return nil, fmt.Errorf("target_port must be positive")
 	}
 
-	// Add route via proxy manager based on protocol
-	// Use domain as subdomain identifier
-	protocol := protoToRouteProtocol(req.Protocol)
-	if protocol == app.RouteProtocolGRPC {
-		if err := s.proxyManager.AddGRPCRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
-			return nil, fmt.Errorf("failed to add gRPC route: %w", err)
+	// Determine full domain
+	fullDomain := req.Domain
+	subdomain := req.Domain
+	if s.baseDomain != "" && !contains(req.Domain, s.baseDomain) {
+		fullDomain = fmt.Sprintf("%s.%s", req.Domain, s.baseDomain)
+	}
+
+	// Determine protocol
+	protocol := "http"
+	if req.Protocol == pb.RouteProtocol_ROUTE_PROTOCOL_GRPC {
+		protocol = "grpc"
+	}
+
+	// If RouteStore is available, save to PostgreSQL (source of truth)
+	if s.routeStore != nil {
+		routeRecord := &app.RouteRecord{
+			Subdomain:     subdomain,
+			FullDomain:    fullDomain,
+			TargetIP:      req.TargetIp,
+			TargetPort:    int(req.TargetPort),
+			Protocol:      protocol,
+			ContainerName: req.ContainerName,
+			Active:        true,
+		}
+
+		if err := s.routeStore.Save(ctx, routeRecord); err != nil {
+			return nil, fmt.Errorf("failed to save route: %w", err)
+		}
+	} else if s.proxyManager != nil {
+		// Fallback: directly add to Caddy (legacy behavior)
+		routeProtocol := protoToRouteProtocol(req.Protocol)
+		if routeProtocol == app.RouteProtocolGRPC {
+			if err := s.proxyManager.AddGRPCRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
+				return nil, fmt.Errorf("failed to add gRPC route: %w", err)
+			}
+		} else {
+			if err := s.proxyManager.AddRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
+				return nil, fmt.Errorf("failed to add route: %w", err)
+			}
 		}
 	} else {
-		if err := s.proxyManager.AddRoute(req.Domain, req.TargetIp, int(req.TargetPort)); err != nil {
-			return nil, fmt.Errorf("failed to add route: %w", err)
-		}
+		return nil, fmt.Errorf("route persistence not configured - app hosting must be enabled")
 	}
 
 	route := &pb.ProxyRoute{
-		Subdomain:   req.Domain,
-		FullDomain:  req.Domain,
+		Subdomain:   subdomain,
+		FullDomain:  fullDomain,
 		ContainerIp: req.TargetIp,
 		Port:        req.TargetPort,
 		Active:      true,
@@ -154,39 +231,57 @@ func (s *NetworkServer) AddRoute(ctx context.Context, req *pb.AddRouteRequest) (
 
 	return &pb.AddRouteResponse{
 		Route:   route,
-		Message: fmt.Sprintf("Route added: %s -> %s:%d", req.Domain, req.TargetIp, req.TargetPort),
+		Message: fmt.Sprintf("Route added: %s -> %s:%d (will sync to Caddy)", fullDomain, req.TargetIp, req.TargetPort),
 	}, nil
 }
 
-// UpdateRoute updates an existing proxy route
+// UpdateRoute updates an existing proxy route (updates PostgreSQL, sync job updates Caddy)
 func (s *NetworkServer) UpdateRoute(ctx context.Context, req *pb.UpdateRouteRequest) (*pb.UpdateRouteResponse, error) {
-	// Check if proxy manager is available
-	if s.proxyManager == nil {
-		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
-	}
-
 	// Validate request
 	if req.Domain == "" {
 		return nil, fmt.Errorf("domain is required")
 	}
 
+	// Determine full domain
+	fullDomain := req.Domain
+	subdomain := req.Domain
+	if s.baseDomain != "" && !contains(req.Domain, s.baseDomain) {
+		fullDomain = fmt.Sprintf("%s.%s", req.Domain, s.baseDomain)
+	}
+
+	// Determine protocol
+	protocol := "http"
+	if req.Protocol == pb.RouteProtocol_ROUTE_PROTOCOL_GRPC {
+		protocol = "grpc"
+	}
+
 	// Handle enable/disable toggle
 	if req.Active != nil && !*req.Active {
-		// Disable route: remove from Caddy
-		if err := s.proxyManager.RemoveRoute(req.Domain); err != nil {
-			return nil, fmt.Errorf("failed to disable route: %w", err)
+		// Disable route: set active=false in PostgreSQL
+		if s.routeStore != nil {
+			if err := s.routeStore.SetActive(ctx, fullDomain, false); err != nil {
+				// Try with original domain
+				if err := s.routeStore.SetActive(ctx, req.Domain, false); err != nil {
+					return nil, fmt.Errorf("failed to disable route: %w", err)
+				}
+			}
+		} else if s.proxyManager != nil {
+			// Fallback: directly remove from Caddy
+			if err := s.proxyManager.RemoveRoute(req.Domain); err != nil {
+				return nil, fmt.Errorf("failed to disable route: %w", err)
+			}
 		}
 
 		return &pb.UpdateRouteResponse{
 			Route: &pb.ProxyRoute{
-				Subdomain:   req.Domain,
-				FullDomain:  req.Domain,
+				Subdomain:   subdomain,
+				FullDomain:  fullDomain,
 				ContainerIp: req.TargetIp,
 				Port:        req.TargetPort,
 				Active:      false,
 				Protocol:    req.Protocol,
 			},
-			Message: fmt.Sprintf("Route disabled: %s", req.Domain),
+			Message: fmt.Sprintf("Route disabled: %s (will sync to Caddy)", req.Domain),
 		}, nil
 	}
 
@@ -198,47 +293,82 @@ func (s *NetworkServer) UpdateRoute(ctx context.Context, req *pb.UpdateRouteRequ
 		return nil, fmt.Errorf("target_port must be positive")
 	}
 
-	// Update route (remove and re-add) with protocol
-	protocol := protoToRouteProtocol(req.Protocol)
-	if err := s.proxyManager.UpdateRouteWithProtocol(req.Domain, req.TargetIp, int(req.TargetPort), protocol); err != nil {
-		return nil, fmt.Errorf("failed to update route: %w", err)
+	// If RouteStore is available, update in PostgreSQL (source of truth)
+	if s.routeStore != nil {
+		routeRecord := &app.RouteRecord{
+			Subdomain:     subdomain,
+			FullDomain:    fullDomain,
+			TargetIP:      req.TargetIp,
+			TargetPort:    int(req.TargetPort),
+			Protocol:      protocol,
+			ContainerName: req.ContainerName,
+			Active:        true,
+		}
+
+		if err := s.routeStore.Save(ctx, routeRecord); err != nil {
+			return nil, fmt.Errorf("failed to update route: %w", err)
+		}
+	} else if s.proxyManager != nil {
+		// Fallback: directly update in Caddy (legacy behavior)
+		routeProtocol := protoToRouteProtocol(req.Protocol)
+		if err := s.proxyManager.UpdateRouteWithProtocol(req.Domain, req.TargetIp, int(req.TargetPort), routeProtocol); err != nil {
+			return nil, fmt.Errorf("failed to update route: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("route persistence not configured - app hosting must be enabled")
 	}
 
 	return &pb.UpdateRouteResponse{
 		Route: &pb.ProxyRoute{
-			Subdomain:   req.Domain,
-			FullDomain:  req.Domain,
+			Subdomain:   subdomain,
+			FullDomain:  fullDomain,
 			ContainerIp: req.TargetIp,
 			Port:        req.TargetPort,
 			Active:      true,
 			Protocol:    req.Protocol,
 		},
-		Message: fmt.Sprintf("Route updated: %s -> %s:%d", req.Domain, req.TargetIp, req.TargetPort),
+		Message: fmt.Sprintf("Route updated: %s -> %s:%d (will sync to Caddy)", fullDomain, req.TargetIp, req.TargetPort),
 	}, nil
 }
 
-// DeleteRoute removes a proxy route
+// DeleteRoute removes a proxy route (deletes from PostgreSQL, sync job updates Caddy)
 func (s *NetworkServer) DeleteRoute(ctx context.Context, req *pb.DeleteRouteRequest) (*pb.DeleteRouteResponse, error) {
-	// Check if proxy manager is available
-	if s.proxyManager == nil {
-		return nil, fmt.Errorf("proxy manager not configured - app hosting must be enabled")
-	}
-
 	// Validate request
 	if req.Domain == "" {
 		return nil, fmt.Errorf("domain is required")
 	}
 
-	// Remove route
-	if err := s.proxyManager.RemoveRoute(req.Domain); err != nil {
-		return nil, fmt.Errorf("failed to delete route: %w", err)
+	// Determine full domain for lookup
+	fullDomain := req.Domain
+	if s.baseDomain != "" && !contains(req.Domain, s.baseDomain) {
+		fullDomain = fmt.Sprintf("%s.%s", req.Domain, s.baseDomain)
+	}
+
+	// If RouteStore is available, delete from PostgreSQL (source of truth)
+	if s.routeStore != nil {
+		// Try both the provided domain and the full domain
+		err := s.routeStore.Delete(ctx, fullDomain)
+		if err != nil && err == app.ErrRouteNotFound {
+			// Try with original domain in case it was already the full domain
+			err = s.routeStore.Delete(ctx, req.Domain)
+		}
+		if err != nil && err != app.ErrRouteNotFound {
+			return nil, fmt.Errorf("failed to delete route: %w", err)
+		}
+	} else if s.proxyManager != nil {
+		// Fallback: directly remove from Caddy (legacy behavior)
+		if err := s.proxyManager.RemoveRoute(req.Domain); err != nil {
+			return nil, fmt.Errorf("failed to delete route: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("route persistence not configured - app hosting must be enabled")
 	}
 
 	// Emit route deleted event
 	s.emitter.EmitRouteDeleted(req.Domain)
 
 	return &pb.DeleteRouteResponse{
-		Message: fmt.Sprintf("Route deleted: %s", req.Domain),
+		Message: fmt.Sprintf("Route deleted: %s (will sync to Caddy)", req.Domain),
 	}, nil
 }
 
