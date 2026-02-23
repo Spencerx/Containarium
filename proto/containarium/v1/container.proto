@@ -333,3 +333,96 @@ message ResizeContainerResponse {
   // Updated container with new resources
   Container container = 2;
 }
+
+// Collaborator represents a user with access to a container
+message Collaborator {
+  // UUID identifier
+  string id = 1;
+
+  // Container name (e.g., "alice-container")
+  string container_name = 2;
+
+  // Container owner's username
+  string owner_username = 3;
+
+  // Collaborator's username (e.g., "bob")
+  string collaborator_username = 4;
+
+  // Full account name on jump server and container (e.g., "alice-container-bob")
+  string account_name = 5;
+
+  // SSH public key for this collaborator
+  string ssh_public_key = 6;
+
+  // Unix timestamp when collaborator was added
+  int64 added_at = 7;
+
+  // Who added this collaborator
+  string created_by = 8;
+
+  // Has full sudo access (not just su - owner)
+  bool has_sudo = 9;
+
+  // Has docker/podman group membership for container runtime access
+  bool has_container_runtime = 10;
+}
+
+// AddCollaboratorRequest is the request to add a collaborator to a container
+message AddCollaboratorRequest {
+  // Container owner's username (e.g., "alice")
+  string owner_username = 1;
+
+  // Collaborator's username to add (e.g., "bob")
+  string collaborator_username = 2;
+
+  // SSH public key for the collaborator
+  string ssh_public_key = 3;
+
+  // Grant full sudo access (not just su - owner)
+  bool grant_sudo = 4;
+
+  // Add to docker/podman group for container runtime access
+  bool grant_container_runtime = 5;
+}
+
+// AddCollaboratorResponse is the response from adding a collaborator
+message AddCollaboratorResponse {
+  // Success message
+  string message = 1;
+
+  // The created collaborator details
+  Collaborator collaborator = 2;
+
+  // SSH connection command for the collaborator
+  string ssh_command = 3;
+}
+
+// RemoveCollaboratorRequest is the request to remove a collaborator from a container
+message RemoveCollaboratorRequest {
+  // Container owner's username
+  string owner_username = 1;
+
+  // Collaborator's username to remove
+  string collaborator_username = 2;
+}
+
+// RemoveCollaboratorResponse is the response from removing a collaborator
+message RemoveCollaboratorResponse {
+  // Success message
+  string message = 1;
+}
+
+// ListCollaboratorsRequest is the request to list collaborators for a container
+message ListCollaboratorsRequest {
+  // Container owner's username
+  string owner_username = 1;
+}
+
+// ListCollaboratorsResponse is the response from listing collaborators
+message ListCollaboratorsResponse {
+  // List of collaborators
+  repeated Collaborator collaborators = 1;
+
+  // Total count of collaborators
+  int32 total_count = 2;
+}

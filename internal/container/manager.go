@@ -255,9 +255,18 @@ apt-get update
 		packages = append(packages, "podman")
 	}
 
-	// Add stack-specific packages
+	// Add stack-specific packages and run pre-install commands
 	if stackID != "" {
 		stackMgr := stacks.GetDefault()
+
+		// Run pre-install commands as root (e.g., adding apt repositories)
+		preInstallCmds, err := stackMgr.GetPreInstallCommands(stackID)
+		if err == nil && len(preInstallCmds) > 0 {
+			for _, cmd := range preInstallCmds {
+				_ = m.incus.Exec(containerName, []string{"bash", "-c", cmd})
+			}
+		}
+
 		stackPkgs, err := stackMgr.GetPackagesForStack(stackID)
 		if err == nil && len(stackPkgs) > 0 {
 			packages = append(packages, stackPkgs...)
@@ -309,6 +318,11 @@ apt-get update
 				// Ignore errors for post-install commands (some may fail on first run)
 				_ = m.incus.Exec(containerName, userCmd)
 			}
+		}
+
+		// Add user to docker group if docker stack is selected
+		if stackID == "docker" {
+			_ = m.incus.Exec(containerName, []string{"usermod", "-aG", "docker", username})
 		}
 	}
 

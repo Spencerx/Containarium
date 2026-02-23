@@ -1655,6 +1655,481 @@ func (x *ResizeContainerResponse) GetContainer() *Container {
 	return nil
 }
 
+// Collaborator represents a user with access to a container
+type Collaborator struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// UUID identifier
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Container name (e.g., "alice-container")
+	ContainerName string `protobuf:"bytes,2,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	// Container owner's username
+	OwnerUsername string `protobuf:"bytes,3,opt,name=owner_username,json=ownerUsername,proto3" json:"owner_username,omitempty"`
+	// Collaborator's username (e.g., "bob")
+	CollaboratorUsername string `protobuf:"bytes,4,opt,name=collaborator_username,json=collaboratorUsername,proto3" json:"collaborator_username,omitempty"`
+	// Full account name on jump server and container (e.g., "alice-container-bob")
+	AccountName string `protobuf:"bytes,5,opt,name=account_name,json=accountName,proto3" json:"account_name,omitempty"`
+	// SSH public key for this collaborator
+	SshPublicKey string `protobuf:"bytes,6,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`
+	// Unix timestamp when collaborator was added
+	AddedAt int64 `protobuf:"varint,7,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
+	// Who added this collaborator
+	CreatedBy string `protobuf:"bytes,8,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	// Has full sudo access (not just su - owner)
+	HasSudo bool `protobuf:"varint,9,opt,name=has_sudo,json=hasSudo,proto3" json:"has_sudo,omitempty"`
+	// Has docker/podman group membership for container runtime access
+	HasContainerRuntime bool `protobuf:"varint,10,opt,name=has_container_runtime,json=hasContainerRuntime,proto3" json:"has_container_runtime,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *Collaborator) Reset() {
+	*x = Collaborator{}
+	mi := &file_containarium_v1_container_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Collaborator) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Collaborator) ProtoMessage() {}
+
+func (x *Collaborator) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Collaborator.ProtoReflect.Descriptor instead.
+func (*Collaborator) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *Collaborator) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Collaborator) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *Collaborator) GetOwnerUsername() string {
+	if x != nil {
+		return x.OwnerUsername
+	}
+	return ""
+}
+
+func (x *Collaborator) GetCollaboratorUsername() string {
+	if x != nil {
+		return x.CollaboratorUsername
+	}
+	return ""
+}
+
+func (x *Collaborator) GetAccountName() string {
+	if x != nil {
+		return x.AccountName
+	}
+	return ""
+}
+
+func (x *Collaborator) GetSshPublicKey() string {
+	if x != nil {
+		return x.SshPublicKey
+	}
+	return ""
+}
+
+func (x *Collaborator) GetAddedAt() int64 {
+	if x != nil {
+		return x.AddedAt
+	}
+	return 0
+}
+
+func (x *Collaborator) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *Collaborator) GetHasSudo() bool {
+	if x != nil {
+		return x.HasSudo
+	}
+	return false
+}
+
+func (x *Collaborator) GetHasContainerRuntime() bool {
+	if x != nil {
+		return x.HasContainerRuntime
+	}
+	return false
+}
+
+// AddCollaboratorRequest is the request to add a collaborator to a container
+type AddCollaboratorRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Container owner's username (e.g., "alice")
+	OwnerUsername string `protobuf:"bytes,1,opt,name=owner_username,json=ownerUsername,proto3" json:"owner_username,omitempty"`
+	// Collaborator's username to add (e.g., "bob")
+	CollaboratorUsername string `protobuf:"bytes,2,opt,name=collaborator_username,json=collaboratorUsername,proto3" json:"collaborator_username,omitempty"`
+	// SSH public key for the collaborator
+	SshPublicKey string `protobuf:"bytes,3,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`
+	// Grant full sudo access (not just su - owner)
+	GrantSudo bool `protobuf:"varint,4,opt,name=grant_sudo,json=grantSudo,proto3" json:"grant_sudo,omitempty"`
+	// Add to docker/podman group for container runtime access
+	GrantContainerRuntime bool `protobuf:"varint,5,opt,name=grant_container_runtime,json=grantContainerRuntime,proto3" json:"grant_container_runtime,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *AddCollaboratorRequest) Reset() {
+	*x = AddCollaboratorRequest{}
+	mi := &file_containarium_v1_container_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddCollaboratorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddCollaboratorRequest) ProtoMessage() {}
+
+func (x *AddCollaboratorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddCollaboratorRequest.ProtoReflect.Descriptor instead.
+func (*AddCollaboratorRequest) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *AddCollaboratorRequest) GetOwnerUsername() string {
+	if x != nil {
+		return x.OwnerUsername
+	}
+	return ""
+}
+
+func (x *AddCollaboratorRequest) GetCollaboratorUsername() string {
+	if x != nil {
+		return x.CollaboratorUsername
+	}
+	return ""
+}
+
+func (x *AddCollaboratorRequest) GetSshPublicKey() string {
+	if x != nil {
+		return x.SshPublicKey
+	}
+	return ""
+}
+
+func (x *AddCollaboratorRequest) GetGrantSudo() bool {
+	if x != nil {
+		return x.GrantSudo
+	}
+	return false
+}
+
+func (x *AddCollaboratorRequest) GetGrantContainerRuntime() bool {
+	if x != nil {
+		return x.GrantContainerRuntime
+	}
+	return false
+}
+
+// AddCollaboratorResponse is the response from adding a collaborator
+type AddCollaboratorResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Success message
+	Message string `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	// The created collaborator details
+	Collaborator *Collaborator `protobuf:"bytes,2,opt,name=collaborator,proto3" json:"collaborator,omitempty"`
+	// SSH connection command for the collaborator
+	SshCommand    string `protobuf:"bytes,3,opt,name=ssh_command,json=sshCommand,proto3" json:"ssh_command,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddCollaboratorResponse) Reset() {
+	*x = AddCollaboratorResponse{}
+	mi := &file_containarium_v1_container_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddCollaboratorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddCollaboratorResponse) ProtoMessage() {}
+
+func (x *AddCollaboratorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddCollaboratorResponse.ProtoReflect.Descriptor instead.
+func (*AddCollaboratorResponse) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AddCollaboratorResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *AddCollaboratorResponse) GetCollaborator() *Collaborator {
+	if x != nil {
+		return x.Collaborator
+	}
+	return nil
+}
+
+func (x *AddCollaboratorResponse) GetSshCommand() string {
+	if x != nil {
+		return x.SshCommand
+	}
+	return ""
+}
+
+// RemoveCollaboratorRequest is the request to remove a collaborator from a container
+type RemoveCollaboratorRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Container owner's username
+	OwnerUsername string `protobuf:"bytes,1,opt,name=owner_username,json=ownerUsername,proto3" json:"owner_username,omitempty"`
+	// Collaborator's username to remove
+	CollaboratorUsername string `protobuf:"bytes,2,opt,name=collaborator_username,json=collaboratorUsername,proto3" json:"collaborator_username,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *RemoveCollaboratorRequest) Reset() {
+	*x = RemoveCollaboratorRequest{}
+	mi := &file_containarium_v1_container_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveCollaboratorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveCollaboratorRequest) ProtoMessage() {}
+
+func (x *RemoveCollaboratorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveCollaboratorRequest.ProtoReflect.Descriptor instead.
+func (*RemoveCollaboratorRequest) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RemoveCollaboratorRequest) GetOwnerUsername() string {
+	if x != nil {
+		return x.OwnerUsername
+	}
+	return ""
+}
+
+func (x *RemoveCollaboratorRequest) GetCollaboratorUsername() string {
+	if x != nil {
+		return x.CollaboratorUsername
+	}
+	return ""
+}
+
+// RemoveCollaboratorResponse is the response from removing a collaborator
+type RemoveCollaboratorResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Success message
+	Message       string `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveCollaboratorResponse) Reset() {
+	*x = RemoveCollaboratorResponse{}
+	mi := &file_containarium_v1_container_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveCollaboratorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveCollaboratorResponse) ProtoMessage() {}
+
+func (x *RemoveCollaboratorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveCollaboratorResponse.ProtoReflect.Descriptor instead.
+func (*RemoveCollaboratorResponse) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RemoveCollaboratorResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ListCollaboratorsRequest is the request to list collaborators for a container
+type ListCollaboratorsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Container owner's username
+	OwnerUsername string `protobuf:"bytes,1,opt,name=owner_username,json=ownerUsername,proto3" json:"owner_username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCollaboratorsRequest) Reset() {
+	*x = ListCollaboratorsRequest{}
+	mi := &file_containarium_v1_container_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCollaboratorsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCollaboratorsRequest) ProtoMessage() {}
+
+func (x *ListCollaboratorsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCollaboratorsRequest.ProtoReflect.Descriptor instead.
+func (*ListCollaboratorsRequest) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ListCollaboratorsRequest) GetOwnerUsername() string {
+	if x != nil {
+		return x.OwnerUsername
+	}
+	return ""
+}
+
+// ListCollaboratorsResponse is the response from listing collaborators
+type ListCollaboratorsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// List of collaborators
+	Collaborators []*Collaborator `protobuf:"bytes,1,rep,name=collaborators,proto3" json:"collaborators,omitempty"`
+	// Total count of collaborators
+	TotalCount    int32 `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCollaboratorsResponse) Reset() {
+	*x = ListCollaboratorsResponse{}
+	mi := &file_containarium_v1_container_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCollaboratorsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCollaboratorsResponse) ProtoMessage() {}
+
+func (x *ListCollaboratorsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCollaboratorsResponse.ProtoReflect.Descriptor instead.
+func (*ListCollaboratorsResponse) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ListCollaboratorsResponse) GetCollaborators() []*Collaborator {
+	if x != nil {
+		return x.Collaborators
+	}
+	return nil
+}
+
+func (x *ListCollaboratorsResponse) GetTotalCount() int32 {
+	if x != nil {
+		return x.TotalCount
+	}
+	return 0
+}
+
 var file_containarium_v1_container_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.EnumValueOptions)(nil),
@@ -1795,7 +2270,43 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"\x04disk\x18\x04 \x01(\tR\x04disk\"m\n" +
 	"\x17ResizeContainerResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x128\n" +
-	"\tcontainer\x18\x02 \x01(\v2\x1a.containarium.v1.ContainerR\tcontainer*\x8c\x02\n" +
+	"\tcontainer\x18\x02 \x01(\v2\x1a.containarium.v1.ContainerR\tcontainer\"\xf3\x02\n" +
+	"\fCollaborator\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
+	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12%\n" +
+	"\x0eowner_username\x18\x03 \x01(\tR\rownerUsername\x123\n" +
+	"\x15collaborator_username\x18\x04 \x01(\tR\x14collaboratorUsername\x12!\n" +
+	"\faccount_name\x18\x05 \x01(\tR\vaccountName\x12$\n" +
+	"\x0essh_public_key\x18\x06 \x01(\tR\fsshPublicKey\x12\x19\n" +
+	"\badded_at\x18\a \x01(\x03R\aaddedAt\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\b \x01(\tR\tcreatedBy\x12\x19\n" +
+	"\bhas_sudo\x18\t \x01(\bR\ahasSudo\x122\n" +
+	"\x15has_container_runtime\x18\n" +
+	" \x01(\bR\x13hasContainerRuntime\"\xf1\x01\n" +
+	"\x16AddCollaboratorRequest\x12%\n" +
+	"\x0eowner_username\x18\x01 \x01(\tR\rownerUsername\x123\n" +
+	"\x15collaborator_username\x18\x02 \x01(\tR\x14collaboratorUsername\x12$\n" +
+	"\x0essh_public_key\x18\x03 \x01(\tR\fsshPublicKey\x12\x1d\n" +
+	"\n" +
+	"grant_sudo\x18\x04 \x01(\bR\tgrantSudo\x126\n" +
+	"\x17grant_container_runtime\x18\x05 \x01(\bR\x15grantContainerRuntime\"\x97\x01\n" +
+	"\x17AddCollaboratorResponse\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12A\n" +
+	"\fcollaborator\x18\x02 \x01(\v2\x1d.containarium.v1.CollaboratorR\fcollaborator\x12\x1f\n" +
+	"\vssh_command\x18\x03 \x01(\tR\n" +
+	"sshCommand\"w\n" +
+	"\x19RemoveCollaboratorRequest\x12%\n" +
+	"\x0eowner_username\x18\x01 \x01(\tR\rownerUsername\x123\n" +
+	"\x15collaborator_username\x18\x02 \x01(\tR\x14collaboratorUsername\"6\n" +
+	"\x1aRemoveCollaboratorResponse\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"A\n" +
+	"\x18ListCollaboratorsRequest\x12%\n" +
+	"\x0eowner_username\x18\x01 \x01(\tR\rownerUsername\"\x81\x01\n" +
+	"\x19ListCollaboratorsResponse\x12C\n" +
+	"\rcollaborators\x18\x01 \x03(\v2\x1d.containarium.v1.CollaboratorR\rcollaborators\x12\x1f\n" +
+	"\vtotal_count\x18\x02 \x01(\x05R\n" +
+	"totalCount*\x8c\x02\n" +
 	"\x0eContainerState\x12,\n" +
 	"\x1bCONTAINER_STATE_UNSPECIFIED\x10\x00\x1a\v\x8a\xb5\x18\aUnknown\x12(\n" +
 	"\x17CONTAINER_STATE_RUNNING\x10\x01\x1a\v\x8a\xb5\x18\aRunning\x12(\n" +
@@ -1820,7 +2331,7 @@ func file_containarium_v1_container_proto_rawDescGZIP() []byte {
 }
 
 var file_containarium_v1_container_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_containarium_v1_container_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_containarium_v1_container_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_containarium_v1_container_proto_goTypes = []any{
 	(ContainerState)(0),                   // 0: containarium.v1.ContainerState
 	(*ResourceLimits)(nil),                // 1: containarium.v1.ResourceLimits
@@ -1847,21 +2358,28 @@ var file_containarium_v1_container_proto_goTypes = []any{
 	(*GetMetricsResponse)(nil),            // 22: containarium.v1.GetMetricsResponse
 	(*ResizeContainerRequest)(nil),        // 23: containarium.v1.ResizeContainerRequest
 	(*ResizeContainerResponse)(nil),       // 24: containarium.v1.ResizeContainerResponse
-	nil,                                   // 25: containarium.v1.Container.LabelsEntry
-	nil,                                   // 26: containarium.v1.CreateContainerRequest.LabelsEntry
-	nil,                                   // 27: containarium.v1.ListContainersRequest.LabelFilterEntry
-	(*descriptorpb.EnumValueOptions)(nil), // 28: google.protobuf.EnumValueOptions
+	(*Collaborator)(nil),                  // 25: containarium.v1.Collaborator
+	(*AddCollaboratorRequest)(nil),        // 26: containarium.v1.AddCollaboratorRequest
+	(*AddCollaboratorResponse)(nil),       // 27: containarium.v1.AddCollaboratorResponse
+	(*RemoveCollaboratorRequest)(nil),     // 28: containarium.v1.RemoveCollaboratorRequest
+	(*RemoveCollaboratorResponse)(nil),    // 29: containarium.v1.RemoveCollaboratorResponse
+	(*ListCollaboratorsRequest)(nil),      // 30: containarium.v1.ListCollaboratorsRequest
+	(*ListCollaboratorsResponse)(nil),     // 31: containarium.v1.ListCollaboratorsResponse
+	nil,                                   // 32: containarium.v1.Container.LabelsEntry
+	nil,                                   // 33: containarium.v1.CreateContainerRequest.LabelsEntry
+	nil,                                   // 34: containarium.v1.ListContainersRequest.LabelFilterEntry
+	(*descriptorpb.EnumValueOptions)(nil), // 35: google.protobuf.EnumValueOptions
 }
 var file_containarium_v1_container_proto_depIdxs = []int32{
 	0,  // 0: containarium.v1.Container.state:type_name -> containarium.v1.ContainerState
 	1,  // 1: containarium.v1.Container.resources:type_name -> containarium.v1.ResourceLimits
 	2,  // 2: containarium.v1.Container.network:type_name -> containarium.v1.NetworkInfo
-	25, // 3: containarium.v1.Container.labels:type_name -> containarium.v1.Container.LabelsEntry
+	32, // 3: containarium.v1.Container.labels:type_name -> containarium.v1.Container.LabelsEntry
 	1,  // 4: containarium.v1.CreateContainerRequest.resources:type_name -> containarium.v1.ResourceLimits
-	26, // 5: containarium.v1.CreateContainerRequest.labels:type_name -> containarium.v1.CreateContainerRequest.LabelsEntry
+	33, // 5: containarium.v1.CreateContainerRequest.labels:type_name -> containarium.v1.CreateContainerRequest.LabelsEntry
 	3,  // 6: containarium.v1.CreateContainerResponse.container:type_name -> containarium.v1.Container
 	0,  // 7: containarium.v1.ListContainersRequest.state:type_name -> containarium.v1.ContainerState
-	27, // 8: containarium.v1.ListContainersRequest.label_filter:type_name -> containarium.v1.ListContainersRequest.LabelFilterEntry
+	34, // 8: containarium.v1.ListContainersRequest.label_filter:type_name -> containarium.v1.ListContainersRequest.LabelFilterEntry
 	3,  // 9: containarium.v1.ListContainersResponse.containers:type_name -> containarium.v1.Container
 	3,  // 10: containarium.v1.GetContainerResponse.container:type_name -> containarium.v1.Container
 	4,  // 11: containarium.v1.GetContainerResponse.metrics:type_name -> containarium.v1.ContainerMetrics
@@ -1869,12 +2387,14 @@ var file_containarium_v1_container_proto_depIdxs = []int32{
 	3,  // 13: containarium.v1.StopContainerResponse.container:type_name -> containarium.v1.Container
 	4,  // 14: containarium.v1.GetMetricsResponse.metrics:type_name -> containarium.v1.ContainerMetrics
 	3,  // 15: containarium.v1.ResizeContainerResponse.container:type_name -> containarium.v1.Container
-	28, // 16: containarium.v1.state_name:extendee -> google.protobuf.EnumValueOptions
-	17, // [17:17] is the sub-list for method output_type
-	17, // [17:17] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	16, // [16:17] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	25, // 16: containarium.v1.AddCollaboratorResponse.collaborator:type_name -> containarium.v1.Collaborator
+	25, // 17: containarium.v1.ListCollaboratorsResponse.collaborators:type_name -> containarium.v1.Collaborator
+	35, // 18: containarium.v1.state_name:extendee -> google.protobuf.EnumValueOptions
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	18, // [18:19] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_containarium_v1_container_proto_init() }
@@ -1888,7 +2408,7 @@ func file_containarium_v1_container_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_containarium_v1_container_proto_rawDesc), len(file_containarium_v1_container_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   34,
 			NumExtensions: 1,
 			NumServices:   0,
 		},

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { Container, ContainerMetrics, CreateContainerRequest, CreateContainerResponse, ListContainersResponse, MetricsResponse, SystemInfo } from '@/src/types/container';
+import { Container, ContainerMetrics, CreateContainerRequest, CreateContainerResponse, ListContainersResponse, MetricsResponse, SystemInfo, Collaborator, AddCollaboratorRequest } from '@/src/types/container';
 import { Server } from '@/src/types/server';
 import { App, NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo, DNSRecord, PassthroughRoute } from '@/src/types/app';
 import { Connection, ConnectionSummary, HistoricalConnection, TrafficAggregate, GetConnectionsResponse, GetConnectionSummaryResponse, QueryTrafficHistoryResponse, GetTrafficAggregatesResponse } from '@/src/types/traffic';
@@ -592,6 +592,67 @@ export class ContaineriumClient {
       records: response.data.records || [],
       baseDomain: response.data.baseDomain || '',
     };
+  }
+
+  // ============================================
+  // Collaborator Management Methods
+  // ============================================
+
+  /**
+   * List collaborators for a container
+   */
+  async listCollaborators(ownerUsername: string): Promise<Collaborator[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await this.client.get<{ collaborators?: any[]; totalCount?: number }>(
+      `/containers/${ownerUsername}/collaborators`
+    );
+    return (response.data.collaborators || []).map((c) => ({
+      id: String(c.id || ''),
+      containerName: String(c.containerName || c.container_name || ''),
+      ownerUsername: String(c.ownerUsername || c.owner_username || ''),
+      collaboratorUsername: String(c.collaboratorUsername || c.collaborator_username || ''),
+      accountName: String(c.accountName || c.account_name || ''),
+      sshPublicKey: String(c.sshPublicKey || c.ssh_public_key || ''),
+      addedAt: Number(c.addedAt || c.added_at) || 0,
+      createdBy: String(c.createdBy || c.created_by || ''),
+      hasSudo: Boolean(c.hasSudo || c.has_sudo || false),
+      hasContainerRuntime: Boolean(c.hasContainerRuntime || c.has_container_runtime || false),
+    }));
+  }
+
+  /**
+   * Add a collaborator to a container
+   */
+  async addCollaborator(ownerUsername: string, req: AddCollaboratorRequest): Promise<{ collaborator: Collaborator; sshCommand: string }> {
+    const response = await this.client.post(`/containers/${ownerUsername}/collaborators`, {
+      collaborator_username: req.collaboratorUsername,
+      ssh_public_key: req.sshPublicKey,
+      grant_sudo: req.grantSudo || false,
+      grant_container_runtime: req.grantContainerRuntime || false,
+    });
+    const c = response.data.collaborator || {};
+    return {
+      collaborator: {
+        id: String(c.id || ''),
+        containerName: String(c.containerName || c.container_name || ''),
+        ownerUsername: String(c.ownerUsername || c.owner_username || ''),
+        collaboratorUsername: String(c.collaboratorUsername || c.collaborator_username || ''),
+        accountName: String(c.accountName || c.account_name || ''),
+        sshPublicKey: String(c.sshPublicKey || c.ssh_public_key || ''),
+        addedAt: Number(c.addedAt || c.added_at) || 0,
+        createdBy: String(c.createdBy || c.created_by || ''),
+        hasSudo: Boolean(c.hasSudo || c.has_sudo || false),
+        hasContainerRuntime: Boolean(c.hasContainerRuntime || c.has_container_runtime || false),
+      },
+      sshCommand: String(response.data.sshCommand || response.data.ssh_command || ''),
+    };
+  }
+
+  /**
+   * Remove a collaborator from a container
+   */
+  async removeCollaborator(ownerUsername: string, collaboratorUsername: string): Promise<void> {
+    await this.client.delete(`/containers/${ownerUsername}/collaborators/${collaboratorUsername}`);
   }
 
   // ============================================

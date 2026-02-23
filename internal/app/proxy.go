@@ -91,13 +91,22 @@ func (p *ProxyManager) addRouteWithProtocol(subdomain, containerIP string, port 
 	fullDomain := subdomain
 	routeID := subdomain
 
-	// Check if subdomain already contains the base domain
-	if p.baseDomain != "" && !strings.HasSuffix(subdomain, "."+p.baseDomain) && !strings.HasSuffix(subdomain, p.baseDomain) {
-		fullDomain = fmt.Sprintf("%s.%s", subdomain, p.baseDomain)
-	} else {
-		// Extract subdomain part for route ID if full domain was provided
-		routeID = strings.TrimSuffix(subdomain, "."+p.baseDomain)
-		routeID = strings.TrimSuffix(routeID, p.baseDomain)
+	// Determine whether to append the base domain.
+	// If the input is a simple subdomain (no dots), append baseDomain.
+	// If it already contains baseDomain as suffix, extract the subdomain part.
+	// If it's a fully-qualified domain that is NOT a subdomain of baseDomain
+	// (e.g., "api.kafeido.app" when baseDomain is "containarium.kafeido.app"),
+	// use it as-is — it's an independent domain.
+	if p.baseDomain != "" {
+		if strings.HasSuffix(subdomain, "."+p.baseDomain) || strings.HasSuffix(subdomain, p.baseDomain) {
+			// Already contains base domain — extract subdomain for route ID
+			routeID = strings.TrimSuffix(subdomain, "."+p.baseDomain)
+			routeID = strings.TrimSuffix(routeID, p.baseDomain)
+		} else if !strings.Contains(subdomain, ".") {
+			// Simple subdomain (no dots) — append base domain
+			fullDomain = fmt.Sprintf("%s.%s", subdomain, p.baseDomain)
+		}
+		// Otherwise: it's a FQDN that is not a subdomain of baseDomain — use as-is
 	}
 
 	// Create handler based on protocol
@@ -439,6 +448,12 @@ func (p *ProxyManager) EnsureServerConfig() error {
 		return fmt.Errorf("failed to ensure HTTP app: %w", err)
 	}
 
+	// Ensure the TLS app exists (required for ProvisionTLS to work)
+	if err := p.ensureTLSApp(); err != nil {
+		// Non-fatal: routes will work over HTTP, but TLS provisioning may fail
+		fmt.Printf("Warning: Failed to ensure TLS app: %v\n", err)
+	}
+
 	// Check if server config exists
 	url := fmt.Sprintf("%s/config/apps/http/servers/%s", p.caddyAdminURL, p.serverName)
 	req, err := http.NewRequest("GET", url, nil)
@@ -455,6 +470,70 @@ func (p *ProxyManager) EnsureServerConfig() error {
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
 		return p.createServerConfig()
+	}
+
+	return nil
+}
+
+// ensureTLSApp ensures the TLS app with automation exists in Caddy config.
+// Without this, ProvisionTLS calls will fail with "invalid traversal path".
+func (p *ProxyManager) ensureTLSApp() error {
+	url := fmt.Sprintf("%s/config/apps/tls", p.caddyAdminURL)
+	resp, err := p.httpClient.Get(url)
+	if err != nil {
+		return p.createTLSApp()
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+		return p.createTLSApp()
+	}
+
+	// Check if it's null or empty
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) == 0 || string(body) == "null" {
+		return p.createTLSApp()
+	}
+
+	return nil
+}
+
+// createTLSApp creates the base TLS app with automation policies using ACME issuers
+func (p *ProxyManager) createTLSApp() error {
+	tlsConfig := map[string]interface{}{
+		"automation": map[string]interface{}{
+			"policies": []map[string]interface{}{
+				{
+					"issuers": []map[string]interface{}{
+						{"module": "acme"},
+						{"module": "acme", "ca": "https://acme.zerossl.com/v2/DV90"},
+					},
+				},
+			},
+		},
+	}
+
+	configJSON, err := json.Marshal(tlsConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal TLS config: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/config/apps/tls", p.caddyAdminURL)
+	req, err := http.NewRequest("PUT", url, bytes.NewReader(configJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("caddy returned error creating TLS app (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	return nil

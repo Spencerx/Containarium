@@ -23,10 +23,11 @@ type PendingCreation struct {
 // ContainerServer implements the gRPC ContainerService
 type ContainerServer struct {
 	pb.UnimplementedContainerServiceServer
-	manager          *container.Manager
-	emitter          *events.Emitter
-	pendingCreations map[string]*PendingCreation
-	pendingMu        sync.RWMutex
+	manager             *container.Manager
+	collaboratorManager *container.CollaboratorManager
+	emitter             *events.Emitter
+	pendingCreations    map[string]*PendingCreation
+	pendingMu           sync.RWMutex
 }
 
 // NewContainerServer creates a new container server
@@ -523,4 +524,112 @@ func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
 		PodmanEnabled: true,  // TODO: Get from container config
 		Stack:         "",    // TODO: Get from container labels
 	}
+}
+
+// GetManager returns the container manager for reuse by other components
+func (s *ContainerServer) GetManager() *container.Manager {
+	return s.manager
+}
+
+// SetCollaboratorManager sets the collaborator manager for handling collaborator operations
+func (s *ContainerServer) SetCollaboratorManager(cm *container.CollaboratorManager) {
+	s.collaboratorManager = cm
+}
+
+// AddCollaborator adds a collaborator to a container
+func (s *ContainerServer) AddCollaborator(ctx context.Context, req *pb.AddCollaboratorRequest) (*pb.AddCollaboratorResponse, error) {
+	if req.OwnerUsername == "" {
+		return nil, fmt.Errorf("owner_username is required")
+	}
+	if req.CollaboratorUsername == "" {
+		return nil, fmt.Errorf("collaborator_username is required")
+	}
+	if req.SshPublicKey == "" {
+		return nil, fmt.Errorf("ssh_public_key is required")
+	}
+
+	if s.collaboratorManager == nil {
+		return nil, fmt.Errorf("collaborator management not enabled")
+	}
+
+	collab, err := s.collaboratorManager.AddCollaborator(req.OwnerUsername, req.CollaboratorUsername, req.SshPublicKey, req.GrantSudo, req.GrantContainerRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add collaborator: %w", err)
+	}
+
+	return &pb.AddCollaboratorResponse{
+		Message: fmt.Sprintf("Collaborator %s added to %s-container", req.CollaboratorUsername, req.OwnerUsername),
+		Collaborator: &pb.Collaborator{
+			Id:                   collab.ID,
+			ContainerName:        collab.ContainerName,
+			OwnerUsername:        collab.OwnerUsername,
+			CollaboratorUsername: collab.CollaboratorUsername,
+			AccountName:          collab.AccountName,
+			SshPublicKey:         collab.SSHPublicKey,
+			AddedAt:              collab.CreatedAt.Unix(),
+			CreatedBy:            collab.CreatedBy,
+			HasSudo:              collab.HasSudo,
+			HasContainerRuntime:  collab.HasContainerRuntime,
+		},
+		SshCommand: s.collaboratorManager.GenerateSSHCommand(req.OwnerUsername, req.CollaboratorUsername, "jumpserver"),
+	}, nil
+}
+
+// RemoveCollaborator removes a collaborator from a container
+func (s *ContainerServer) RemoveCollaborator(ctx context.Context, req *pb.RemoveCollaboratorRequest) (*pb.RemoveCollaboratorResponse, error) {
+	if req.OwnerUsername == "" {
+		return nil, fmt.Errorf("owner_username is required")
+	}
+	if req.CollaboratorUsername == "" {
+		return nil, fmt.Errorf("collaborator_username is required")
+	}
+
+	if s.collaboratorManager == nil {
+		return nil, fmt.Errorf("collaborator management not enabled")
+	}
+
+	if err := s.collaboratorManager.RemoveCollaborator(req.OwnerUsername, req.CollaboratorUsername); err != nil {
+		return nil, fmt.Errorf("failed to remove collaborator: %w", err)
+	}
+
+	return &pb.RemoveCollaboratorResponse{
+		Message: fmt.Sprintf("Collaborator %s removed from %s-container", req.CollaboratorUsername, req.OwnerUsername),
+	}, nil
+}
+
+// ListCollaborators lists all collaborators for a container
+func (s *ContainerServer) ListCollaborators(ctx context.Context, req *pb.ListCollaboratorsRequest) (*pb.ListCollaboratorsResponse, error) {
+	if req.OwnerUsername == "" {
+		return nil, fmt.Errorf("owner_username is required")
+	}
+
+	if s.collaboratorManager == nil {
+		return nil, fmt.Errorf("collaborator management not enabled")
+	}
+
+	collaborators, err := s.collaboratorManager.ListCollaborators(req.OwnerUsername)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list collaborators: %w", err)
+	}
+
+	var protoCollaborators []*pb.Collaborator
+	for _, c := range collaborators {
+		protoCollaborators = append(protoCollaborators, &pb.Collaborator{
+			Id:                   c.ID,
+			ContainerName:        c.ContainerName,
+			OwnerUsername:        c.OwnerUsername,
+			CollaboratorUsername: c.CollaboratorUsername,
+			AccountName:          c.AccountName,
+			SshPublicKey:         c.SSHPublicKey,
+			AddedAt:              c.CreatedAt.Unix(),
+			CreatedBy:            c.CreatedBy,
+			HasSudo:              c.HasSudo,
+			HasContainerRuntime:  c.HasContainerRuntime,
+		})
+	}
+
+	return &pb.ListCollaboratorsResponse{
+		Collaborators: protoCollaborators,
+		TotalCount:    int32(len(protoCollaborators)),
+	}, nil
 }

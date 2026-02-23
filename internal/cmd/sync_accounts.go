@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/footprintai/containarium/internal/collaborator"
 	"github.com/footprintai/containarium/internal/container"
 	"github.com/spf13/cobra"
 )
@@ -132,23 +134,81 @@ func runSyncAccounts(cmd *cobra.Command, args []string) error {
 		restored++
 	}
 
+	// Sync collaborator accounts from PostgreSQL
+	collabRestored, collabSkipped, collabFailed := syncCollaboratorAccounts(mgr)
+
 	// Print summary
 	fmt.Println()
 	fmt.Println("==========================================")
 	fmt.Println("Jump Server Account Sync Summary")
 	fmt.Println("==========================================")
+	fmt.Println("Owner Accounts:")
 	if syncDryRun {
-		fmt.Printf("Would restore: %d accounts\n", restored)
+		fmt.Printf("  Would restore: %d accounts\n", restored)
 	} else {
-		fmt.Printf("Restored:      %d accounts\n", restored)
+		fmt.Printf("  Restored:      %d accounts\n", restored)
 	}
-	fmt.Printf("Skipped:       %d accounts\n", skipped)
-	fmt.Printf("Failed:        %d accounts\n", failed)
+	fmt.Printf("  Skipped:       %d accounts\n", skipped)
+	fmt.Printf("  Failed:        %d accounts\n", failed)
+	fmt.Println()
+	fmt.Println("Collaborator Accounts:")
+	if syncDryRun {
+		fmt.Printf("  Would restore: %d accounts\n", collabRestored)
+	} else {
+		fmt.Printf("  Restored:      %d accounts\n", collabRestored)
+	}
+	fmt.Printf("  Skipped:       %d accounts\n", collabSkipped)
+	fmt.Printf("  Failed:        %d accounts\n", collabFailed)
 	fmt.Println("==========================================")
 
-	if failed > 0 {
-		return fmt.Errorf("%d account(s) failed to sync", failed)
+	totalFailed := failed + collabFailed
+	if totalFailed > 0 {
+		return fmt.Errorf("%d account(s) failed to sync", totalFailed)
 	}
 
 	return nil
+}
+
+// syncCollaboratorAccounts syncs collaborator jump server accounts from PostgreSQL
+func syncCollaboratorAccounts(mgr *container.Manager) (restored, skipped, failed int) {
+	fmt.Println()
+	fmt.Println("Syncing collaborator accounts from database...")
+
+	// Create collaborator store
+	collaboratorStore, err := collaborator.NewStore(context.Background(), getPostgresConnString())
+	if err != nil {
+		fmt.Printf("  ⚠ Failed to connect to collaborator database: %v\n", err)
+		fmt.Println("  Skipping collaborator sync (database not available)")
+		return 0, 0, 0
+	}
+	defer collaboratorStore.Close()
+
+	// Create collaborator manager
+	collaboratorMgr := container.NewCollaboratorManager(mgr, collaboratorStore)
+
+	// Sync collaborator accounts
+	if syncDryRun {
+		// In dry-run mode, just list what would be synced
+		collaborators, err := collaboratorStore.ListAll(context.Background())
+		if err != nil {
+			fmt.Printf("  ⚠ Failed to list collaborators: %v\n", err)
+			return 0, 0, 1
+		}
+
+		for _, c := range collaborators {
+			if container.UserExists(c.AccountName) {
+				fmt.Printf("  ✓ Jump server account %s already exists, skipping\n", c.AccountName)
+				skipped++
+			} else {
+				fmt.Printf("  [DRY RUN] Would create jump server account for %s\n", c.AccountName)
+				restored++
+			}
+		}
+		return restored, skipped, failed
+	}
+
+	// Actually sync the accounts
+	restored, skipped, failed = collaboratorMgr.SyncCollaboratorAccounts(verbose, syncForce)
+
+	return restored, skipped, failed
 }

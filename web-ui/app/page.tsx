@@ -15,6 +15,7 @@ import CreateContainerDialog from '@/src/components/containers/CreateContainerDi
 import DeleteConfirmDialog from '@/src/components/containers/DeleteConfirmDialog';
 import LabelEditorDialog from '@/src/components/containers/LabelEditorDialog';
 import ResizeContainerDialog from '@/src/components/containers/ResizeContainerDialog';
+import CollaboratorsDialog from '@/src/components/containers/CollaboratorsDialog';
 import AppsView from '@/src/components/apps/AppsView';
 import NetworkTopologyView from '@/src/components/network/NetworkTopologyView';
 import FirewallEditor from '@/src/components/network/FirewallEditor';
@@ -24,6 +25,7 @@ import { useContainers, CreateContainerProgress } from '@/src/lib/hooks/useConta
 import { useMetrics } from '@/src/lib/hooks/useMetrics';
 import { useApps } from '@/src/lib/hooks/useApps';
 import { useRoutes, usePassthroughRoutes, useNetworkTopology, useContainerACL, useACLPresets, useDNSRecords } from '@/src/lib/hooks/useNetwork';
+import { useCollaborators } from '@/src/lib/hooks/useCollaborators';
 import { CreateContainerRequest, ContainerMetricsWithRate } from '@/src/types/container';
 import { Server } from '@/src/types/server';
 import { ACLPreset } from '@/src/types/app';
@@ -96,6 +98,15 @@ export default function Home() {
     activeServer,
     selectedContainer || ''
   );
+
+  // Collaborator state and hooks
+  const [collaboratorContainer, setCollaboratorContainer] = useState<string | null>(null);
+  const {
+    collaborators,
+    isLoading: collaboratorsLoading,
+    addCollaborator,
+    removeCollaborator,
+  } = useCollaborators(activeServer, collaboratorContainer);
 
   // Convert metrics array to a map by container name for easy lookup
   const metricsMap = useMemo(() => {
@@ -184,6 +195,15 @@ export default function Home() {
   const handleOpenResize = (username: string, currentResources: { cpu: string; memory: string; disk: string }) => {
     setResizeTarget({ username, ...currentResources });
     setResizeDialogOpen(true);
+  };
+
+  // Collaborator handlers
+  const handleManageCollaborators = (username: string) => {
+    setCollaboratorContainer(username);
+  };
+
+  const handleCloseCollaborators = () => {
+    setCollaboratorContainer(null);
   };
 
   const handleCloseResize = () => {
@@ -294,6 +314,7 @@ export default function Home() {
                 onEditFirewall={handleEditContainerFirewall}
                 onEditLabels={handleEditLabels}
                 onResize={handleOpenResize}
+                onManageCollaborators={handleManageCollaborators}
                 onRefresh={refreshContainers}
               />
             )}
@@ -438,6 +459,22 @@ export default function Home() {
           memoryUsageBytes={metricsMap[`${resizeTarget.username}-container`]?.memoryUsageBytes}
           diskUsageBytes={metricsMap[`${resizeTarget.username}-container`]?.diskUsageBytes}
           onResize={handleResize}
+        />
+      )}
+
+      {/* Collaborators Dialog */}
+      {collaboratorContainer && (
+        <CollaboratorsDialog
+          open={!!collaboratorContainer}
+          onClose={handleCloseCollaborators}
+          ownerUsername={collaboratorContainer}
+          collaborators={collaborators}
+          isLoading={collaboratorsLoading}
+          onAdd={async (req) => {
+            const result = await addCollaborator(req);
+            return { sshCommand: result.sshCommand };
+          }}
+          onRemove={removeCollaborator}
         />
       )}
     </Box>

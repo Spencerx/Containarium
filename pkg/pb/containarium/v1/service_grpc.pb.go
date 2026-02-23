@@ -19,17 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ContainerService_CreateContainer_FullMethodName = "/containarium.v1.ContainerService/CreateContainer"
-	ContainerService_ListContainers_FullMethodName  = "/containarium.v1.ContainerService/ListContainers"
-	ContainerService_GetContainer_FullMethodName    = "/containarium.v1.ContainerService/GetContainer"
-	ContainerService_DeleteContainer_FullMethodName = "/containarium.v1.ContainerService/DeleteContainer"
-	ContainerService_StartContainer_FullMethodName  = "/containarium.v1.ContainerService/StartContainer"
-	ContainerService_StopContainer_FullMethodName   = "/containarium.v1.ContainerService/StopContainer"
-	ContainerService_ResizeContainer_FullMethodName = "/containarium.v1.ContainerService/ResizeContainer"
-	ContainerService_AddSSHKey_FullMethodName       = "/containarium.v1.ContainerService/AddSSHKey"
-	ContainerService_RemoveSSHKey_FullMethodName    = "/containarium.v1.ContainerService/RemoveSSHKey"
-	ContainerService_GetMetrics_FullMethodName      = "/containarium.v1.ContainerService/GetMetrics"
-	ContainerService_GetSystemInfo_FullMethodName   = "/containarium.v1.ContainerService/GetSystemInfo"
+	ContainerService_CreateContainer_FullMethodName    = "/containarium.v1.ContainerService/CreateContainer"
+	ContainerService_ListContainers_FullMethodName     = "/containarium.v1.ContainerService/ListContainers"
+	ContainerService_GetContainer_FullMethodName       = "/containarium.v1.ContainerService/GetContainer"
+	ContainerService_DeleteContainer_FullMethodName    = "/containarium.v1.ContainerService/DeleteContainer"
+	ContainerService_StartContainer_FullMethodName     = "/containarium.v1.ContainerService/StartContainer"
+	ContainerService_StopContainer_FullMethodName      = "/containarium.v1.ContainerService/StopContainer"
+	ContainerService_ResizeContainer_FullMethodName    = "/containarium.v1.ContainerService/ResizeContainer"
+	ContainerService_AddSSHKey_FullMethodName          = "/containarium.v1.ContainerService/AddSSHKey"
+	ContainerService_RemoveSSHKey_FullMethodName       = "/containarium.v1.ContainerService/RemoveSSHKey"
+	ContainerService_AddCollaborator_FullMethodName    = "/containarium.v1.ContainerService/AddCollaborator"
+	ContainerService_RemoveCollaborator_FullMethodName = "/containarium.v1.ContainerService/RemoveCollaborator"
+	ContainerService_ListCollaborators_FullMethodName  = "/containarium.v1.ContainerService/ListCollaborators"
+	ContainerService_GetMetrics_FullMethodName         = "/containarium.v1.ContainerService/GetMetrics"
+	ContainerService_GetSystemInfo_FullMethodName      = "/containarium.v1.ContainerService/GetSystemInfo"
 )
 
 // ContainerServiceClient is the client API for ContainerService service.
@@ -56,6 +59,12 @@ type ContainerServiceClient interface {
 	AddSSHKey(ctx context.Context, in *AddSSHKeyRequest, opts ...grpc.CallOption) (*AddSSHKeyResponse, error)
 	// RemoveSSHKey removes an SSH public key from a container
 	RemoveSSHKey(ctx context.Context, in *RemoveSSHKeyRequest, opts ...grpc.CallOption) (*RemoveSSHKeyResponse, error)
+	// AddCollaborator adds a collaborator to a container
+	AddCollaborator(ctx context.Context, in *AddCollaboratorRequest, opts ...grpc.CallOption) (*AddCollaboratorResponse, error)
+	// RemoveCollaborator removes a collaborator from a container
+	RemoveCollaborator(ctx context.Context, in *RemoveCollaboratorRequest, opts ...grpc.CallOption) (*RemoveCollaboratorResponse, error)
+	// ListCollaborators lists all collaborators for a container
+	ListCollaborators(ctx context.Context, in *ListCollaboratorsRequest, opts ...grpc.CallOption) (*ListCollaboratorsResponse, error)
 	// GetMetrics gets runtime metrics for containers
 	GetMetrics(ctx context.Context, in *GetMetricsRequest, opts ...grpc.CallOption) (*GetMetricsResponse, error)
 	// GetSystemInfo gets information about the Incus host
@@ -160,6 +169,36 @@ func (c *containerServiceClient) RemoveSSHKey(ctx context.Context, in *RemoveSSH
 	return out, nil
 }
 
+func (c *containerServiceClient) AddCollaborator(ctx context.Context, in *AddCollaboratorRequest, opts ...grpc.CallOption) (*AddCollaboratorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddCollaboratorResponse)
+	err := c.cc.Invoke(ctx, ContainerService_AddCollaborator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *containerServiceClient) RemoveCollaborator(ctx context.Context, in *RemoveCollaboratorRequest, opts ...grpc.CallOption) (*RemoveCollaboratorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveCollaboratorResponse)
+	err := c.cc.Invoke(ctx, ContainerService_RemoveCollaborator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *containerServiceClient) ListCollaborators(ctx context.Context, in *ListCollaboratorsRequest, opts ...grpc.CallOption) (*ListCollaboratorsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCollaboratorsResponse)
+	err := c.cc.Invoke(ctx, ContainerService_ListCollaborators_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *containerServiceClient) GetMetrics(ctx context.Context, in *GetMetricsRequest, opts ...grpc.CallOption) (*GetMetricsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetMetricsResponse)
@@ -204,6 +243,12 @@ type ContainerServiceServer interface {
 	AddSSHKey(context.Context, *AddSSHKeyRequest) (*AddSSHKeyResponse, error)
 	// RemoveSSHKey removes an SSH public key from a container
 	RemoveSSHKey(context.Context, *RemoveSSHKeyRequest) (*RemoveSSHKeyResponse, error)
+	// AddCollaborator adds a collaborator to a container
+	AddCollaborator(context.Context, *AddCollaboratorRequest) (*AddCollaboratorResponse, error)
+	// RemoveCollaborator removes a collaborator from a container
+	RemoveCollaborator(context.Context, *RemoveCollaboratorRequest) (*RemoveCollaboratorResponse, error)
+	// ListCollaborators lists all collaborators for a container
+	ListCollaborators(context.Context, *ListCollaboratorsRequest) (*ListCollaboratorsResponse, error)
 	// GetMetrics gets runtime metrics for containers
 	GetMetrics(context.Context, *GetMetricsRequest) (*GetMetricsResponse, error)
 	// GetSystemInfo gets information about the Incus host
@@ -244,6 +289,15 @@ func (UnimplementedContainerServiceServer) AddSSHKey(context.Context, *AddSSHKey
 }
 func (UnimplementedContainerServiceServer) RemoveSSHKey(context.Context, *RemoveSSHKeyRequest) (*RemoveSSHKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveSSHKey not implemented")
+}
+func (UnimplementedContainerServiceServer) AddCollaborator(context.Context, *AddCollaboratorRequest) (*AddCollaboratorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddCollaborator not implemented")
+}
+func (UnimplementedContainerServiceServer) RemoveCollaborator(context.Context, *RemoveCollaboratorRequest) (*RemoveCollaboratorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveCollaborator not implemented")
+}
+func (UnimplementedContainerServiceServer) ListCollaborators(context.Context, *ListCollaboratorsRequest) (*ListCollaboratorsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCollaborators not implemented")
 }
 func (UnimplementedContainerServiceServer) GetMetrics(context.Context, *GetMetricsRequest) (*GetMetricsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMetrics not implemented")
@@ -434,6 +488,60 @@ func _ContainerService_RemoveSSHKey_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ContainerService_AddCollaborator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddCollaboratorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContainerServiceServer).AddCollaborator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContainerService_AddCollaborator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContainerServiceServer).AddCollaborator(ctx, req.(*AddCollaboratorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ContainerService_RemoveCollaborator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveCollaboratorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContainerServiceServer).RemoveCollaborator(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContainerService_RemoveCollaborator_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContainerServiceServer).RemoveCollaborator(ctx, req.(*RemoveCollaboratorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ContainerService_ListCollaborators_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCollaboratorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContainerServiceServer).ListCollaborators(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContainerService_ListCollaborators_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContainerServiceServer).ListCollaborators(ctx, req.(*ListCollaboratorsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ContainerService_GetMetrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetMetricsRequest)
 	if err := dec(in); err != nil {
@@ -512,6 +620,18 @@ var ContainerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveSSHKey",
 			Handler:    _ContainerService_RemoveSSHKey_Handler,
+		},
+		{
+			MethodName: "AddCollaborator",
+			Handler:    _ContainerService_AddCollaborator_Handler,
+		},
+		{
+			MethodName: "RemoveCollaborator",
+			Handler:    _ContainerService_RemoveCollaborator_Handler,
+		},
+		{
+			MethodName: "ListCollaborators",
+			Handler:    _ContainerService_ListCollaborators_Handler,
 		},
 		{
 			MethodName: "GetMetrics",

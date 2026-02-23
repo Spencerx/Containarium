@@ -757,6 +757,118 @@
         ]
       }
     },
+    "/v1/containers/{ownerUsername}/collaborators": {
+      "get": {
+        "summary": "List collaborators",
+        "description": "Returns all collaborators with access to a container.",
+        "operationId": "ContainerService_ListCollaborators",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCollaboratorsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ownerUsername",
+            "description": "Container owner's username",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Collaborators"
+        ]
+      },
+      "post": {
+        "summary": "Add collaborator",
+        "description": "Adds a collaborator to a container. The collaborator can SSH via ProxyJump and sudo su to the container owner with full session logging for audit trail.",
+        "operationId": "ContainerService_AddCollaborator",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddCollaboratorResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ownerUsername",
+            "description": "Container owner's username (e.g., \"alice\")",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddCollaboratorBody"
+            }
+          }
+        ],
+        "tags": [
+          "Collaborators"
+        ]
+      }
+    },
+    "/v1/containers/{ownerUsername}/collaborators/{collaboratorUsername}": {
+      "delete": {
+        "summary": "Remove collaborator",
+        "description": "Removes a collaborator's access to a container, deleting both jump server and container accounts.",
+        "operationId": "ContainerService_RemoveCollaborator",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RemoveCollaboratorResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ownerUsername",
+            "description": "Container owner's username",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "collaboratorUsername",
+            "description": "Collaborator's username to remove",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Collaborators"
+        ]
+      }
+    },
     "/v1/containers/{username}": {
       "get": {
         "summary": "Get container details",
@@ -1803,6 +1915,46 @@
       },
       "title": "ACLRule represents a single firewall rule"
     },
+    "AddCollaboratorBody": {
+      "type": "object",
+      "properties": {
+        "collaboratorUsername": {
+          "type": "string",
+          "title": "Collaborator's username to add (e.g., \"bob\")"
+        },
+        "sshPublicKey": {
+          "type": "string",
+          "title": "SSH public key for the collaborator"
+        },
+        "grantSudo": {
+          "type": "boolean",
+          "title": "Grant full sudo access (not just su - owner)"
+        },
+        "grantContainerRuntime": {
+          "type": "boolean",
+          "title": "Add to docker/podman group for container runtime access"
+        }
+      },
+      "title": "AddCollaboratorRequest is the request to add a collaborator to a container"
+    },
+    "AddCollaboratorResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        },
+        "collaborator": {
+          "$ref": "#/definitions/Collaborator",
+          "title": "The created collaborator details"
+        },
+        "sshCommand": {
+          "type": "string",
+          "title": "SSH connection command for the collaborator"
+        }
+      },
+      "title": "AddCollaboratorResponse is the response from adding a collaborator"
+    },
     "AddPassthroughRouteRequest": {
       "type": "object",
       "properties": {
@@ -2092,6 +2244,53 @@
         }
       },
       "title": "BuildpackOptions for auto-generating Dockerfiles/Containerfiles"
+    },
+    "Collaborator": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "UUID identifier"
+        },
+        "containerName": {
+          "type": "string",
+          "title": "Container name (e.g., \"alice-container\")"
+        },
+        "ownerUsername": {
+          "type": "string",
+          "title": "Container owner's username"
+        },
+        "collaboratorUsername": {
+          "type": "string",
+          "title": "Collaborator's username (e.g., \"bob\")"
+        },
+        "accountName": {
+          "type": "string",
+          "title": "Full account name on jump server and container (e.g., \"alice-container-bob\")"
+        },
+        "sshPublicKey": {
+          "type": "string",
+          "title": "SSH public key for this collaborator"
+        },
+        "addedAt": {
+          "type": "string",
+          "format": "int64",
+          "title": "Unix timestamp when collaborator was added"
+        },
+        "createdBy": {
+          "type": "string",
+          "title": "Who added this collaborator"
+        },
+        "hasSudo": {
+          "type": "boolean",
+          "title": "Has full sudo access (not just su - owner)"
+        },
+        "hasContainerRuntime": {
+          "type": "boolean",
+          "title": "Has docker/podman group membership for container runtime access"
+        }
+      },
+      "title": "Collaborator represents a user with access to a container"
     },
     "Connection": {
       "type": "object",
@@ -2906,6 +3105,25 @@
         }
       }
     },
+    "ListCollaboratorsResponse": {
+      "type": "object",
+      "properties": {
+        "collaborators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Collaborator"
+          },
+          "title": "List of collaborators"
+        },
+        "totalCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "Total count of collaborators"
+        }
+      },
+      "title": "ListCollaboratorsResponse is the response from listing collaborators"
+    },
     "ListContainersResponse": {
       "type": "object",
       "properties": {
@@ -3241,6 +3459,16 @@
           "title": "Total count matching query"
         }
       }
+    },
+    "RemoveCollaboratorResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Success message"
+        }
+      },
+      "title": "RemoveCollaboratorResponse is the response from removing a collaborator"
     },
     "RemoveSSHKeyResponse": {
       "type": "object",

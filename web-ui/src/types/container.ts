@@ -62,6 +62,7 @@ export const AVAILABLE_STACKS: Stack[] = [
   { id: 'golang', name: 'Go Development', description: 'Go with gopls, golangci-lint', icon: 'golang' },
   { id: 'rust', name: 'Rust Development', description: 'Rust with cargo', icon: 'rust' },
   { id: 'datascience', name: 'Data Science', description: 'Python with Jupyter, pandas, numpy, scikit-learn', icon: 'jupyter' },
+  { id: 'docker', name: 'Docker Development', description: 'Docker CE container runtime', icon: 'docker' },
   { id: 'devops', name: 'DevOps Tools', description: 'kubectl, Terraform, infrastructure tools', icon: 'kubernetes' },
   { id: 'database', name: 'Database Clients', description: 'PostgreSQL, MySQL, Redis CLI clients', icon: 'database' },
   { id: 'fullstack', name: 'Full Stack Web', description: 'Node.js, Python, database clients', icon: 'code' },
@@ -134,4 +135,38 @@ export interface ContainerMetricsWithRate extends ContainerMetrics {
  */
 export interface MetricsResponse {
   metrics: ContainerMetrics[];
+}
+
+/**
+ * Collaborator with access to a container
+ */
+export interface Collaborator {
+  id: string;
+  containerName: string;
+  ownerUsername: string;
+  collaboratorUsername: string;
+  accountName: string;
+  sshPublicKey: string;
+  addedAt: number;
+  createdBy: string;
+  hasSudo: boolean;
+  hasContainerRuntime: boolean;
+}
+
+/**
+ * Request to add a collaborator
+ */
+export interface AddCollaboratorRequest {
+  collaboratorUsername: string;
+  sshPublicKey: string;
+  grantSudo?: boolean;
+  grantContainerRuntime?: boolean;
+}
+
+/**
+ * Response from listing collaborators
+ */
+export interface ListCollaboratorsResponse {
+  collaborators: Collaborator[];
+  totalCount: number;
 }
