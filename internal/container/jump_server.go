@@ -12,10 +12,7 @@ import (
 	"github.com/footprintai/containarium/internal/incus"
 )
 
-func init() {
-	// Seed random number generator for jitter in retry logic
-	rand.Seed(time.Now().UnixNano())
-}
+// Note: As of Go 1.20, rand is automatically seeded
 
 // CreateJumpServerAccount creates a proxy-only user account on the jump server
 // The account is configured with /usr/sbin/nologin shell, preventing direct shell access
@@ -495,7 +492,7 @@ func waitForLockFilesClear(maxWait time.Duration, checkInterval time.Duration, v
 }
 
 // isGoogleGuestAgentActive checks if google_guest_agent is currently running
-func isGoogleGuestAgentActive(verbose bool) bool {
+func isGoogleGuestAgentActive(_ bool) bool {
 	cmd := exec.Command("pgrep", "-x", "google_guest_ag")
 	err := cmd.Run()
 	return err == nil
@@ -554,6 +551,8 @@ func checkGuestAgentStatus(stage string) {
 
 // retryUseraddWithLockWait stops google-guest-agent, creates user, then restarts it
 func retryUseraddWithLockWait(username string, verbose bool) error {
+	const maxRetries = 5 // Retry up to 5 times with flock
+
 	fmt.Printf("       Temporarily stopping google-guest-agent to avoid race condition...\n")
 
 	// Stop google-guest-agent
@@ -564,6 +563,9 @@ func retryUseraddWithLockWait(username string, verbose bool) error {
 	} else {
 		fmt.Printf("       ✓ google-guest-agent stopped\n")
 	}
+
+	// Kill any remaining google processes that might be holding locks
+	killGoogleProcesses(verbose)
 
 	// Ensure we restart it when done
 	defer func() {
@@ -578,7 +580,7 @@ func retryUseraddWithLockWait(username string, verbose bool) error {
 
 	// Wait for the agent to fully stop and release locks
 	fmt.Printf("       Waiting for agent to stop and release locks...\n")
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Check if agent actually stopped
 	checkCmd := exec.Command("systemctl", "is-active", "google-guest-agent")
@@ -587,7 +589,6 @@ func retryUseraddWithLockWait(username string, verbose bool) error {
 	}
 
 	// Wait for lock files to clear (up to 10 seconds)
-	// Note: We don't try to remove them as that fails under systemd's ProtectSystem=strict
 	lockFiles := []string{"/etc/passwd.lock", "/etc/shadow.lock", "/etc/.pwd.lock", "/etc/group.lock"}
 	locksClear := false
 	for attempt := 0; attempt < 10; attempt++ {
@@ -609,49 +610,110 @@ func retryUseraddWithLockWait(username string, verbose bool) error {
 	}
 
 	if !locksClear {
-		fmt.Printf("       Warning: Lock files still present after waiting, proceeding anyway...\n")
+		fmt.Printf("       Warning: Lock files still present after waiting, forcing removal...\n")
+		// Since we stopped google-guest-agent, any remaining lock files are stale
+		// Forcibly remove them regardless of age
+		forceRemoveLockFiles(lockFiles, verbose)
 	} else {
 		fmt.Printf("       ✓ All lock files cleared\n")
 	}
 
-	// Create user
-	// Note: Jump server users only do SSH ProxyJump - they don't need subordinate UIDs
-	// for user namespaces (Podman runs inside containers, not on the jump server).
-	// Using -K SUB_UID_COUNT=0 and -K SUB_GID_COUNT=0 prevents exhaustion of
-	// subordinate UID ranges in /etc/subuid and /etc/subgid.
-	fmt.Printf("       Creating user %s...\n", username)
-	cmd = exec.Command("useradd", username,
-		"-s", "/usr/sbin/nologin", // No shell access - ProxyJump only!
-		"-m",                    // Create home directory
-		"-K", "SUB_UID_COUNT=0", // Don't allocate subordinate UIDs
-		"-K", "SUB_GID_COUNT=0", // Don't allocate subordinate GIDs
-		"-c", fmt.Sprintf("Containarium user - %s", username))
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Print detailed error info
-		fmt.Printf("       useradd failed!\n")
-		fmt.Printf("       Error: %v\n", err)
-		fmt.Printf("       Output: %s\n", string(output))
-
-		// Check lock files again
-		for _, lockFile := range lockFiles {
-			if _, statErr := os.Stat(lockFile); statErr == nil {
-				fmt.Printf("       Lock file present after failure: %s\n", lockFile)
-				// Try to see what's holding it
-				lsofCmd := exec.Command("lsof", lockFile)
-				if lsofOut, lsofErr := lsofCmd.CombinedOutput(); lsofErr == nil && len(lsofOut) > 0 {
-					fmt.Printf("       Process holding lock:\n%s\n", string(lsofOut))
-				}
-			}
+	// Retry useradd with flock for serialization
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			fmt.Printf("       Retry attempt %d/%d...\n", attempt+1, maxRetries)
+			time.Sleep(time.Duration(attempt) * time.Second) // Increasing backoff
 		}
 
-		return fmt.Errorf("failed to create user %s: %w\nOutput: %s", username, err, output)
+		// Create user using flock for serialization
+		// flock -w 30 ensures we wait up to 30 seconds to acquire the lock
+		fmt.Printf("       Creating user %s (with flock)...\n", username)
+		cmd = exec.Command("flock", "-w", "30", "/var/lock/containarium-useradd.lock",
+			"useradd", username,
+			"-s", "/usr/sbin/nologin", // No shell access - ProxyJump only!
+			"-m",                      // Create home directory
+			"-K", "SUB_UID_COUNT=0",   // Don't allocate subordinate UIDs
+			"-K", "SUB_GID_COUNT=0",   // Don't allocate subordinate GIDs
+			"-c", fmt.Sprintf("Containarium user - %s", username))
+
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			// Success!
+			fmt.Printf("       ✓ User %s created successfully\n", username)
+			return nil
+		}
+
+		lastErr = err
+		errMsg := string(output)
+
+		// Check if it's a lock-related error (retry) or something else (fail immediately)
+		if !strings.Contains(errMsg, "cannot lock") && !strings.Contains(errMsg, "try again later") {
+			// Not a lock error - fail immediately
+			fmt.Printf("       useradd failed (non-lock error)!\n")
+			fmt.Printf("       Error: %v\n", err)
+			fmt.Printf("       Output: %s\n", errMsg)
+			return fmt.Errorf("failed to create user %s: %w\nOutput: %s", username, err, errMsg)
+		}
+
+		// Lock error - will retry
+		fmt.Printf("       useradd failed with lock error, will retry...\n")
+		fmt.Printf("       Output: %s\n", errMsg)
+
+		// Kill any google processes that might have restarted
+		killGoogleProcesses(verbose)
 	}
 
-	// Success!
-	fmt.Printf("       ✓ User %s created successfully\n", username)
-	return nil
+	// All retries exhausted
+	fmt.Printf("       useradd failed after %d attempts!\n", maxRetries)
+	return fmt.Errorf("failed to create user %s after %d attempts: %w", username, maxRetries, lastErr)
+}
+
+// killGoogleProcesses kills any google-related processes that might be holding /etc/passwd locks
+func killGoogleProcesses(verbose bool) {
+	// Find and kill google_guest_agent and related processes
+	processes := []string{"google_guest_ag", "google_osconfig", "google_oslogin"}
+
+	for _, procName := range processes {
+		cmd := exec.Command("pkill", "-9", "-f", procName)
+		if err := cmd.Run(); err == nil && verbose {
+			fmt.Printf("       Killed %s processes\n", procName)
+		}
+	}
+
+	// Also check for any process holding /etc/passwd.lock
+	lsofCmd := exec.Command("lsof", "/etc/passwd.lock")
+	if output, err := lsofCmd.CombinedOutput(); err == nil && len(output) > 0 {
+		// Parse PIDs from lsof output and kill them
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines[1:] { // Skip header
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				pid := fields[1]
+				if verbose {
+					fmt.Printf("       Killing process %s holding passwd.lock\n", pid)
+				}
+				exec.Command("kill", "-9", pid).Run()
+			}
+		}
+	}
+
+	// Brief pause to let processes die
+	time.Sleep(500 * time.Millisecond)
+}
+
+// forceRemoveLockFiles forcibly removes lock files (used after stopping google-guest-agent)
+func forceRemoveLockFiles(lockFiles []string, verbose bool) {
+	for _, lockFile := range lockFiles {
+		if _, err := os.Stat(lockFile); err == nil {
+			fmt.Printf("       Removing lock file: %s\n", lockFile)
+			if err := os.Remove(lockFile); err != nil {
+				fmt.Printf("       Warning: Could not remove %s: %v\n", lockFile, err)
+			} else {
+				fmt.Printf("       ✓ Removed %s\n", lockFile)
+			}
+		}
+	}
 }
 
 // withGuestAgentAccountsDaemonDisabled temporarily disables the google-guest-agent's accounts daemon,
@@ -750,7 +812,7 @@ func withGuestAgentAccountsDaemonDisabled(fn func() error, verbose bool) error {
 }
 
 // disableGuestAgentAccountsDaemon writes configuration to disable the accounts daemon
-func disableGuestAgentAccountsDaemon(configPath string, verbose bool) error {
+func disableGuestAgentAccountsDaemon(configPath string, _ bool) error {
 	// Create configuration content
 	config := "[Daemons]\naccounts_daemon = false\n"
 

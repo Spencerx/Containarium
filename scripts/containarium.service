@@ -18,7 +18,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/var/lib/incus /etc
+# /etc - for creating jump server users (useradd needs to create lock files)
+# /home - for creating user home directories and SSH keys
+# /var/lib/incus - for container management
+ReadWritePaths=/var/lib/incus /etc /home
 
 # Logging
 StandardOutput=journal
