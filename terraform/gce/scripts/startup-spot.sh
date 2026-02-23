@@ -204,7 +204,85 @@ fi
 
 # Initialize Incus
 echo "==> Initializing Incus..."
-if [ ! -f /var/lib/incus/.initialized ]; then
+
+# Check if ZFS pool already has Incus data (from previous instance)
+# This handles spot instance recovery where boot disk is fresh but ZFS has existing data
+ZFS_HAS_DATA=false
+if [ "$USE_PERSISTENT_DISK" = "true" ] && zfs list incus-pool/containers/containers &>/dev/null; then
+    CONTAINER_COUNT=$(zfs list -r -H -o name incus-pool/containers/containers 2>/dev/null | wc -l)
+    if [ "$CONTAINER_COUNT" -gt 1 ]; then
+        ZFS_HAS_DATA=true
+        echo "✓ Found existing Incus data on ZFS pool ($((CONTAINER_COUNT - 1)) containers)"
+    fi
+fi
+
+if [ "$ZFS_HAS_DATA" = "true" ]; then
+    # ==========================================================================
+    # RECOVERY MODE: Existing data found on ZFS pool
+    # ==========================================================================
+    echo "==> Recovering Incus from existing ZFS data..."
+
+    # Ensure Incus service is started
+    systemctl start incus || true
+    sleep 3
+
+    # CRITICAL: Create network FIRST before running incus admin recover
+    # The recover command requires the network to exist for container recovery
+    if ! incus network show incusbr0 &>/dev/null; then
+        echo "Creating network incusbr0 (required for recovery)..."
+        incus network create incusbr0 \
+            ipv4.address=10.0.3.1/24 \
+            ipv4.nat=true \
+            ipv6.address=none
+        echo "✓ Network incusbr0 created"
+    fi
+
+    # Now recover storage pool and containers
+    if ! incus storage show default &>/dev/null; then
+        echo "Recovering ZFS storage pool using incus admin recover..."
+        # Use printf to automate the interactive prompts:
+        # 1. yes - recover another storage pool
+        # 2. default - pool name
+        # 3. zfs - backend type
+        # 4. incus-pool/containers - source
+        # 5. (empty) - no additional config
+        # 6. no - don't add more pools
+        # 7. yes - continue scanning
+        # 8. yes - recover volumes
+        printf "yes\ndefault\nzfs\nincus-pool/containers\n\nno\nyes\nyes\n" | incus admin recover || {
+            echo "⚠ Recovery command had issues, checking if storage pool exists..."
+        }
+        sleep 2
+    fi
+
+    # Verify storage pool exists now
+    if incus storage show default &>/dev/null; then
+        echo "✓ Storage pool 'default' recovered"
+    else
+        echo "⚠ Storage pool recovery may have failed, please check manually"
+    fi
+
+    # Add eth0 device to default profile if missing
+    if ! incus profile device show default 2>/dev/null | grep -q "eth0:"; then
+        echo "Adding eth0 device to default profile..."
+        incus profile device add default eth0 nic network=incusbr0 name=eth0 || true
+    fi
+
+    # Start all recovered containers
+    echo "Starting recovered containers..."
+    for container in $(incus list --format csv -c n 2>/dev/null); do
+        if [ "$(incus list "$container" --format csv -c s 2>/dev/null)" = "STOPPED" ]; then
+            incus start "$container" 2>/dev/null && echo "  Started $container" || echo "  Failed to start $container"
+        fi
+    done
+
+    echo "✓ Incus recovered from existing ZFS data"
+    touch /var/lib/incus/.initialized
+
+elif [ ! -f /var/lib/incus/.initialized ]; then
+    # ==========================================================================
+    # FRESH INSTALL: No existing data, initialize new Incus instance
+    # ==========================================================================
     # Initialize with ZFS storage if using persistent disk
     if [ "$USE_PERSISTENT_DISK" = "true" ] && zpool list incus-pool &>/dev/null; then
         # Initialize with ZFS storage pool
