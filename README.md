@@ -803,25 +803,18 @@ sudo chmod +x /usr/local/bin/containarium
 # Build containarium for your platform
 make build  # macOS/Linux on your laptop
 
-# Setup daemon on server
+# Deploy binary to server
 scp bin/containarium-linux-amd64 admin@<jump-server-ip>:/tmp/
 ssh admin@<jump-server-ip>
 sudo mv /tmp/containarium-linux-amd64 /usr/local/bin/containarium
 sudo chmod +x /usr/local/bin/containarium
 
-# Generate mTLS certificates
-sudo containarium cert generate \
-    --server-ip <jump-server-ip> \
-    --output-dir /etc/containarium/certs
+# Install systemd service (generates JWT secret, writes service file, starts daemon)
+sudo containarium service install
 
-# Start daemon (via systemd or manually)
-sudo systemctl start containarium
-
-# Copy client certificates to your machine
-exit
-mkdir -p ~/.config/containarium/certs
-scp admin@<jump-server-ip>:/etc/containarium/certs/{ca.crt,client.crt,client.key} \
-    ~/.config/containarium/certs/
+# The daemon auto-detects PostgreSQL and Caddy from Incus containers,
+# and loads persisted config (base-domain, ports) from PostgreSQL.
+# After VM recreation, just re-run the two commands above.
 ```
 
 ### 3. Create Containers
@@ -1606,17 +1599,18 @@ containarium list --server 35.229.246.67:50051 \
 
 #### 🔄 **Daemon Mode** (Server Component)
 ```bash
-# Run as systemd service on the jump server
-containarium daemon --address 0.0.0.0 --port 50051 --mtls
+# Install systemd service (writes service file, generates JWT secret, starts daemon)
+sudo containarium service install
 
-# Systemd service configuration
+# Or manage manually
 sudo systemctl start containarium
-sudo systemctl enable containarium
 sudo systemctl status containarium
+sudo journalctl -u containarium -f
 ```
-- Listens on port 50051 (gRPC)
-- Enforces mTLS client authentication
-- Manages concurrent container operations
+- Self-bootstraps: auto-detects PostgreSQL and Caddy from Incus containers
+- Persists config (base-domain, ports) in PostgreSQL — survives VM recreation
+- Only needs `--rest --jwt-secret-file` in the service file; everything else is auto-detected or loaded from DB
+- Listens on port 50051 (gRPC) + port 8080 (REST/HTTP)
 - Automatically started via systemd
 
 ### Certificate Setup for Remote Mode
@@ -1655,6 +1649,10 @@ sudo containarium create alice --ssh-key ~/.ssh/alice.pub
 # With custom disk quota
 sudo containarium create bob --ssh-key ~/.ssh/bob.pub --disk-quota 50GB
 
+# With a pre-configured software stack
+sudo containarium create alice --ssh-key ~/.ssh/alice.pub --stack nodejs
+sudo containarium create bob --ssh-key ~/.ssh/bob.pub --stack docker
+
 # Enable auto-start on boot
 sudo containarium create charlie --ssh-key ~/.ssh/charlie.pub --autostart
 ```
@@ -1676,6 +1674,20 @@ Container Details:
   Disk Quota: 20GB (ZFS)
   SSH: ssh alice@10.0.3.100
 ```
+
+**Available Software Stacks (`--stack`):**
+
+| Stack | Description |
+|-------|-------------|
+| `nodejs` | Node.js LTS, npm, yarn, pnpm, TypeScript |
+| `python` | Python 3, pip, virtualenv, poetry |
+| `golang` | Go, gopls, golangci-lint |
+| `rust` | Rust toolchain via rustup |
+| `docker` | Docker CE, docker-compose-plugin |
+| `datascience` | Python, Jupyter, pandas, numpy, scikit-learn |
+| `devops` | kubectl, Terraform |
+| `database` | PostgreSQL, MySQL, Redis CLI clients |
+| `fullstack` | Node.js + Python + database clients |
 
 #### List Containers
 
@@ -1950,6 +1962,46 @@ ssh -v alice@10.0.3.100
 sudo incus exec alice-container -- tail -f /var/log/auth.log
 ```
 
+### Collaborator Management
+
+Add collaborators to containers so multiple users can share a development environment.
+
+#### Add a Collaborator
+
+```bash
+# Basic: collaborator gets restricted access (sudo su - owner only)
+sudo containarium collaborator add alice bob --ssh-key ~/.ssh/bob.pub
+
+# Grant full sudo access
+sudo containarium collaborator add alice bob --ssh-key ~/.ssh/bob.pub --sudo
+
+# Grant container runtime access (docker/podman groups)
+sudo containarium collaborator add alice bob --ssh-key ~/.ssh/bob.pub --container-runtime
+
+# Both permissions
+sudo containarium collaborator add alice carol --ssh-key ~/.ssh/carol.pub --sudo --container-runtime
+```
+
+**Permission levels:**
+
+| Flag | Effect |
+|------|--------|
+| *(default)* | Can only `sudo su - <owner>` with session logging |
+| `--sudo` | Full `NOPASSWD: ALL` sudo access with session logging |
+| `--container-runtime` | Added to docker and podman groups |
+
+#### List Collaborators
+
+```bash
+sudo containarium collaborator list alice
+```
+
+#### Remove a Collaborator
+
+```bash
+sudo containarium collaborator remove alice bob
+```
+
 ### Advanced Operations
 
 #### Using Incus Directly
@@ -2127,12 +2179,16 @@ sudo zpool scrub incus-pool
 sudo zpool status -v
 ```
 
-### gRPC Daemon Management
+### Daemon Management
 
-**Check daemon status:**
+**Install, check, and manage the daemon:**
 ```bash
+# Install systemd service (first time or after VM recreation)
+sudo containarium service install
+
 # View daemon status
-sudo systemctl status containarium
+sudo containarium service status
+# or: sudo systemctl status containarium
 
 # View daemon logs
 sudo journalctl -u containarium -f
@@ -2140,10 +2196,8 @@ sudo journalctl -u containarium -f
 # Restart daemon
 sudo systemctl restart containarium
 
-# Test daemon connection (with mTLS)
-containarium list \
-    --server 35.229.246.67:50051 \
-    --certs-dir ~/.config/containarium/certs
+# Uninstall service
+sudo containarium service uninstall
 ```
 
 **Direct gRPC testing with grpcurl:**

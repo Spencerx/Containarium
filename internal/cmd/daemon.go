@@ -9,9 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/mtls"
 	"github.com/footprintai/containarium/internal/network"
@@ -141,12 +145,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Printf("  Profile: default (configured)")
 	}
 
-	// Auto-detect Caddy container IP if app-hosting is enabled and no URL specified
-	if enableAppHosting && caddyAdminURL == "" {
+	// Always auto-detect Caddy container IP if no URL specified
+	// This ensures port forwarding (80/443 → Caddy) and route sync work
+	// even without --app-hosting (e.g., after VM recreation)
+	if caddyAdminURL == "" {
 		log.Printf("Auto-detecting Caddy container IP...")
 		if caddyIP, err := incusClient.FindCaddyContainerIP(); err != nil {
 			log.Printf("Warning: Could not auto-detect Caddy container: %v", err)
-			log.Printf("  App hosting features requiring Caddy (routes, TLS) will not work")
+			log.Printf("  Features requiring Caddy (routes, TLS, port forwarding) will not work")
 			log.Printf("  To fix: ensure a container with 'caddy' in its name is running,")
 			log.Printf("  or specify --caddy-admin-url explicitly")
 		} else {
@@ -165,6 +171,100 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Printf("Warning: iptables not available, skipping port forwarding setup")
 				log.Printf("  External HTTPS for app domains may not work without manual configuration")
 			}
+		}
+	}
+
+	// Auto-detect PostgreSQL container IP if no --postgres flag specified
+	if postgresConnString == "" {
+		if pgIP, err := incusClient.GetContainerIP(server.CorePostgresContainer); err == nil && pgIP != "" {
+			postgresConnString = fmt.Sprintf(
+				"postgres://%s:%s@%s:%d/%s?sslmode=disable",
+				server.DefaultPostgresUser, server.DefaultPostgresPassword,
+				pgIP, server.DefaultPostgresPort, server.DefaultPostgresDB)
+			log.Printf("Detected PostgreSQL at: %s", pgIP)
+		} else {
+			log.Printf("PostgreSQL auto-detect: container %s not found or has no IP", server.CorePostgresContainer)
+		}
+	}
+
+	// Load persisted daemon config from PostgreSQL (values saved by previous runs).
+	// CLI flags that were explicitly set always override DB values.
+	var daemonConfigStore *app.DaemonConfigStore
+	if postgresConnString != "" {
+		pool, poolErr := pgxpool.New(context.Background(), postgresConnString)
+		if poolErr == nil {
+			if pingErr := pool.Ping(context.Background()); pingErr == nil {
+				cs, csErr := app.NewDaemonConfigStore(context.Background(), pool)
+				if csErr == nil {
+					daemonConfigStore = cs
+					savedConfig, loadErr := cs.GetAll(context.Background())
+					if loadErr == nil && len(savedConfig) > 0 {
+						log.Printf("Loaded daemon config from PostgreSQL (%d keys)", len(savedConfig))
+						if !cmd.Flags().Changed("base-domain") {
+							if v, ok := savedConfig["base_domain"]; ok {
+								baseDomain = v
+								log.Printf("  base-domain = %s (from DB)", v)
+							}
+						}
+						if !cmd.Flags().Changed("http-port") {
+							if v, ok := savedConfig["http_port"]; ok {
+								if parsed, err := strconv.Atoi(v); err == nil {
+									daemonHTTPPort = parsed
+									log.Printf("  http-port = %d (from DB)", parsed)
+								}
+							}
+						}
+						if !cmd.Flags().Changed("port") {
+							if v, ok := savedConfig["grpc_port"]; ok {
+								if parsed, err := strconv.Atoi(v); err == nil {
+									daemonPort = parsed
+									log.Printf("  port = %d (from DB)", parsed)
+								}
+							}
+						}
+						if !cmd.Flags().Changed("address") {
+							if v, ok := savedConfig["listen_address"]; ok {
+								daemonAddress = v
+								log.Printf("  address = %s (from DB)", v)
+							}
+						}
+						if !cmd.Flags().Changed("mtls") {
+							if v, ok := savedConfig["enable_mtls"]; ok {
+								if parsed, err := strconv.ParseBool(v); err == nil {
+									enableMTLS = parsed
+									log.Printf("  mtls = %v (from DB)", parsed)
+								}
+							}
+						}
+						if !cmd.Flags().Changed("rest") {
+							if v, ok := savedConfig["enable_rest"]; ok {
+								if parsed, err := strconv.ParseBool(v); err == nil {
+									enableREST = parsed
+									log.Printf("  rest = %v (from DB)", parsed)
+								}
+							}
+						}
+						if !cmd.Flags().Changed("app-hosting") {
+							if v, ok := savedConfig["enable_app_hosting"]; ok {
+								if parsed, err := strconv.ParseBool(v); err == nil {
+									enableAppHosting = parsed
+									log.Printf("  app-hosting = %v (from DB)", parsed)
+								}
+							}
+						}
+					} else if loadErr != nil {
+						log.Printf("Warning: Failed to load daemon config from DB: %v", loadErr)
+					}
+				} else {
+					log.Printf("Warning: Failed to create daemon config store: %v", csErr)
+					pool.Close()
+				}
+			} else {
+				log.Printf("Warning: Failed to ping PostgreSQL for config: %v", pingErr)
+				pool.Close()
+			}
+		} else {
+			log.Printf("Warning: Failed to connect to PostgreSQL for config: %v", poolErr)
 		}
 	}
 
@@ -215,6 +315,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		PostgresConnString: postgresConnString,
 		BaseDomain:         baseDomain,
 		CaddyAdminURL:      caddyAdminURL,
+		HostIP:             hostIPFromCIDR(networkSubnet),
+		DaemonConfigStore:  daemonConfigStore,
 	}
 
 	// Create dual server
@@ -283,6 +385,15 @@ func generateRandomSecret() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+// hostIPFromCIDR extracts the host IP address from a CIDR notation string.
+// e.g., "10.100.0.1/24" → "10.100.0.1"
+func hostIPFromCIDR(cidr string) string {
+	if idx := strings.Index(cidr, "/"); idx > 0 {
+		return cidr[:idx]
+	}
+	return cidr
 }
 
 // saveRecoveryConfigToPersistentStorage saves recovery config to persistent disk

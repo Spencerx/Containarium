@@ -18,6 +18,7 @@ type Stack struct {
 	Name        string   `yaml:"name" json:"name"`
 	Description string   `yaml:"description" json:"description"`
 	Icon        string   `yaml:"icon" json:"icon"`
+	PreInstall  []string `yaml:"pre_install" json:"preInstall"`
 	Packages    []string `yaml:"packages" json:"packages"`
 	PostInstall []string `yaml:"post_install" json:"postInstall"`
 }
@@ -151,6 +152,15 @@ func (m *Manager) GetPackagesForStack(id string) ([]string, error) {
 		return nil, err
 	}
 	return stack.Packages, nil
+}
+
+// GetPreInstallCommands returns the pre-install commands for a stack (run as root before apt-get install)
+func (m *Manager) GetPreInstallCommands(id string) ([]string, error) {
+	stack, err := m.GetStack(id)
+	if err != nil {
+		return nil, err
+	}
+	return stack.PreInstall, nil
 }
 
 // GetPostInstallCommands returns the post-install commands for a stack

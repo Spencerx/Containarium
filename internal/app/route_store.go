@@ -51,6 +51,28 @@ func NewRouteStore(ctx context.Context, pool *pgxpool.Pool) (*RouteStore, error)
 
 // initSchema creates the routes table if it doesn't exist
 func (s *RouteStore) initSchema(ctx context.Context) error {
+	// Ensure apps table exists (at least the id column) so the FK constraint works.
+	// When app hosting is enabled, the full apps table is created by app.Store.
+	// When it's not, we create a minimal stub so routes can still reference it.
+	appsStub := `
+		CREATE TABLE IF NOT EXISTS apps (
+			id UUID PRIMARY KEY,
+			data JSONB NOT NULL DEFAULT '{}',
+			username TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT '',
+			subdomain TEXT UNIQUE NOT NULL DEFAULT '',
+			port INTEGER NOT NULL DEFAULT 0,
+			container_name TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			deployed_at TIMESTAMP
+		);
+	`
+	if _, err := s.pool.Exec(ctx, appsStub); err != nil {
+		return fmt.Errorf("failed to ensure apps table: %w", err)
+	}
+
 	schema := `
 		CREATE TABLE IF NOT EXISTS routes (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

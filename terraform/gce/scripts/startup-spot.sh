@@ -500,64 +500,24 @@ if [ -f /usr/local/bin/containarium ]; then
     fi
 fi
 
-# Create systemd service for containarium daemon
-echo "==> Creating systemd service for Containarium daemon..."
-cat > /etc/systemd/system/containarium.service <<'EOF'
-[Unit]
-Description=Containarium Container Management Daemon
-Documentation=https://github.com/footprintai/Containarium
-After=network.target incus.service
-Requires=incus.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/containarium daemon --address 0.0.0.0 --port 50051 --mtls
-Restart=on-failure
-RestartSec=5s
-User=root
-Group=root
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=false
-# /etc - for creating jump server users (useradd)
-# /home - for creating user home directories and SSH keys
-# /var/lib/incus - for container management
-ReadWritePaths=/var/lib/incus /etc /home
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=containarium
-
-# Resource limits
-LimitNOFILE=65536
-LimitNPROC=4096
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable and start daemon if binary is installed
+# Install systemd service via the binary's built-in command.
+# This writes the canonical service file (with correct ReadWritePaths,
+# minimal flags), generates JWT secret if needed, and starts the daemon.
+echo "==> Installing Containarium systemd service..."
 if [ -f /usr/local/bin/containarium ]; then
-    systemctl daemon-reload
-    systemctl enable containarium.service
-    systemctl start containarium.service
-    echo "✓ Containarium daemon service enabled and started with mTLS"
+    /usr/local/bin/containarium service install
+    echo "✓ Containarium daemon service installed and started"
 
     # Check status
     sleep 2
     if systemctl is-active --quiet containarium; then
-        echo "✓ Containarium daemon is running on port 50051 (mTLS enabled)"
+        echo "✓ Containarium daemon is running"
     else
         echo "⚠ Containarium daemon failed to start, check: journalctl -u containarium"
     fi
 else
     echo "⚠ Containarium binary not found, service not started"
-    echo "  Install binary manually and run: systemctl start containarium"
+    echo "  Install binary manually and run: containarium service install"
 fi
 
 # Set up logrotate

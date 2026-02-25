@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/internal/auth"
+	"github.com/footprintai/containarium/internal/collaborator"
+	"github.com/footprintai/containarium/internal/container"
 	"github.com/footprintai/containarium/internal/events"
 	"github.com/footprintai/containarium/internal/gateway"
 	"github.com/footprintai/containarium/internal/incus"
@@ -47,22 +53,30 @@ type DualServerConfig struct {
 
 	// Route sync settings
 	RouteSyncInterval time.Duration // Interval for syncing routes to Caddy (default 5s)
+
+	// Host IP (extracted from network CIDR, e.g., "10.100.0.1")
+	HostIP string
+
+	// DaemonConfigStore for persisting daemon config to PostgreSQL (optional)
+	DaemonConfigStore *app.DaemonConfigStore
 }
 
 // DualServer runs both gRPC and HTTP/REST servers
 type DualServer struct {
-	config           *DualServerConfig
-	grpcServer       *grpc.Server
-	containerServer  *ContainerServer
-	appServer        *AppServer
-	networkServer    *NetworkServer
-	trafficServer    *TrafficServer
-	trafficCollector *traffic.Collector
-	gatewayServer    *gateway.GatewayServer
-	tokenManager     *auth.TokenManager
-	authMiddleware   *auth.AuthMiddleware
-	routeStore       *app.RouteStore
-	routeSyncJob     *app.RouteSyncJob
+	config             *DualServerConfig
+	grpcServer         *grpc.Server
+	containerServer    *ContainerServer
+	appServer          *AppServer
+	networkServer      *NetworkServer
+	trafficServer      *TrafficServer
+	trafficCollector   *traffic.Collector
+	gatewayServer      *gateway.GatewayServer
+	tokenManager       *auth.TokenManager
+	authMiddleware     *auth.AuthMiddleware
+	routeStore         *app.RouteStore
+	routeSyncJob       *app.RouteSyncJob
+	collaboratorStore  *collaborator.Store
+	daemonConfigStore  *app.DaemonConfigStore
 }
 
 // NewDualServer creates a new dual server instance
@@ -163,13 +177,14 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 	var appServer *AppServer
 	var routeStore *app.RouteStore
 	var routeSyncJob *app.RouteSyncJob
+	// postgresConnString is hoisted so collaborator init (after skipAppHosting) can use it
+	postgresConnString := config.PostgresConnString
 	if config.EnableAppHosting {
 		incusClient, err := incus.New()
 		if err != nil {
 			log.Printf("Warning: Failed to create incus client for app hosting: %v. App hosting disabled.", err)
 		} else {
 			// Determine PostgreSQL connection string and Caddy admin URL
-			postgresConnString := config.PostgresConnString
 			caddyAdminURL := config.CaddyAdminURL
 			networkCIDR := "10.100.0.0/24"
 
@@ -285,6 +300,66 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 	}
 skipAppHosting:
 
+	// Setup collaborator store and manager (independent of app hosting)
+	// postgresConnString was set by app hosting setup above, or from config
+	if postgresConnString == "" {
+		postgresConnString = os.Getenv("CONTAINARIUM_POSTGRES_URL")
+	}
+	if postgresConnString == "" {
+		postgresConnString = "postgres://containarium:containarium@10.100.0.2:5432/containarium?sslmode=disable"
+	}
+
+	var collabStore *collaborator.Store
+	collabStore, err = collaborator.NewStore(context.Background(), postgresConnString)
+	if err != nil {
+		log.Printf("Warning: Failed to create collaborator store: %v. Collaborator features disabled.", err)
+	} else {
+		collaboratorMgr := container.NewCollaboratorManager(containerServer.GetManager(), collabStore)
+		containerServer.SetCollaboratorManager(collaboratorMgr)
+		log.Printf("Collaborator management service enabled")
+	}
+
+	// Setup route persistence and Caddy sync (independent of app hosting).
+	// When app hosting is enabled, routeStore/routeSyncJob are already created above.
+	// When it's not, we still need them for the management route to work after VM recreation.
+	caddyAdminURL := config.CaddyAdminURL
+	if routeStore == nil && postgresConnString != "" && caddyAdminURL != "" && config.BaseDomain != "" {
+		pool, poolErr := pgxpool.New(context.Background(), postgresConnString)
+		if poolErr != nil {
+			log.Printf("Warning: Failed to connect to PostgreSQL for route store: %v", poolErr)
+		} else {
+			if err := pool.Ping(context.Background()); err != nil {
+				log.Printf("Warning: Failed to ping PostgreSQL for route store: %v", err)
+				pool.Close()
+			} else {
+				routeStore, err = app.NewRouteStore(context.Background(), pool)
+				if err != nil {
+					log.Printf("Warning: Failed to create route store: %v", err)
+					pool.Close()
+				} else {
+					proxyManager := app.NewProxyManager(caddyAdminURL, config.BaseDomain)
+					if err := proxyManager.EnsureServerConfig(); err != nil {
+						log.Printf("Warning: Failed to ensure Caddy server config: %v", err)
+					}
+					syncInterval := config.RouteSyncInterval
+					if syncInterval == 0 {
+						syncInterval = 5 * time.Second
+					}
+					routeSyncJob = app.NewRouteSyncJob(routeStore, proxyManager, syncInterval)
+					log.Printf("Route persistence enabled (standalone) with %v sync interval", syncInterval)
+
+					// Update NetworkServer so the /v1/network/routes API returns routes from PostgreSQL
+					if networkServer != nil {
+						networkServer.routeStore = routeStore
+						networkServer.proxyManager = proxyManager
+						networkServer.baseDomain = config.BaseDomain
+						log.Printf("Network service updated with route store (standalone)")
+					}
+				}
+			}
+		}
+	}
+
 	reflection.Register(grpcServer)
 
 	// Create gateway server if REST is enabled
@@ -314,18 +389,20 @@ skipAppHosting:
 	}
 
 	return &DualServer{
-		config:           config,
-		grpcServer:       grpcServer,
-		containerServer:  containerServer,
-		appServer:        appServer,
-		networkServer:    networkServer,
-		trafficServer:    trafficServer,
-		trafficCollector: trafficCollector,
-		gatewayServer:    gatewayServer,
-		tokenManager:     tokenManager,
-		authMiddleware:   authMiddleware,
-		routeStore:       routeStore,
-		routeSyncJob:     routeSyncJob,
+		config:            config,
+		grpcServer:        grpcServer,
+		containerServer:   containerServer,
+		appServer:         appServer,
+		networkServer:     networkServer,
+		trafficServer:     trafficServer,
+		trafficCollector:  trafficCollector,
+		gatewayServer:     gatewayServer,
+		tokenManager:      tokenManager,
+		authMiddleware:    authMiddleware,
+		routeStore:        routeStore,
+		routeSyncJob:      routeSyncJob,
+		collaboratorStore: collabStore,
+		daemonConfigStore: config.DaemonConfigStore,
 	}, nil
 }
 
@@ -342,6 +419,43 @@ func (ds *DualServer) Start(ctx context.Context) error {
 	if ds.routeSyncJob != nil {
 		ds.routeSyncJob.Start(ctx)
 		log.Printf("Route sync job started")
+	}
+
+	// Ensure management route persists in PostgreSQL (RouteSyncJob will push to Caddy)
+	if ds.routeStore != nil && ds.config.BaseDomain != "" && ds.config.HostIP != "" {
+		mgmtRoute := &app.RouteRecord{
+			Subdomain:   ds.config.BaseDomain,
+			FullDomain:  ds.config.BaseDomain,
+			TargetIP:    ds.config.HostIP,
+			TargetPort:  ds.config.HTTPPort,
+			Protocol:    "http",
+			Description: "Containarium management UI",
+			Active:      true,
+			CreatedBy:   "system",
+		}
+		if err := ds.routeStore.Save(ctx, mgmtRoute); err != nil {
+			log.Printf("Warning: Failed to ensure management route: %v", err)
+		} else {
+			log.Printf("Management route ensured: %s -> %s:%d", ds.config.BaseDomain, ds.config.HostIP, ds.config.HTTPPort)
+		}
+	}
+
+	// Persist current daemon config to PostgreSQL for future self-bootstrap
+	if ds.daemonConfigStore != nil {
+		configMap := map[string]string{
+			"base_domain":        ds.config.BaseDomain,
+			"http_port":          strconv.Itoa(ds.config.HTTPPort),
+			"grpc_port":          strconv.Itoa(ds.config.GRPCPort),
+			"listen_address":     ds.config.GRPCAddress,
+			"enable_rest":        strconv.FormatBool(ds.config.EnableREST),
+			"enable_mtls":        strconv.FormatBool(ds.config.EnableMTLS),
+			"enable_app_hosting": strconv.FormatBool(ds.config.EnableAppHosting),
+		}
+		if err := ds.daemonConfigStore.SetAll(ctx, configMap); err != nil {
+			log.Printf("Warning: Failed to save daemon config to PostgreSQL: %v", err)
+		} else {
+			log.Printf("Daemon config persisted to PostgreSQL")
+		}
 	}
 
 	// Start gRPC server
@@ -383,6 +497,9 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		}
 		if ds.trafficCollector != nil {
 			ds.trafficCollector.Stop()
+		}
+		if ds.collaboratorStore != nil {
+			ds.collaboratorStore.Close()
 		}
 		ds.grpcServer.GracefulStop()
 		return nil

@@ -272,41 +272,11 @@ setup_jwt_secret() {
 }
 
 create_systemd_service() {
-    log_info "Creating systemd service..."
+    log_info "Creating systemd service via 'containarium service install'..."
 
-    cat > /etc/systemd/system/containarium.service << 'EOF'
-[Unit]
-Description=Containarium Container Management Daemon
-Documentation=https://github.com/footprintai/containarium
-After=network-online.target incus.service
-Wants=network-online.target
-Requires=incus.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/containarium daemon --mtls
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-
-# Security
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=false
-ProtectHome=false
-ReadWritePaths=/etc/containarium
-
-# Environment
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Reload systemd
-    systemctl daemon-reload
+    # The binary manages its own service file, JWT secret generation,
+    # systemd reload, enable, and start — all in one command.
+    /usr/local/bin/containarium service install
 
     log_success "Systemd service created"
 }

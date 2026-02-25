@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/footprintai/containarium/internal/collaborator"
 	"github.com/footprintai/containarium/internal/container"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -422,7 +424,20 @@ func syncSSHAccounts() error {
 		restored++
 	}
 
-	fmt.Printf("  Summary: %d restored, %d skipped, %d failed\n", restored, skipped, failed)
+	fmt.Printf("  Owner accounts: %d restored, %d skipped, %d failed\n", restored, skipped, failed)
+
+	// Also sync collaborator accounts from PostgreSQL
+	fmt.Println("  Syncing collaborator accounts...")
+	collabStore, err := collaborator.NewStore(context.Background(), getPostgresConnString())
+	if err != nil {
+		fmt.Printf("  Warning: Could not connect to collaborator database: %v\n", err)
+	} else {
+		defer collabStore.Close()
+		collaboratorMgr := container.NewCollaboratorManager(mgr, collabStore)
+		cr, cs, cf := collaboratorMgr.SyncCollaboratorAccounts(verbose, false)
+		fmt.Printf("  Collaborator accounts: %d restored, %d skipped, %d failed\n", cr, cs, cf)
+	}
+
 	return nil
 }
 

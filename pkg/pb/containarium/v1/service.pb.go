@@ -26,7 +26,7 @@ var File_containarium_v1_service_proto protoreflect.FileDescriptor
 
 const file_containarium_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1dcontainarium/v1/service.proto\x12\x0fcontainarium.v1\x1a\x1fcontainarium/v1/container.proto\x1a\x1ccontainarium/v1/config.proto\x1a\x19containarium/v1/app.proto\x1a\x1dcontainarium/v1/network.proto\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto2\xe8\x19\n" +
+	"\x1dcontainarium/v1/service.proto\x12\x0fcontainarium.v1\x1a\x1fcontainarium/v1/container.proto\x1a\x1ccontainarium/v1/config.proto\x1a\x19containarium/v1/app.proto\x1a\x1dcontainarium/v1/network.proto\x1a\x1cgoogle/api/annotations.proto\x1a.protoc-gen-openapiv2/options/annotations.proto2\x97!\n" +
 	"\x10ContainerService\x12\xae\x02\n" +
 	"\x0fCreateContainer\x12'.containarium.v1.CreateContainerRequest\x1a(.containarium.v1.CreateContainerResponse\"\xc7\x01\x92A\xaa\x01\n" +
 	"\n" +
@@ -49,7 +49,13 @@ const file_containarium_v1_service_proto_rawDesc = "" +
 	"\tAddSSHKey\x12!.containarium.v1.AddSSHKeyRequest\x1a\".containarium.v1.AddSSHKeyResponse\"\xc5\x01\x92A\x94\x01\n" +
 	"\x0eSSH Management\x12\vAdd SSH key\x1auAdds an SSH public key to a container's authorized_keys file, allowing SSH access with the corresponding private key.\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/containers/{username}/ssh-keys\x12\xce\x02\n" +
 	"\fRemoveSSHKey\x12$.containarium.v1.RemoveSSHKeyRequest\x1a%.containarium.v1.RemoveSSHKeyResponse\"\xf0\x01\x92A\xb1\x01\n" +
-	"\x0eSSH Management\x12\x0eRemove SSH key\x1a\x8e\x01Removes an SSH public key from a container's authorized_keys file, revoking SSH access for that key. The ssh_public_key should be URL-encoded.\x82\xd3\xe4\x93\x025*3/v1/containers/{username}/ssh-keys/{ssh_public_key}\x12\xd2\x02\n" +
+	"\x0eSSH Management\x12\x0eRemove SSH key\x1a\x8e\x01Removes an SSH public key from a container's authorized_keys file, revoking SSH access for that key. The ssh_public_key should be URL-encoded.\x82\xd3\xe4\x93\x025*3/v1/containers/{username}/ssh-keys/{ssh_public_key}\x12\xdf\x02\n" +
+	"\x0fAddCollaborator\x12'.containarium.v1.AddCollaboratorRequest\x1a(.containarium.v1.AddCollaboratorResponse\"\xf8\x01\x92A\xbc\x01\n" +
+	"\rCollaborators\x12\x10Add collaborator\x1a\x98\x01Adds a collaborator to a container. The collaborator can SSH via ProxyJump and sudo su to the container owner with full session logging for audit trail.\x82\xd3\xe4\x93\x022:\x01*\"-/v1/containers/{owner_username}/collaborators\x12\xc8\x02\n" +
+	"\x12RemoveCollaborator\x12*.containarium.v1.RemoveCollaboratorRequest\x1a+.containarium.v1.RemoveCollaboratorResponse\"\xd8\x01\x92A\x87\x01\n" +
+	"\rCollaborators\x12\x13Remove collaborator\x1aaRemoves a collaborator's access to a container, deleting both jump server and container accounts.\x82\xd3\xe4\x93\x02G*E/v1/containers/{owner_username}/collaborators/{collaborator_username}\x12\xff\x01\n" +
+	"\x11ListCollaborators\x12).containarium.v1.ListCollaboratorsRequest\x1a*.containarium.v1.ListCollaboratorsResponse\"\x92\x01\x92AZ\n" +
+	"\rCollaborators\x12\x12List collaborators\x1a5Returns all collaborators with access to a container.\x82\xd3\xe4\x93\x02/\x12-/v1/containers/{owner_username}/collaborators\x12\xd2\x02\n" +
 	"\n" +
 	"GetMetrics\x12\".containarium.v1.GetMetricsRequest\x1a#.containarium.v1.GetMetricsResponse\"\xfa\x01\x92A\xc9\x01\n" +
 	"\n" +
@@ -67,28 +73,34 @@ const file_containarium_v1_service_proto_rawDesc = "" +
 	"\x06bearer\x12\x00ZIgithub.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1b\x06proto3"
 
 var file_containarium_v1_service_proto_goTypes = []any{
-	(*CreateContainerRequest)(nil),  // 0: containarium.v1.CreateContainerRequest
-	(*ListContainersRequest)(nil),   // 1: containarium.v1.ListContainersRequest
-	(*GetContainerRequest)(nil),     // 2: containarium.v1.GetContainerRequest
-	(*DeleteContainerRequest)(nil),  // 3: containarium.v1.DeleteContainerRequest
-	(*StartContainerRequest)(nil),   // 4: containarium.v1.StartContainerRequest
-	(*StopContainerRequest)(nil),    // 5: containarium.v1.StopContainerRequest
-	(*ResizeContainerRequest)(nil),  // 6: containarium.v1.ResizeContainerRequest
-	(*AddSSHKeyRequest)(nil),        // 7: containarium.v1.AddSSHKeyRequest
-	(*RemoveSSHKeyRequest)(nil),     // 8: containarium.v1.RemoveSSHKeyRequest
-	(*GetMetricsRequest)(nil),       // 9: containarium.v1.GetMetricsRequest
-	(*GetSystemInfoRequest)(nil),    // 10: containarium.v1.GetSystemInfoRequest
-	(*CreateContainerResponse)(nil), // 11: containarium.v1.CreateContainerResponse
-	(*ListContainersResponse)(nil),  // 12: containarium.v1.ListContainersResponse
-	(*GetContainerResponse)(nil),    // 13: containarium.v1.GetContainerResponse
-	(*DeleteContainerResponse)(nil), // 14: containarium.v1.DeleteContainerResponse
-	(*StartContainerResponse)(nil),  // 15: containarium.v1.StartContainerResponse
-	(*StopContainerResponse)(nil),   // 16: containarium.v1.StopContainerResponse
-	(*ResizeContainerResponse)(nil), // 17: containarium.v1.ResizeContainerResponse
-	(*AddSSHKeyResponse)(nil),       // 18: containarium.v1.AddSSHKeyResponse
-	(*RemoveSSHKeyResponse)(nil),    // 19: containarium.v1.RemoveSSHKeyResponse
-	(*GetMetricsResponse)(nil),      // 20: containarium.v1.GetMetricsResponse
-	(*GetSystemInfoResponse)(nil),   // 21: containarium.v1.GetSystemInfoResponse
+	(*CreateContainerRequest)(nil),     // 0: containarium.v1.CreateContainerRequest
+	(*ListContainersRequest)(nil),      // 1: containarium.v1.ListContainersRequest
+	(*GetContainerRequest)(nil),        // 2: containarium.v1.GetContainerRequest
+	(*DeleteContainerRequest)(nil),     // 3: containarium.v1.DeleteContainerRequest
+	(*StartContainerRequest)(nil),      // 4: containarium.v1.StartContainerRequest
+	(*StopContainerRequest)(nil),       // 5: containarium.v1.StopContainerRequest
+	(*ResizeContainerRequest)(nil),     // 6: containarium.v1.ResizeContainerRequest
+	(*AddSSHKeyRequest)(nil),           // 7: containarium.v1.AddSSHKeyRequest
+	(*RemoveSSHKeyRequest)(nil),        // 8: containarium.v1.RemoveSSHKeyRequest
+	(*AddCollaboratorRequest)(nil),     // 9: containarium.v1.AddCollaboratorRequest
+	(*RemoveCollaboratorRequest)(nil),  // 10: containarium.v1.RemoveCollaboratorRequest
+	(*ListCollaboratorsRequest)(nil),   // 11: containarium.v1.ListCollaboratorsRequest
+	(*GetMetricsRequest)(nil),          // 12: containarium.v1.GetMetricsRequest
+	(*GetSystemInfoRequest)(nil),       // 13: containarium.v1.GetSystemInfoRequest
+	(*CreateContainerResponse)(nil),    // 14: containarium.v1.CreateContainerResponse
+	(*ListContainersResponse)(nil),     // 15: containarium.v1.ListContainersResponse
+	(*GetContainerResponse)(nil),       // 16: containarium.v1.GetContainerResponse
+	(*DeleteContainerResponse)(nil),    // 17: containarium.v1.DeleteContainerResponse
+	(*StartContainerResponse)(nil),     // 18: containarium.v1.StartContainerResponse
+	(*StopContainerResponse)(nil),      // 19: containarium.v1.StopContainerResponse
+	(*ResizeContainerResponse)(nil),    // 20: containarium.v1.ResizeContainerResponse
+	(*AddSSHKeyResponse)(nil),          // 21: containarium.v1.AddSSHKeyResponse
+	(*RemoveSSHKeyResponse)(nil),       // 22: containarium.v1.RemoveSSHKeyResponse
+	(*AddCollaboratorResponse)(nil),    // 23: containarium.v1.AddCollaboratorResponse
+	(*RemoveCollaboratorResponse)(nil), // 24: containarium.v1.RemoveCollaboratorResponse
+	(*ListCollaboratorsResponse)(nil),  // 25: containarium.v1.ListCollaboratorsResponse
+	(*GetMetricsResponse)(nil),         // 26: containarium.v1.GetMetricsResponse
+	(*GetSystemInfoResponse)(nil),      // 27: containarium.v1.GetSystemInfoResponse
 }
 var file_containarium_v1_service_proto_depIdxs = []int32{
 	0,  // 0: containarium.v1.ContainerService.CreateContainer:input_type -> containarium.v1.CreateContainerRequest
@@ -100,21 +112,27 @@ var file_containarium_v1_service_proto_depIdxs = []int32{
 	6,  // 6: containarium.v1.ContainerService.ResizeContainer:input_type -> containarium.v1.ResizeContainerRequest
 	7,  // 7: containarium.v1.ContainerService.AddSSHKey:input_type -> containarium.v1.AddSSHKeyRequest
 	8,  // 8: containarium.v1.ContainerService.RemoveSSHKey:input_type -> containarium.v1.RemoveSSHKeyRequest
-	9,  // 9: containarium.v1.ContainerService.GetMetrics:input_type -> containarium.v1.GetMetricsRequest
-	10, // 10: containarium.v1.ContainerService.GetSystemInfo:input_type -> containarium.v1.GetSystemInfoRequest
-	11, // 11: containarium.v1.ContainerService.CreateContainer:output_type -> containarium.v1.CreateContainerResponse
-	12, // 12: containarium.v1.ContainerService.ListContainers:output_type -> containarium.v1.ListContainersResponse
-	13, // 13: containarium.v1.ContainerService.GetContainer:output_type -> containarium.v1.GetContainerResponse
-	14, // 14: containarium.v1.ContainerService.DeleteContainer:output_type -> containarium.v1.DeleteContainerResponse
-	15, // 15: containarium.v1.ContainerService.StartContainer:output_type -> containarium.v1.StartContainerResponse
-	16, // 16: containarium.v1.ContainerService.StopContainer:output_type -> containarium.v1.StopContainerResponse
-	17, // 17: containarium.v1.ContainerService.ResizeContainer:output_type -> containarium.v1.ResizeContainerResponse
-	18, // 18: containarium.v1.ContainerService.AddSSHKey:output_type -> containarium.v1.AddSSHKeyResponse
-	19, // 19: containarium.v1.ContainerService.RemoveSSHKey:output_type -> containarium.v1.RemoveSSHKeyResponse
-	20, // 20: containarium.v1.ContainerService.GetMetrics:output_type -> containarium.v1.GetMetricsResponse
-	21, // 21: containarium.v1.ContainerService.GetSystemInfo:output_type -> containarium.v1.GetSystemInfoResponse
-	11, // [11:22] is the sub-list for method output_type
-	0,  // [0:11] is the sub-list for method input_type
+	9,  // 9: containarium.v1.ContainerService.AddCollaborator:input_type -> containarium.v1.AddCollaboratorRequest
+	10, // 10: containarium.v1.ContainerService.RemoveCollaborator:input_type -> containarium.v1.RemoveCollaboratorRequest
+	11, // 11: containarium.v1.ContainerService.ListCollaborators:input_type -> containarium.v1.ListCollaboratorsRequest
+	12, // 12: containarium.v1.ContainerService.GetMetrics:input_type -> containarium.v1.GetMetricsRequest
+	13, // 13: containarium.v1.ContainerService.GetSystemInfo:input_type -> containarium.v1.GetSystemInfoRequest
+	14, // 14: containarium.v1.ContainerService.CreateContainer:output_type -> containarium.v1.CreateContainerResponse
+	15, // 15: containarium.v1.ContainerService.ListContainers:output_type -> containarium.v1.ListContainersResponse
+	16, // 16: containarium.v1.ContainerService.GetContainer:output_type -> containarium.v1.GetContainerResponse
+	17, // 17: containarium.v1.ContainerService.DeleteContainer:output_type -> containarium.v1.DeleteContainerResponse
+	18, // 18: containarium.v1.ContainerService.StartContainer:output_type -> containarium.v1.StartContainerResponse
+	19, // 19: containarium.v1.ContainerService.StopContainer:output_type -> containarium.v1.StopContainerResponse
+	20, // 20: containarium.v1.ContainerService.ResizeContainer:output_type -> containarium.v1.ResizeContainerResponse
+	21, // 21: containarium.v1.ContainerService.AddSSHKey:output_type -> containarium.v1.AddSSHKeyResponse
+	22, // 22: containarium.v1.ContainerService.RemoveSSHKey:output_type -> containarium.v1.RemoveSSHKeyResponse
+	23, // 23: containarium.v1.ContainerService.AddCollaborator:output_type -> containarium.v1.AddCollaboratorResponse
+	24, // 24: containarium.v1.ContainerService.RemoveCollaborator:output_type -> containarium.v1.RemoveCollaboratorResponse
+	25, // 25: containarium.v1.ContainerService.ListCollaborators:output_type -> containarium.v1.ListCollaboratorsResponse
+	26, // 26: containarium.v1.ContainerService.GetMetrics:output_type -> containarium.v1.GetMetricsResponse
+	27, // 27: containarium.v1.ContainerService.GetSystemInfo:output_type -> containarium.v1.GetSystemInfoResponse
+	14, // [14:28] is the sub-list for method output_type
+	0,  // [0:14] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name

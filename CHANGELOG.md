@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Collaborator permission levels** — fine-grained access control when adding collaborators
+  - `--sudo` flag grants full sudo access (`ALL=(ALL) NOPASSWD: ALL`) instead of restricted `su - owner`
+  - `--container-runtime` flag adds collaborator to docker/podman groups for container runtime access
+  - New proto fields: `grant_sudo`, `grant_container_runtime` on `AddCollaboratorRequest`; `has_sudo`, `has_container_runtime` on `Collaborator`
+  - PostgreSQL schema migration adds `has_sudo` and `has_container_runtime` columns
+  - Web UI: checkboxes in Add Collaborator form, permission badges (sudo/docker chips) in collaborator table
+  - CLI: `containarium collaborator add alice bob --ssh-key bob.pub --sudo --container-runtime`
+- **Docker CE software stack** — proper Docker installation as a stack option
+  - New `docker` stack in `configs/stacks.yaml` with Docker CE apt repository setup
+  - Installs `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-compose-plugin`
+  - Automatically adds user to `docker` group when docker stack is selected
+  - Web UI: Docker Development option in stack selection dropdown
+- **Stack pre-install commands** — `pre_install` field in Stack struct for commands that run as root before `apt-get install` (e.g., adding apt repositories)
+- **Daemon config persistence in PostgreSQL** for self-bootstrapping after VM recreation
+  - New `daemon_config` key-value table stores: `base_domain`, `http_port`, `grpc_port`, `listen_address`, `enable_mtls`, `enable_rest`, `enable_app_hosting`
+  - Auto-detect PostgreSQL container IP from Incus (`containarium-core-postgres`) — no `--postgres` flag needed
+  - On startup, loads saved config from DB; CLI flags always override DB values (`cmd.Flags().Changed()`)
+  - On successful start, saves current config back to DB for next boot
+  - New `DaemonConfigStore` in `internal/app/daemon_config_store.go` with `Get`, `Set`, `GetAll`, `SetAll` methods
+  - Systemd service reduced from 6 flags to 2: `--rest --jwt-secret-file /etc/containarium/jwt.secret`
+  - JWT secret intentionally kept out of PostgreSQL (remains on filesystem)
+- **`containarium service install` command** for single-command systemd service setup
+  - Writes the canonical service file with correct `ReadWritePaths` (includes `/var/lock` for useradd flock)
+  - Generates JWT secret file if it doesn't exist
+  - Enables and starts the service automatically
+  - Replaces inline heredocs in `hacks/install.sh`, `terraform/gce/scripts/startup.sh`, and `startup-spot.sh`
+  - Also: `containarium service status` and `containarium service uninstall`
+- **AppServer graceful degradation** — `/v1/apps` returns empty list instead of 501 when app hosting is disabled
+- Collaborator management for containers (add/remove/list collaborators)
+
+### Fixed
+- **Route domain doubling in Caddy**: Routes with independent FQDNs (e.g., `api.kafeido.app`) were incorrectly getting the base domain appended (`api.kafeido.app.containarium.kafeido.app`), causing TLS and routing failures. Fixed `ProxyManager.addRouteWithProtocol()` to only append base domain for simple subdomains (no dots), leaving FQDNs as-is.
+- **Routes API returning empty when app-hosting disabled**: The `/v1/network/routes` endpoint returned no routes because the standalone route store (created when `--app-hosting` is off) was never assigned to `NetworkServer`. Routes existed in PostgreSQL and synced to Caddy correctly, but the API couldn't serve them.
+- **Route sync loop churning every 5 seconds**: The domain doubling bug caused a perpetual add/remove cycle (`+4 added, -4 removed` every tick) because Caddy's doubled domains never matched PostgreSQL's correct domains.
+- **Useradd lock file on read-only filesystem**: `flock /var/lock/containarium-useradd.lock` failed with `ProtectSystem=strict` because `/var/lock` was not in `ReadWritePaths`. Now included in the canonical service template.
+- Force remove agent when creating user container
+- Persist Caddy route records into PostgreSQL as single source of truth
+- Startup deadlock
+
 ## [0.6.0] - 2026-02-15
 
 ### Added

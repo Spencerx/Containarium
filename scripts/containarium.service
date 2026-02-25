@@ -7,28 +7,28 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/containarium daemon --address 0.0.0.0 --port 50051
+ExecStart=/usr/local/bin/containarium daemon \
+  --rest \
+  --jwt-secret-file /etc/containarium/jwt.secret
 Restart=on-failure
 RestartSec=5s
 User=root
 Group=root
 
-# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-# /etc - for creating jump server users (useradd needs to create lock files)
+# /etc - for creating jump server users (useradd needs to modify /etc/passwd)
 # /home - for creating user home directories and SSH keys
 # /var/lib/incus - for container management
-ReadWritePaths=/var/lib/incus /etc /home
+# /var/lock, /run/lock - for useradd flock serialization
+ReadWritePaths=/var/lib/incus /etc/containarium /etc /home /var/lock /run/lock
 
-# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=containarium
 
-# Resource limits (optional)
 LimitNOFILE=65536
 LimitNPROC=4096
 

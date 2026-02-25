@@ -30,8 +30,16 @@ func NewAppServer(manager *app.Manager, store app.AppStore) *AppServer {
 	}
 }
 
+// isDisabled returns true when app hosting is not configured
+func (s *AppServer) isDisabled() bool {
+	return s.store == nil || s.manager == nil
+}
+
 // DeployApp deploys a new application or updates an existing one
 func (s *AppServer) DeployApp(ctx context.Context, req *pb.DeployAppRequest) (*pb.DeployAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	// Validate request
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
@@ -61,6 +69,9 @@ func (s *AppServer) DeployApp(ctx context.Context, req *pb.DeployAppRequest) (*p
 
 // ListApps lists all applications for a user
 func (s *AppServer) ListApps(ctx context.Context, req *pb.ListAppsRequest) (*pb.ListAppsResponse, error) {
+	if s.isDisabled() {
+		return &pb.ListAppsResponse{Apps: nil, TotalCount: 0}, nil
+	}
 	apps, err := s.store.List(ctx, req.Username, req.StateFilter)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list apps: %v", err)
@@ -79,6 +90,9 @@ func (s *AppServer) ListApps(ctx context.Context, req *pb.ListAppsRequest) (*pb.
 
 // GetApp gets details for a specific application
 func (s *AppServer) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
 	}
@@ -101,6 +115,9 @@ func (s *AppServer) GetApp(ctx context.Context, req *pb.GetAppRequest) (*pb.GetA
 
 // StopApp stops a running application
 func (s *AppServer) StopApp(ctx context.Context, req *pb.StopAppRequest) (*pb.StopAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
 	}
@@ -124,6 +141,9 @@ func (s *AppServer) StopApp(ctx context.Context, req *pb.StopAppRequest) (*pb.St
 
 // StartApp starts a stopped application
 func (s *AppServer) StartApp(ctx context.Context, req *pb.StartAppRequest) (*pb.StartAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
 	}
@@ -147,6 +167,9 @@ func (s *AppServer) StartApp(ctx context.Context, req *pb.StartAppRequest) (*pb.
 
 // RestartApp restarts an application
 func (s *AppServer) RestartApp(ctx context.Context, req *pb.RestartAppRequest) (*pb.RestartAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
 	}
@@ -167,6 +190,9 @@ func (s *AppServer) RestartApp(ctx context.Context, req *pb.RestartAppRequest) (
 
 // DeleteApp deletes an application
 func (s *AppServer) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*pb.DeleteAppResponse, error) {
+	if s.isDisabled() {
+		return nil, status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "username is required")
 	}
@@ -198,6 +224,9 @@ func (s *AppServer) DeleteApp(ctx context.Context, req *pb.DeleteAppRequest) (*p
 
 // GetAppLogs gets application logs (streaming)
 func (s *AppServer) GetAppLogs(req *pb.GetAppLogsRequest, stream pb.AppService_GetAppLogsServer) error {
+	if s.isDisabled() {
+		return status.Errorf(codes.Unavailable, "app hosting is not enabled")
+	}
 	if req.Username == "" {
 		return status.Errorf(codes.InvalidArgument, "username is required")
 	}

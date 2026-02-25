@@ -22,6 +22,7 @@ import TerminalIcon from '@mui/icons-material/Terminal';
 import SecurityIcon from '@mui/icons-material/Security';
 import LabelIcon from '@mui/icons-material/Label';
 import TuneIcon from '@mui/icons-material/Tune';
+import PeopleIcon from '@mui/icons-material/People';
 import { Container, ContainerState, ContainerMetricsWithRate } from '@/src/types/container';
 
 interface ContainerListViewProps {
@@ -34,6 +35,7 @@ interface ContainerListViewProps {
   onEditFirewall?: (username: string) => void;
   onEditLabels?: (username: string, labels: Record<string, string>) => void;
   onResize?: (username: string, currentResources: { cpu: string; memory: string; disk: string }) => void;
+  onManageCollaborators?: (username: string) => void;
 }
 
 /**
@@ -127,6 +129,7 @@ export default function ContainerListView({
   onEditFirewall,
   onEditLabels,
   onResize,
+  onManageCollaborators,
 }: ContainerListViewProps) {
   return (
     <TableContainer component={Paper} variant="outlined">
@@ -288,6 +291,13 @@ export default function ContainerListView({
                           })}
                         >
                           <TuneIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {isRunning && onManageCollaborators && (
+                      <Tooltip title="Collaborators">
+                        <IconButton size="small" color="secondary" onClick={() => onManageCollaborators(username)}>
+                          <PeopleIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                     )}

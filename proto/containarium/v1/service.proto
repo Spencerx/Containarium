@@ -163,6 +163,43 @@ service ContainerService {
     };
   }
 
+  // AddCollaborator adds a collaborator to a container
+  rpc AddCollaborator(AddCollaboratorRequest) returns (AddCollaboratorResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers/{owner_username}/collaborators"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Add collaborator";
+      description: "Adds a collaborator to a container. The collaborator can SSH via ProxyJump and sudo su to the container owner with full session logging for audit trail.";
+      tags: "Collaborators";
+    };
+  }
+
+  // RemoveCollaborator removes a collaborator from a container
+  rpc RemoveCollaborator(RemoveCollaboratorRequest) returns (RemoveCollaboratorResponse) {
+    option (google.api.http) = {
+      delete: "/v1/containers/{owner_username}/collaborators/{collaborator_username}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Remove collaborator";
+      description: "Removes a collaborator's access to a container, deleting both jump server and container accounts.";
+      tags: "Collaborators";
+    };
+  }
+
+  // ListCollaborators lists all collaborators for a container
+  rpc ListCollaborators(ListCollaboratorsRequest) returns (ListCollaboratorsResponse) {
+    option (google.api.http) = {
+      get: "/v1/containers/{owner_username}/collaborators"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List collaborators";
+      description: "Returns all collaborators with access to a container.";
+      tags: "Collaborators";
+    };
+  }
+
   // GetMetrics gets runtime metrics for containers
   rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {
     option (google.api.http) = {
