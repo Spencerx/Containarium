@@ -135,9 +135,10 @@ resource "google_compute_instance" "jump_server" {
 
 # Copy containarium binary to server (if binary_url is empty)
 # SECURITY FIX: Uses configurable ssh_private_key_path instead of hardcoded path
+# When sentinel is enabled, binary_url is required (sentinel VM has no direct SSH from provisioner)
 resource "null_resource" "copy_containarium_binary" {
-  # Only run if: daemon enabled, no binary URL provided, and SSH key path is configured
-  count = var.enable_containarium_daemon && var.containarium_binary_url == "" && var.ssh_private_key_path != "" ? 1 : 0
+  # Only run if: daemon enabled, no binary URL provided, SSH key configured, and sentinel NOT enabled
+  count = var.enable_containarium_daemon && var.containarium_binary_url == "" && var.ssh_private_key_path != "" && !local.use_sentinel ? 1 : 0
 
   depends_on = [
     google_compute_instance.jump_server_spot,

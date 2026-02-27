@@ -27,8 +27,8 @@ variable "machine_type" {
   default     = "n2-standard-8" # 8 vCPU, 32GB RAM - can host 50+ containers
 
   validation {
-    condition     = can(regex("^(n2|n2d|e2|n1|c4)-(standard|highmem|highcpu)-[0-9]+$", var.machine_type))
-    error_message = "Must be a valid GCE machine type"
+    condition     = can(regex("^(n1|n2|n2d|n4|e2|c3|c3d|c4|c4a)-(standard|highmem|highcpu)-[0-9]+$", var.machine_type))
+    error_message = "Must be a valid GCE machine type (e.g., c3d-highmem-8, n2-standard-4)"
   }
 }
 
@@ -232,4 +232,41 @@ variable "ssh_private_key_path" {
   # SECURITY NOTE: Never commit private keys to version control.
   # Set this via terraform.tfvars or environment variable:
   # export TF_VAR_ssh_private_key_path="~/.ssh/id_ed25519"
+}
+
+# Sentinel HA Configuration
+
+variable "enable_sentinel" {
+  description = "Enable sentinel HA proxy for spot instance recovery (requires use_spot_instance=true)"
+  type        = bool
+  default     = false
+}
+
+variable "sentinel_region" {
+  description = "GCP region for sentinel VM (us-west1, us-central1, or us-east1 for free tier)"
+  type        = string
+  default     = "us-west1"
+}
+
+variable "sentinel_zone" {
+  description = "GCP zone for sentinel VM"
+  type        = string
+  default     = "us-west1-b"
+}
+
+variable "sentinel_machine_type" {
+  description = "Machine type for the sentinel VM (e2-micro for free tier)"
+  type        = string
+  default     = "e2-micro"
+}
+
+variable "sentinel_boot_disk_size" {
+  description = "Boot disk size for sentinel VM in GB (up to 30GB for free tier)"
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.sentinel_boot_disk_size >= 10 && var.sentinel_boot_disk_size <= 100
+    error_message = "Sentinel boot disk size must be between 10 and 100 GB"
+  }
 }

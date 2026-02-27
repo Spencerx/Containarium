@@ -1,6 +1,8 @@
 # Horizontal Scaling Architecture Guide
 
-This document explains the two different horizontal scaling architectures and how SSH jumping works in each.
+This document explains horizontal scaling architectures and how SSH jumping works in each.
+
+> **Recommended for production:** Use the **Sentinel** architecture, where a single always-on sentinel VM fronts multiple spot VMs. The sentinel handles HA recovery, traffic forwarding, and TLS cert sync. See [SENTINEL-DESIGN.md](SENTINEL-DESIGN.md) for the full design. The approaches below describe legacy architectures without sentinel.
 
 ## Table of Contents
 

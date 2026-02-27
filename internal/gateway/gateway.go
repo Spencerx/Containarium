@@ -28,13 +28,14 @@ type GatewayServer struct {
 	authMiddleware  *auth.AuthMiddleware
 	swaggerDir      string
 	certsDir        string // Optional: for mTLS connection to gRPC server
+	caddyCertDir    string // Optional: Caddy certificate directory for /certs endpoint
 	terminalHandler *TerminalHandler
 	labelHandler    *LabelHandler
 	eventHandler    *EventHandler
 }
 
 // NewGatewayServer creates a new gateway server
-func NewGatewayServer(grpcAddress string, httpPort int, authMiddleware *auth.AuthMiddleware, swaggerDir string, certsDir string) *GatewayServer {
+func NewGatewayServer(grpcAddress string, httpPort int, authMiddleware *auth.AuthMiddleware, swaggerDir string, certsDir string, caddyCertDir string) *GatewayServer {
 	// Try to create terminal handler (may fail if Incus not available)
 	terminalHandler, err := NewTerminalHandler()
 	if err != nil {
@@ -56,6 +57,7 @@ func NewGatewayServer(grpcAddress string, httpPort int, authMiddleware *auth.Aut
 		authMiddleware:  authMiddleware,
 		swaggerDir:      swaggerDir,
 		certsDir:        certsDir,
+		caddyCertDir:    caddyCertDir,
 		terminalHandler: terminalHandler,
 		labelHandler:    labelHandler,
 		eventHandler:    eventHandler,
@@ -251,6 +253,9 @@ func (gs *GatewayServer) Start(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"healthy"}`))
 	})
+
+	// Cert export endpoint (no auth — only reachable within VPC)
+	httpMux.HandleFunc("/certs", ServeCerts(gs.caddyCertDir))
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", gs.httpPort)

@@ -1,6 +1,6 @@
 output "jump_server_ip" {
-  description = "Public IP address of the jump server"
-  value       = google_compute_address.jump_server_ip.address
+  description = "Public IP address (sentinel IP when sentinel is enabled)"
+  value       = local.use_sentinel ? google_compute_address.sentinel_ip[0].address : google_compute_address.jump_server_ip.address
 }
 
 output "jump_server_name" {
@@ -15,7 +15,7 @@ output "jump_server_zone" {
 
 output "ssh_command" {
   description = "SSH command to connect to the jump server"
-  value       = "ssh admin@${google_compute_address.jump_server_ip.address}"
+  value       = local.use_sentinel ? "ssh admin@${google_compute_address.sentinel_ip[0].address}" : "ssh admin@${google_compute_address.jump_server_ip.address}"
 }
 
 output "ssh_config_snippet" {
@@ -160,6 +160,33 @@ output "capacity_info" {
 
 # Containarium Daemon Outputs
 
+# Sentinel HA Outputs
+
+output "sentinel_enabled" {
+  description = "Whether sentinel HA is enabled"
+  value       = local.use_sentinel
+}
+
+output "sentinel_vm_name" {
+  description = "Name of the sentinel VM instance"
+  value       = local.use_sentinel ? google_compute_instance.sentinel[0].name : null
+}
+
+output "sentinel_ip" {
+  description = "Public IP of the sentinel VM"
+  value       = local.use_sentinel ? google_compute_address.sentinel_ip[0].address : null
+}
+
+output "sentinel_zone" {
+  description = "Zone of the sentinel VM"
+  value       = local.use_sentinel ? var.sentinel_zone : null
+}
+
+output "spot_vm_internal_ip" {
+  description = "Internal IP of the spot VM (used by sentinel for forwarding)"
+  value       = local.use_sentinel && var.use_spot_instance ? google_compute_instance.jump_server_spot[0].network_interface[0].network_ip : null
+}
+
 output "daemon_enabled" {
   description = "Whether Containarium gRPC daemon is enabled"
   value       = var.enable_containarium_daemon
@@ -167,12 +194,12 @@ output "daemon_enabled" {
 
 output "daemon_endpoint" {
   description = "gRPC daemon endpoint (host:port)"
-  value       = var.enable_containarium_daemon ? "${google_compute_address.jump_server_ip.address}:50051" : "Not enabled"
+  value       = var.enable_containarium_daemon ? "${local.use_sentinel ? google_compute_address.sentinel_ip[0].address : google_compute_address.jump_server_ip.address}:50051" : "Not enabled"
 }
 
 output "daemon_test_commands" {
   description = "Commands to test the gRPC daemon"
-  value = var.enable_containarium_daemon ? "grpcurl -plaintext ${google_compute_address.jump_server_ip.address}:50051 list" : "Daemon not enabled"
+  value = var.enable_containarium_daemon ? "grpcurl -plaintext ${local.use_sentinel ? google_compute_address.sentinel_ip[0].address : google_compute_address.jump_server_ip.address}:50051 list" : "Daemon not enabled"
 }
 
 # Simplified aliases for E2E testing
