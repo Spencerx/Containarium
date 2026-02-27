@@ -93,13 +93,15 @@ resource "google_compute_instance" "jump_server_spot" {
 
 ### Handling Spot Termination
 
-**Automatic Recovery**:
+> **With Sentinel HA**, recovery is automatic with ~85s downtime and a maintenance page for users. See [SENTINEL-DESIGN.md](SENTINEL-DESIGN.md).
+
+**Without sentinel — automatic recovery**:
 1. Systemd service auto-starts Incus on boot
 2. Containers auto-restart (configured in startup script)
 3. Network IPs preserved (Incus DHCP on persistent disk)
 4. SSH access resumes automatically
 
-**Downtime**:
+**Downtime (without sentinel)**:
 - Typical termination → restart: **2-5 minutes**
 - Containers pause during VM restart
 - SSH connections drop and must reconnect
@@ -348,7 +350,9 @@ incus launch ubuntu:24.04 alice-container
 
 ## High Availability Setup
 
-### 2-Node HA with Persistent Disks
+> **Recommended:** Use the **Sentinel HA** architecture for production spot instance deployments. The sentinel is a tiny always-on VM that monitors spot VMs, auto-restarts them on preemption (~85s recovery), and serves a maintenance page during outages. One sentinel can front multiple spot VMs. See [SENTINEL-DESIGN.md](SENTINEL-DESIGN.md) for the full design.
+
+### Legacy: 2-Node HA with Persistent Disks
 
 **Architecture**:
 ```
@@ -406,9 +410,9 @@ incus launch ubuntu:24.04 alice-container
 | Your Situation | Recommendation |
 |----------------|----------------|
 | **< 30 users, tight budget** | Single spot VM + persistent disk |
-| **30-80 users, can tolerate brief downtime** | Single regular VM, vertical scale as needed |
-| **80-200 users, need reliability** | 3x spot VMs (horizontal) + load balancer |
-| **200-500 users, need HA** | 5x regular VMs + load balancer |
+| **30-80 users, production** | Sentinel + spot VM ([SENTINEL-DESIGN.md](SENTINEL-DESIGN.md)) |
+| **80-200 users, need reliability** | Sentinel + multiple spot VMs (horizontal) |
+| **200-500 users, need HA** | Sentinel + multiple spot VMs + load balancer |
 | **500+ users, enterprise** | Incus cluster with Ceph storage |
 
 ---

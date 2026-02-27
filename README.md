@@ -154,6 +154,15 @@ Developer Laptop
   - Spot/preemptible instance termination
 - Backed by ZFS persistent disks
 
+🛡️ Sentinel HA (Spot Instance Recovery)
+
+- One tiny always-on VM (e2-micro, free tier) monitors multiple spot VMs
+- Detects preemption in ~10s, serves maintenance page instantly
+- Restarts spot VMs automatically — ~85s total recovery (vs ~9min with MIG)
+- Syncs TLS certificates for valid HTTPS during maintenance
+- Scales horizontally: add more spot VMs behind the same sentinel
+- See [docs/SENTINEL-DESIGN.md](docs/SENTINEL-DESIGN.md) for the full design
+
 ⚙️ Simple Management
 
 - Single Go binary
@@ -480,39 +489,33 @@ Containarium provides a multi-layer architecture combining cloud infrastructure,
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                          Users (SSH)                             │
+│                    Users (SSH / HTTP / gRPC)                      │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   GCE Load Balancer (Optional)                   │
-│                   • SSH Traffic Distribution                     │
-│                   • Health Checks (Port 22)                      │
-│                   • Session Affinity                             │
+│               Sentinel VM (e2-micro, always-on)                  │
+│               • Owns static public IP                            │
+│               • iptables DNAT → spot VMs (normal)                │
+│               • Maintenance page + status (preemption)           │
+│               • Auto-restarts spot VMs on preemption             │
+│               • TLS cert sync for valid HTTPS                    │
+│               • Mgmt SSH: port 2222                              │
 └────────────────────────────┬────────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│   Jump Server 1  │  │   Jump Server 2  │  │   Jump Server 3  │
-│  (Spot Instance) │  │  (Spot Instance) │  │  (Spot Instance) │
-├──────────────────┤  ├──────────────────┤  ├──────────────────┤
-│ • Debian 12      │  │ • Debian 12      │  │ • Debian 12      │
-│ • Incus LXC      │  │ • Incus LXC      │  │ • Incus LXC      │
-│ • ZFS Storage    │  │ • ZFS Storage    │  │ • ZFS Storage    │
-│ • Containarium   │  │ • Containarium   │  │ • Containarium   │
-└────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
-         │                     │                     │
-         ▼                     ▼                     ▼
-  ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-  │ Persistent  │       │ Persistent  │       │ Persistent  │
-  │ Disk (ZFS)  │       │ Disk (ZFS)  │       │ Disk (ZFS)  │
-  └─────────────┘       └─────────────┘       └─────────────┘
-         │                     │                     │
-    ┌────┴────┐           ┌────┴────┐           ┌────┴────┐
-    ▼    ▼    ▼           ▼    ▼    ▼           ▼    ▼    ▼
-  [C1] [C2] [C3]...     [C1] [C2] [C3]...     [C1] [C2] [C3]...
-  50 Containers         50 Containers         50 Containers
+                             │ VPC internal
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+│ Spot VM 1        │ │ Spot VM 2        │ │ Spot VM N        │
+│ • Incus + ZFS    │ │ • Incus + ZFS    │ │ • Incus + ZFS    │
+│ • Caddy (TLS)    │ │ • Caddy (TLS)    │ │ • Caddy (TLS)    │
+│ • Containarium   │ │ • Containarium   │ │ • Containarium   │
+│ • No external IP │ │ • No external IP │ │ • No external IP │
+└────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
+         ▼                    ▼                    ▼
+  Persistent Disk      Persistent Disk      Persistent Disk
+  (ZFS pool)           (ZFS pool)           (ZFS pool)
+    50 containers        50 containers        50 containers
 ```
 
 ### Architecture Layers
@@ -520,8 +523,8 @@ Containarium provides a multi-layer architecture combining cloud infrastructure,
 #### 1. **Infrastructure Layer** (Terraform + GCE)
 - **Compute**: Spot instances with persistent disks
 - **Storage**: ZFS on dedicated persistent disks (survives termination)
-- **Network**: VPC with firewall rules, optional load balancer
-- **HA**: Auto-start on boot, snapshot backups
+- **Network**: VPC with firewall rules, Cloud NAT for spot VM outbound
+- **HA**: Single sentinel VM monitors multiple spot VMs, auto-restarts on preemption (~85s recovery), serves maintenance page during outage. See [docs/SENTINEL-DESIGN.md](docs/SENTINEL-DESIGN.md)
 
 #### 2. **Container Layer** (Incus + LXC)
 - **Runtime**: Unprivileged LXC containers
@@ -589,7 +592,7 @@ Containarium provides a multi-layer architecture combining cloud infrastructure,
 
 ### Deployment Topologies
 
-#### Single Server (20-50 users)
+#### Single Server — no HA (20-50 users, dev/testing)
 
 ```
 Internet
@@ -604,29 +607,63 @@ Internet
 └─────────────────────────────────┘
 
 Cost: $98/month | $1.96/user
-Availability: ~99% (with auto-restart)
+Availability: ~99% (auto-restart only, ~9min downtime on preemption)
+```
+
+#### Single Server with Sentinel HA (20-50 users, production recommended)
+
+```
+Internet
+   │
+   ▼
+┌─────────────────────────────────┐
+│ Sentinel VM (e2-micro, free)    │  Owns static IP
+│ • iptables DNAT forwarding      │  Port 2222: management SSH
+│ • Maintenance page on preempt   │  Port 8888: binary server
+│ • TLS cert sync from spot VM    │
+└───────────────┬─────────────────┘
+                │ VPC internal
+                ▼
+┌─────────────────────────────────┐
+│ Spot VM (c3d-highmem-8)         │  No external IP
+│ • Caddy reverse proxy           │  Cloud NAT for outbound
+│ • Containarium daemon           │
+│ • 50 containers @ 500MB each    │
+│ • ZFS on persistent disk        │
+└─────────────────────────────────┘
+
+Cost: ~$98/month | Recovery: ~85s
+Availability: ~99.5% (auto-restart + maintenance page)
 ```
 
 #### Horizontal Scaling (100-250 users)
 
 ```
-                  Load Balancer
-                  (SSH Port 22)
-                       │
-       ┌───────────────┼───────────────┐
-       ▼               ▼               ▼
-  Jump-1          Jump-2          Jump-3
-  (50 users)      (50 users)      (50 users)
-     │               │               │
-     ▼               ▼               ▼
-Persistent-1    Persistent-2    Persistent-3
-(100GB ZFS)     (100GB ZFS)     (100GB ZFS)
+                    Load Balancer
+                    (SSH / HTTP)
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │  Sentinel VM         │  e2-micro (free tier)
+              │  • Owns static IP    │  Monitors all spot VMs
+              │  • DNAT forwarding   │  Auto-restarts on preemption
+              └──────────┬───────────┘
+                         │ VPC internal
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+     Spot VM-1      Spot VM-2      Spot VM-3
+     (50 users)     (50 users)     (50 users)
+          │              │              │
+          ▼              ▼              ▼
+    Persistent-1   Persistent-2   Persistent-3
+    (500GB ZFS)    (500GB ZFS)    (500GB ZFS)
 
-Cost: $312/month | $2.08/user (150 users)
-Availability: 99.9% (multi-server)
+Cost: ~$312/month | $2.08/user (150 users)
+Sentinel VM: free (e2-micro free tier)
+Availability: ~99.5% (auto-restart + maintenance page per spot VM)
 ```
 
-Each jump server is independent with its own containers and persistent storage.
+One sentinel monitors all spot VMs in the cluster. Each spot VM is independently monitored — if one is preempted, the sentinel auto-restarts it while the others continue serving. The sentinel owns the static public IP and routes traffic to the appropriate spot VM.
 
 ### Data Flow
 

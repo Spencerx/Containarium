@@ -39,6 +39,7 @@ var (
 	postgresConnString string
 	baseDomain         string
 	caddyAdminURL      string
+	caddyCertDir       string
 )
 
 var daemonCmd = &cobra.Command{
@@ -107,6 +108,7 @@ func init() {
 	daemonCmd.Flags().StringVar(&postgresConnString, "postgres", "", "PostgreSQL connection string for app hosting (e.g., postgres://user:pass@host:5432/db)")
 	daemonCmd.Flags().StringVar(&baseDomain, "base-domain", "containarium.dev", "Base domain for app subdomains (e.g., containarium.dev)")
 	daemonCmd.Flags().StringVar(&caddyAdminURL, "caddy-admin-url", "", "Caddy admin API URL for reverse proxy configuration (leave empty for auto-setup with --app-hosting)")
+	daemonCmd.Flags().StringVar(&caddyCertDir, "caddy-cert-dir", "/var/lib/caddy/.local/share/caddy", "Caddy certificate directory (for sentinel cert sync via /certs endpoint)")
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
@@ -317,6 +319,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		CaddyAdminURL:      caddyAdminURL,
 		HostIP:             hostIPFromCIDR(networkSubnet),
 		DaemonConfigStore:  daemonConfigStore,
+		CaddyCertDir:       caddyCertDir,
 	}
 
 	// Create dual server

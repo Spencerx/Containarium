@@ -63,7 +63,7 @@ resource "google_compute_instance" "jump_server_spot" {
   machine_type = var.machine_type
   zone         = var.zone
 
-  tags = ["containarium-jump-server"]
+  tags = local.use_sentinel ? ["containarium-jump-server", "containarium-spot-backend"] : ["containarium-jump-server"]
 
   # Spot instance configuration
   scheduling {
@@ -97,7 +97,8 @@ resource "google_compute_instance" "jump_server_spot" {
     network = "default"
 
     access_config {
-      nat_ip = google_compute_address.jump_server_ip.address
+      # When sentinel is enabled, it owns the static IP; spot VM gets ephemeral IP
+      nat_ip = local.use_sentinel ? null : google_compute_address.jump_server_ip.address
     }
   }
 
@@ -107,12 +108,13 @@ resource "google_compute_instance" "jump_server_spot" {
       "${user}:${key}"
     ])
     startup-script = templatefile("${path.module}/scripts/startup-spot.sh", {
-      incus_version          = var.incus_version
-      admin_users            = keys(var.admin_ssh_keys)
-      enable_monitoring      = var.enable_monitoring
-      use_persistent_disk    = var.use_persistent_disk
-      containarium_version   = var.containarium_version
+      incus_version           = var.incus_version
+      admin_users             = keys(var.admin_ssh_keys)
+      enable_monitoring       = var.enable_monitoring
+      use_persistent_disk     = var.use_persistent_disk
+      containarium_version    = var.containarium_version
       containarium_binary_url = var.containarium_binary_url
+      sentinel_binary_url     = local.use_sentinel ? "http://${google_compute_instance.sentinel[0].network_interface[0].network_ip}:8888/containarium" : ""
     })
   }
 

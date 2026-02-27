@@ -76,7 +76,37 @@ enable_disk_snapshots = true  # Daily backups
 - When VM restarts, containers auto-resume from disk
 - Downtime: 2-5 minutes during restart
 
-### Option 3: Horizontal Scaling (Multiple Jump Servers)
+### Option 3: Sentinel HA + Spot VM (Recommended for Production)
+
+**Use for**: Any user count, need fast recovery and maintenance page during preemption
+
+```hcl
+# terraform.tfvars
+use_spot_instance    = true
+enable_sentinel      = true
+machine_type         = "c3d-highmem-8"
+data_disk_size       = 500
+```
+
+**Cost**: ~$98/month (sentinel is free tier e2-micro)
+
+**Architecture**:
+```
+Sentinel (e2-micro, owns static IP)
+  └─ Spot VM (no external IP, containers)
+```
+
+**How it works**:
+- Sentinel owns static IP, forwards traffic via iptables DNAT
+- Detects preemption in ~10s, serves maintenance page instantly
+- Auto-restarts spot VM — ~85s total recovery
+- Syncs TLS certs for valid HTTPS during maintenance
+- Management SSH on port 2222 (port 22 forwarded to spot VM)
+- Scales by adding more spot VMs behind the same sentinel
+
+See [docs/SENTINEL-DESIGN.md](../../docs/SENTINEL-DESIGN.md) for the full design.
+
+### Option 4: Horizontal Scaling (Multiple Jump Servers)
 
 **Use for**: > 100 users, need fault tolerance
 
@@ -101,11 +131,13 @@ Load Balancer
 
 - `main.tf` - Main GCE VM configuration
 - `spot-instance.tf` - Spot instance + persistent disk setup
+- `sentinel.tf` - Sentinel HA VM, firewall rules, instance group
 - `variables.tf` - Input variables
 - `outputs.tf` - Output values (IPs, SSH commands)
 - `terraform.tfvars.example` - Example configuration
 - `scripts/startup.sh` - Regular VM initialization script
 - `scripts/startup-spot.sh` - Spot VM initialization + recovery script
+- `scripts/startup-sentinel.sh` - Sentinel VM startup (binary download + service install)
 
 ## Cost Comparison
 

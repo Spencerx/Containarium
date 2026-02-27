@@ -54,6 +54,9 @@ type DualServerConfig struct {
 	// Route sync settings
 	RouteSyncInterval time.Duration // Interval for syncing routes to Caddy (default 5s)
 
+	// Caddy certificate directory for /certs endpoint (sentinel cert sync)
+	CaddyCertDir string
+
 	// Host IP (extracted from network CIDR, e.g., "10.100.0.1")
 	HostIP string
 
@@ -384,6 +387,7 @@ skipAppHosting:
 			authMiddleware,
 			config.SwaggerDir,
 			certsDir,
+			config.CaddyCertDir,
 		)
 		log.Printf("HTTP/REST gateway enabled on port %d", config.HTTPPort)
 	}

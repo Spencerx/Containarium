@@ -1,8 +1,10 @@
 #!/bin/bash
 #
 # Containarium GCE Startup Script
-# This script runs once when the GCE instance first boots
-# It installs and configures Incus, Docker kernel modules, and sets up the jump server
+# Runs on every boot (GCE metadata startup-script behavior).
+#
+# On RESTART (boot disk preserved): fast-path — just ensure services are running.
+# On FIRST BOOT (fresh install): full setup — install packages, configure everything.
 #
 
 set -euo pipefail
@@ -19,6 +21,44 @@ INCUS_VERSION="${incus_version}"
 ADMIN_USERS="${join(",", admin_users)}"
 ENABLE_MONITORING="${enable_monitoring}"
 USE_PERSISTENT_DISK="${use_persistent_disk}"
+
+# ==========================================================================
+# FAST PATH: If this is a restart (not first boot), skip software install.
+# The sentinel restarts the stopped VM — boot disk is preserved, everything
+# is already installed. Just ensure services are running and exit.
+# ==========================================================================
+if [ -f /opt/containarium/.setup_complete ]; then
+    echo "==> RESTART detected (setup_complete marker exists), using fast path"
+    date > /opt/containarium/.last_restart_timestamp
+
+    # Ensure critical services are running
+    systemctl start incus 2>/dev/null || true
+    systemctl start containarium 2>/dev/null || true
+    systemctl start fail2ban 2>/dev/null || true
+
+    # Wait for Incus to be ready, then start any stopped containers
+    sleep 3
+    for container in $(incus list --format csv -c n 2>/dev/null); do
+        if [ "$(incus list "$container" --format csv -c s 2>/dev/null)" = "STOPPED" ]; then
+            incus start "$container" 2>/dev/null && echo "  Started $container" || true
+        fi
+    done
+
+    # Sync jump server accounts (containers may have been running before preemption)
+    if [ -f /usr/local/bin/containarium ] && incus list --format=csv --columns=n 2>/dev/null | grep -q .; then
+        systemctl stop google-guest-agent 2>/dev/null || true
+        /usr/local/bin/containarium sync-accounts --verbose 2>/dev/null || true
+        systemctl start google-guest-agent 2>/dev/null || true
+    fi
+
+    echo "==> Fast path complete — services running"
+    exit 0
+fi
+
+# ==========================================================================
+# FULL INSTALL: First boot — install everything from scratch.
+# ==========================================================================
+echo "==> First boot detected, running full setup"
 
 # System info
 echo "System: $(uname -a)"
@@ -383,7 +423,7 @@ echo "✓ Sysctl configured"
 
 # Configure SSH for security
 echo "==> Hardening SSH configuration..."
-cat >> /etc/ssh/sshd_config.d/containarium.conf <<EOF
+cat > /etc/ssh/sshd_config.d/containarium.conf <<EOF
 # Containarium SSH hardening
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -431,15 +471,37 @@ chmod 755 /opt/containarium
 echo "==> Installing Containarium daemon..."
 CONTAINARIUM_VERSION="${containarium_version}"
 CONTAINARIUM_BINARY_URL="${containarium_binary_url}"
+SENTINEL_BINARY_URL="${sentinel_binary_url}"
 
-if [ -n "$CONTAINARIUM_BINARY_URL" ]; then
-    # Download from specified URL (e.g., GitHub releases)
+BINARY_INSTALLED=false
+
+# Try sentinel binary server first (internal network, fast)
+if [ -n "$SENTINEL_BINARY_URL" ] && [ "$BINARY_INSTALLED" = "false" ]; then
+    echo "Downloading from sentinel: $SENTINEL_BINARY_URL"
+    # Retry up to 10 times (sentinel may still be booting)
+    for i in {1..10}; do
+        if curl -fsSL --connect-timeout 5 "$SENTINEL_BINARY_URL" -o /usr/local/bin/containarium; then
+            chmod +x /usr/local/bin/containarium
+            echo "✓ Containarium downloaded from sentinel"
+            BINARY_INSTALLED=true
+            break
+        fi
+        echo "  Sentinel not ready yet, retrying... ($i/10)"
+        sleep 10
+    done
+fi
+
+# Fallback to explicit URL (e.g., GitHub releases, GCS)
+if [ -n "$CONTAINARIUM_BINARY_URL" ] && [ "$BINARY_INSTALLED" = "false" ]; then
     echo "Downloading from: $CONTAINARIUM_BINARY_URL"
     curl -fsSL "$CONTAINARIUM_BINARY_URL" -o /usr/local/bin/containarium
     chmod +x /usr/local/bin/containarium
     echo "✓ Containarium daemon downloaded"
-else
-    echo "⚠ No Containarium binary URL provided, daemon not installed"
+    BINARY_INSTALLED=true
+fi
+
+if [ "$BINARY_INSTALLED" = "false" ]; then
+    echo "⚠ No Containarium binary source available, daemon not installed"
     echo "  You can manually install it later by copying the binary to /usr/local/bin/containarium"
 fi
 
@@ -500,13 +562,63 @@ if [ -f /usr/local/bin/containarium ]; then
     fi
 fi
 
-# Install systemd service via the binary's built-in command.
-# This writes the canonical service file (with correct ReadWritePaths,
-# minimal flags), generates JWT secret if needed, and starts the daemon.
+# Create JWT secret file for containarium daemon
+echo "==> Configuring JWT secret for REST API..."
+mkdir -p /etc/containarium
+if [ ! -f /etc/containarium/jwt.secret ]; then
+    # Generate a random JWT secret so the daemon can start
+    openssl rand -base64 32 > /etc/containarium/jwt.secret
+    chmod 600 /etc/containarium/jwt.secret
+    echo "✓ JWT secret auto-generated"
+else
+    echo "✓ JWT secret already exists"
+fi
+
+# Install systemd service via the binary's built-in command if available,
+# otherwise create the service file directly.
 echo "==> Installing Containarium systemd service..."
 if [ -f /usr/local/bin/containarium ]; then
-    /usr/local/bin/containarium service install
-    echo "✓ Containarium daemon service installed and started"
+    if /usr/local/bin/containarium service install 2>/dev/null; then
+        echo "✓ Containarium daemon service installed via built-in command"
+    else
+        echo "⚠ 'service install' not available, creating service file directly..."
+        cat > /etc/systemd/system/containarium.service <<'SVCEOF'
+[Unit]
+Description=Containarium Container Management Daemon
+Documentation=https://github.com/footprintai/Containarium
+After=network.target incus.service
+Requires=incus.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/containarium daemon --address 0.0.0.0 --rest --http-port 8080 --jwt-secret-file /etc/containarium/jwt.secret
+Restart=on-failure
+RestartSec=5s
+User=root
+Group=root
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/var/lib/incus /etc /home /var/lock /run/lock
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=containarium
+
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        systemctl daemon-reload
+        systemctl enable containarium.service
+        systemctl start containarium.service
+        echo "✓ Containarium daemon service created and started"
+    fi
 
     # Check status
     sleep 2
