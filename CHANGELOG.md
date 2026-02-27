@@ -5,7 +5,7 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.1] - 2026-02-27
 
 ### Fixed
 
@@ -552,6 +552,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.8.1** (2026-02-27) - Preemption recovery fix, PostgreSQL retry, sentinel iptables fix, role-based container labeling
 - **0.8.0** (2026-02-27) - Sentinel TLS Cert Sync, Status Page, Management SSH, Sentinel Design Doc
 - **0.7.0** (2026-02-25) - Collaborator Permissions, Docker CE Stack, Service Install, Daemon Config Persistence
 - **0.6.0** (2026-02-15) - Per-Container Traffic Monitoring, Docker to Podman Migration
@@ -561,7 +562,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.2.0** (2025-01-12) - Resize command, mTLS support, production readiness
 - **0.1.0** (Initial release) - Basic container management, SSH jump server
 
-[Unreleased]: https://github.com/FootprintAI/Containarium/compare/0.8.0...HEAD
+[0.8.1]: https://github.com/FootprintAI/Containarium/compare/0.8.0...0.8.1
 [0.8.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.8.0
 [0.7.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.7.0
 [0.6.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.6.0
