@@ -5,6 +5,21 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Spot VM preemption recovery race condition**: daemon now waits for core containers (PostgreSQL, Caddy) to be healthy before auto-detection and config loading, preventing permanent route loss after VM restart
+- **PostgreSQL connection retry**: all connection sites (daemon config, route store, collaborator store) retry up to 5 times with 3-second intervals instead of failing on first "connection refused"
+- **Container outbound internet broken by sentinel iptables**: sentinel PREROUTING jump now excludes the container bridge network (`! -s 10.0.3.0/24`), fixing HTTPS from containers being DNAT'd to the spot VM's own IP instead of reaching the internet
+
+### Changed
+
+- **Label-based core container identification**: core containers tagged with `user.containarium.role` labels (`core-postgres`, `core-caddy`) instead of hardcoded name matching; existing containers auto-backfilled on startup
+- **Boot priority ordering**: core containers have `boot.autostart.priority` (PostgreSQL=100, Caddy=90) so Incus starts them in correct order after restart
+- **Type-safe `incus.Role` type**: introduced typed string for core container roles replacing raw string comparisons
+- **Core containers hidden from user listings**: containers with a `user.containarium.role` label excluded from `ListContainers` API
+
 ## [0.8.0] - 2026-02-27
 
 ### Added

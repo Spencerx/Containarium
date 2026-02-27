@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 const chainName = "SENTINEL_PREROUTING"
@@ -50,10 +51,16 @@ func enableForwarding(spotIP string, ports []int) error {
 		}
 	}
 
-	// Jump from PREROUTING to our chain
-	err := exec.Command("iptables", "-t", "nat", "-A", "PREROUTING",
-		"-j", chainName,
-	).Run()
+	// Jump from PREROUTING to our chain.
+	// Exclude container bridge traffic so that outbound connections from
+	// Incus containers (e.g., curl github.com:443) are not DNAT'd.
+	prerouteArgs := []string{"-t", "nat", "-A", "PREROUTING"}
+	if bridgeCIDR := detectBridgeCIDR(); bridgeCIDR != "" {
+		prerouteArgs = append(prerouteArgs, "!", "-s", bridgeCIDR)
+		log.Printf("[sentinel] iptables: excluding container network %s from forwarding", bridgeCIDR)
+	}
+	prerouteArgs = append(prerouteArgs, "-j", chainName)
+	err := exec.Command("iptables", prerouteArgs...).Run()
 	if err != nil {
 		return fmt.Errorf("failed to add PREROUTING jump: %w", err)
 	}
@@ -88,6 +95,33 @@ func enableForwarding(spotIP string, ports []int) error {
 	return nil
 }
 
+// detectBridgeCIDR attempts to find the Incus bridge (incusbr0) subnet.
+// Returns a CIDR like "10.0.3.0/24" or "" if not found.
+func detectBridgeCIDR() string {
+	// Try `ip -4 addr show incusbr0` to get the bridge address
+	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "incusbr0").Output()
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+	// Output format: "N: incusbr0  inet 10.0.3.1/24 ..."
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f == "inet" && i+1 < len(fields) {
+			cidr := fields[i+1]
+			// Convert host address to network: 10.0.3.1/24 → 10.0.3.0/24
+			parts := strings.SplitN(cidr, "/", 2)
+			if len(parts) == 2 {
+				octets := strings.Split(parts[0], ".")
+				if len(octets) == 4 {
+					return octets[0] + "." + octets[1] + "." + octets[2] + ".0/" + parts[1]
+				}
+			}
+			return cidr
+		}
+	}
+	return ""
+}
+
 // disableForwarding removes all sentinel iptables rules.
 // Safe to call even if no rules exist.
 func disableForwarding() error {
@@ -99,7 +133,10 @@ func disableForwarding() error {
 		return nil
 	}
 
-	// Remove jump from PREROUTING
+	// Remove jump from PREROUTING (try both with and without source exclusion)
+	if bridgeCIDR := detectBridgeCIDR(); bridgeCIDR != "" {
+		exec.Command("iptables", "-t", "nat", "-D", "PREROUTING", "!", "-s", bridgeCIDR, "-j", chainName).Run()
+	}
 	exec.Command("iptables", "-t", "nat", "-D", "PREROUTING", "-j", chainName).Run()
 
 	// Flush and delete our chain

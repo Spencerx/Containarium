@@ -6,12 +6,15 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -147,23 +150,34 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Printf("  Profile: default (configured)")
 	}
 
+	// Wait for core containers (postgres, caddy) to be ready before proceeding.
+	// This prevents the race condition where the daemon starts before core
+	// containers are fully booted after a spot VM preemption/restart.
+	if err := waitForCoreContainers(incusClient, 2*time.Minute); err != nil {
+		log.Printf("Warning: %v", err)
+		log.Printf("  Proceeding anyway — some features may be unavailable")
+	}
+
+	// Backfill role labels on core containers (for upgrades from older versions)
+	backfillCoreContainerLabels(incusClient)
+
 	// Always auto-detect Caddy container IP if no URL specified
 	// This ensures port forwarding (80/443 → Caddy) and route sync work
 	// even without --app-hosting (e.g., after VM recreation)
 	if caddyAdminURL == "" {
 		log.Printf("Auto-detecting Caddy container IP...")
-		if caddyIP, err := incusClient.FindCaddyContainerIP(); err != nil {
+		if caddyInfo, err := incusClient.FindContainerByRole(incus.RoleCaddy); err != nil {
 			log.Printf("Warning: Could not auto-detect Caddy container: %v", err)
 			log.Printf("  Features requiring Caddy (routes, TLS, port forwarding) will not work")
-			log.Printf("  To fix: ensure a container with 'caddy' in its name is running,")
+			log.Printf("  To fix: ensure core Caddy container is running,")
 			log.Printf("  or specify --caddy-admin-url explicitly")
 		} else {
-			caddyAdminURL = fmt.Sprintf("http://%s:2019", caddyIP)
+			caddyAdminURL = fmt.Sprintf("http://%s:2019", caddyInfo.IPAddress)
 			log.Printf("  Detected Caddy at: %s", caddyAdminURL)
 
 			// Set up port forwarding from host to Caddy for Let's Encrypt and HTTPS
 			if network.CheckIPTablesAvailable() {
-				portForwarder := network.NewPortForwarder(caddyIP)
+				portForwarder := network.NewPortForwarder(caddyInfo.IPAddress)
 				if err := portForwarder.SetupPortForwarding(); err != nil {
 					log.Printf("Warning: Failed to setup port forwarding: %v", err)
 					log.Printf("  External HTTPS for app domains may not work")
@@ -178,95 +192,113 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Auto-detect PostgreSQL container IP if no --postgres flag specified
 	if postgresConnString == "" {
-		if pgIP, err := incusClient.GetContainerIP(server.CorePostgresContainer); err == nil && pgIP != "" {
+		if pgInfo, err := incusClient.FindContainerByRole(incus.RolePostgres); err == nil && pgInfo.IPAddress != "" {
 			postgresConnString = fmt.Sprintf(
 				"postgres://%s:%s@%s:%d/%s?sslmode=disable",
 				server.DefaultPostgresUser, server.DefaultPostgresPassword,
-				pgIP, server.DefaultPostgresPort, server.DefaultPostgresDB)
-			log.Printf("Detected PostgreSQL at: %s", pgIP)
+				pgInfo.IPAddress, server.DefaultPostgresPort, server.DefaultPostgresDB)
+			log.Printf("Detected PostgreSQL at: %s", pgInfo.IPAddress)
 		} else {
-			log.Printf("PostgreSQL auto-detect: container %s not found or has no IP", server.CorePostgresContainer)
+			log.Printf("PostgreSQL auto-detect: no core-postgres container found or has no IP")
 		}
 	}
 
 	// Load persisted daemon config from PostgreSQL (values saved by previous runs).
 	// CLI flags that were explicitly set always override DB values.
+	// Uses retry logic to handle post-restart races with PostgreSQL.
 	var daemonConfigStore *app.DaemonConfigStore
 	if postgresConnString != "" {
-		pool, poolErr := pgxpool.New(context.Background(), postgresConnString)
-		if poolErr == nil {
-			if pingErr := pool.Ping(context.Background()); pingErr == nil {
-				cs, csErr := app.NewDaemonConfigStore(context.Background(), pool)
-				if csErr == nil {
-					daemonConfigStore = cs
-					savedConfig, loadErr := cs.GetAll(context.Background())
-					if loadErr == nil && len(savedConfig) > 0 {
-						log.Printf("Loaded daemon config from PostgreSQL (%d keys)", len(savedConfig))
-						if !cmd.Flags().Changed("base-domain") {
-							if v, ok := savedConfig["base_domain"]; ok {
-								baseDomain = v
-								log.Printf("  base-domain = %s (from DB)", v)
-							}
+		var pool *pgxpool.Pool
+		var poolErr error
+		for attempt := 1; attempt <= 5; attempt++ {
+			pool, poolErr = pgxpool.New(context.Background(), postgresConnString)
+			if poolErr != nil {
+				if attempt < 5 {
+					log.Printf("PostgreSQL config connection attempt %d/5 failed: %v (retrying in 3s)", attempt, poolErr)
+					time.Sleep(3 * time.Second)
+				}
+				continue
+			}
+			if pingErr := pool.Ping(context.Background()); pingErr != nil {
+				pool.Close()
+				pool = nil
+				poolErr = pingErr
+				if attempt < 5 {
+					log.Printf("PostgreSQL config ping attempt %d/5 failed: %v (retrying in 3s)", attempt, pingErr)
+					time.Sleep(3 * time.Second)
+				}
+				continue
+			}
+			break
+		}
+		if pool != nil {
+			cs, csErr := app.NewDaemonConfigStore(context.Background(), pool)
+			if csErr == nil {
+				daemonConfigStore = cs
+				savedConfig, loadErr := cs.GetAll(context.Background())
+				if loadErr == nil && len(savedConfig) > 0 {
+					log.Printf("Loaded daemon config from PostgreSQL (%d keys)", len(savedConfig))
+					if !cmd.Flags().Changed("base-domain") {
+						if v, ok := savedConfig["base_domain"]; ok {
+							baseDomain = v
+							log.Printf("  base-domain = %s (from DB)", v)
 						}
-						if !cmd.Flags().Changed("http-port") {
-							if v, ok := savedConfig["http_port"]; ok {
-								if parsed, err := strconv.Atoi(v); err == nil {
-									daemonHTTPPort = parsed
-									log.Printf("  http-port = %d (from DB)", parsed)
-								}
-							}
-						}
-						if !cmd.Flags().Changed("port") {
-							if v, ok := savedConfig["grpc_port"]; ok {
-								if parsed, err := strconv.Atoi(v); err == nil {
-									daemonPort = parsed
-									log.Printf("  port = %d (from DB)", parsed)
-								}
-							}
-						}
-						if !cmd.Flags().Changed("address") {
-							if v, ok := savedConfig["listen_address"]; ok {
-								daemonAddress = v
-								log.Printf("  address = %s (from DB)", v)
-							}
-						}
-						if !cmd.Flags().Changed("mtls") {
-							if v, ok := savedConfig["enable_mtls"]; ok {
-								if parsed, err := strconv.ParseBool(v); err == nil {
-									enableMTLS = parsed
-									log.Printf("  mtls = %v (from DB)", parsed)
-								}
-							}
-						}
-						if !cmd.Flags().Changed("rest") {
-							if v, ok := savedConfig["enable_rest"]; ok {
-								if parsed, err := strconv.ParseBool(v); err == nil {
-									enableREST = parsed
-									log.Printf("  rest = %v (from DB)", parsed)
-								}
-							}
-						}
-						if !cmd.Flags().Changed("app-hosting") {
-							if v, ok := savedConfig["enable_app_hosting"]; ok {
-								if parsed, err := strconv.ParseBool(v); err == nil {
-									enableAppHosting = parsed
-									log.Printf("  app-hosting = %v (from DB)", parsed)
-								}
-							}
-						}
-					} else if loadErr != nil {
-						log.Printf("Warning: Failed to load daemon config from DB: %v", loadErr)
 					}
-				} else {
-					log.Printf("Warning: Failed to create daemon config store: %v", csErr)
-					pool.Close()
+					if !cmd.Flags().Changed("http-port") {
+						if v, ok := savedConfig["http_port"]; ok {
+							if parsed, err := strconv.Atoi(v); err == nil {
+								daemonHTTPPort = parsed
+								log.Printf("  http-port = %d (from DB)", parsed)
+							}
+						}
+					}
+					if !cmd.Flags().Changed("port") {
+						if v, ok := savedConfig["grpc_port"]; ok {
+							if parsed, err := strconv.Atoi(v); err == nil {
+								daemonPort = parsed
+								log.Printf("  port = %d (from DB)", parsed)
+							}
+						}
+					}
+					if !cmd.Flags().Changed("address") {
+						if v, ok := savedConfig["listen_address"]; ok {
+							daemonAddress = v
+							log.Printf("  address = %s (from DB)", v)
+						}
+					}
+					if !cmd.Flags().Changed("mtls") {
+						if v, ok := savedConfig["enable_mtls"]; ok {
+							if parsed, err := strconv.ParseBool(v); err == nil {
+								enableMTLS = parsed
+								log.Printf("  mtls = %v (from DB)", parsed)
+							}
+						}
+					}
+					if !cmd.Flags().Changed("rest") {
+						if v, ok := savedConfig["enable_rest"]; ok {
+							if parsed, err := strconv.ParseBool(v); err == nil {
+								enableREST = parsed
+								log.Printf("  rest = %v (from DB)", parsed)
+							}
+						}
+					}
+					if !cmd.Flags().Changed("app-hosting") {
+						if v, ok := savedConfig["enable_app_hosting"]; ok {
+							if parsed, err := strconv.ParseBool(v); err == nil {
+								enableAppHosting = parsed
+								log.Printf("  app-hosting = %v (from DB)", parsed)
+							}
+						}
+					}
+				} else if loadErr != nil {
+					log.Printf("Warning: Failed to load daemon config from DB: %v", loadErr)
 				}
 			} else {
-				log.Printf("Warning: Failed to ping PostgreSQL for config: %v", pingErr)
+				log.Printf("Warning: Failed to create daemon config store: %v", csErr)
 				pool.Close()
 			}
 		} else {
-			log.Printf("Warning: Failed to connect to PostgreSQL for config: %v", poolErr)
+			log.Printf("Warning: Failed to connect to PostgreSQL for config after 5 attempts: %v", poolErr)
 		}
 	}
 
@@ -397,6 +429,90 @@ func hostIPFromCIDR(cidr string) string {
 		return cidr[:idx]
 	}
 	return cidr
+}
+
+// backfillCoreContainerLabels ensures role labels and boot priority are set on
+// core containers. This handles upgrades from older versions that lack labels.
+func backfillCoreContainerLabels(incusClient *incus.Client) {
+	type coreContainer struct {
+		name     string
+		role     incus.Role
+		priority string
+	}
+	cores := []coreContainer{
+		{server.CorePostgresContainer, incus.RolePostgres, "100"},
+		{server.CoreCaddyContainer, incus.RoleCaddy, "90"},
+	}
+	for _, c := range cores {
+		cfg, _, err := incusClient.GetRawInstance(c.name)
+		if err != nil {
+			continue // container doesn't exist
+		}
+		if cfg[incus.RoleKey] == "" {
+			if err := incusClient.UpdateContainerConfig(c.name, incus.RoleKey, string(c.role)); err == nil {
+				log.Printf("Backfilled role=%s on %s", c.role, c.name)
+			}
+		}
+		if cfg["boot.autostart.priority"] == "" {
+			incusClient.UpdateContainerConfig(c.name, "boot.autostart.priority", c.priority)
+		}
+		if cfg["boot.autostart"] == "" {
+			incusClient.UpdateContainerConfig(c.name, "boot.autostart", "true")
+		}
+	}
+}
+
+// waitForCoreContainers discovers core containers by role label and waits for
+// each to be healthy (TCP-reachable on their primary port). This prevents the
+// daemon from proceeding before PostgreSQL and Caddy are ready after a
+// spot VM preemption/restart.
+func waitForCoreContainers(incusClient *incus.Client, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	log.Printf("Waiting for core containers to be ready...")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for core containers to be ready")
+		default:
+		}
+
+		allReady := true
+
+		// Check PostgreSQL (TCP 5432)
+		if info, err := incusClient.FindContainerByRole(incus.RolePostgres); err == nil {
+			conn, err := net.DialTimeout("tcp", info.IPAddress+":5432", 2*time.Second)
+			if err != nil {
+				allReady = false
+			} else {
+				conn.Close()
+			}
+		} else {
+			allReady = false
+		}
+
+		// Check Caddy (HTTP admin API on 2019)
+		if info, err := incusClient.FindContainerByRole(incus.RoleCaddy); err == nil {
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Get("http://" + info.IPAddress + ":2019/config/")
+			if err != nil {
+				allReady = false
+			} else {
+				resp.Body.Close()
+			}
+		} else {
+			allReady = false
+		}
+
+		if allReady {
+			log.Printf("All core containers ready")
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // saveRecoveryConfigToPersistentStorage saves recovery config to persistent disk
