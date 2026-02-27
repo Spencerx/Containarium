@@ -166,6 +166,11 @@ func (s *ContainerServer) ListContainers(ctx context.Context, req *pb.ListContai
 	// Filter containers
 	var filtered []incus.ContainerInfo
 	for _, c := range containers {
+		// Exclude core containers (postgres, caddy) from user-facing listings
+		if c.Role.IsCoreRole() {
+			continue
+		}
+
 		// Filter by username if specified
 		if req.Username != "" {
 			// Extract username from container name (format: username-container)

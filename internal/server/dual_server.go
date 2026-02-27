@@ -313,7 +313,16 @@ skipAppHosting:
 	}
 
 	var collabStore *collaborator.Store
-	collabStore, err = collaborator.NewStore(context.Background(), postgresConnString)
+	for attempt := 1; attempt <= 5; attempt++ {
+		collabStore, err = collaborator.NewStore(context.Background(), postgresConnString)
+		if err == nil {
+			break
+		}
+		if attempt < 5 {
+			log.Printf("Collaborator store attempt %d/5 failed: %v (retrying in 3s)", attempt, err)
+			time.Sleep(3 * time.Second)
+		}
+	}
 	if err != nil {
 		log.Printf("Warning: Failed to create collaborator store: %v. Collaborator features disabled.", err)
 	} else {
@@ -327,37 +336,32 @@ skipAppHosting:
 	// When it's not, we still need them for the management route to work after VM recreation.
 	caddyAdminURL := config.CaddyAdminURL
 	if routeStore == nil && postgresConnString != "" && caddyAdminURL != "" && config.BaseDomain != "" {
-		pool, poolErr := pgxpool.New(context.Background(), postgresConnString)
+		pool, poolErr := connectToPostgres(postgresConnString, 5, 3*time.Second)
 		if poolErr != nil {
 			log.Printf("Warning: Failed to connect to PostgreSQL for route store: %v", poolErr)
 		} else {
-			if err := pool.Ping(context.Background()); err != nil {
-				log.Printf("Warning: Failed to ping PostgreSQL for route store: %v", err)
+			routeStore, err = app.NewRouteStore(context.Background(), pool)
+			if err != nil {
+				log.Printf("Warning: Failed to create route store: %v", err)
 				pool.Close()
 			} else {
-				routeStore, err = app.NewRouteStore(context.Background(), pool)
-				if err != nil {
-					log.Printf("Warning: Failed to create route store: %v", err)
-					pool.Close()
-				} else {
-					proxyManager := app.NewProxyManager(caddyAdminURL, config.BaseDomain)
-					if err := proxyManager.EnsureServerConfig(); err != nil {
-						log.Printf("Warning: Failed to ensure Caddy server config: %v", err)
-					}
-					syncInterval := config.RouteSyncInterval
-					if syncInterval == 0 {
-						syncInterval = 5 * time.Second
-					}
-					routeSyncJob = app.NewRouteSyncJob(routeStore, proxyManager, syncInterval)
-					log.Printf("Route persistence enabled (standalone) with %v sync interval", syncInterval)
+				proxyManager := app.NewProxyManager(caddyAdminURL, config.BaseDomain)
+				if err := proxyManager.EnsureServerConfig(); err != nil {
+					log.Printf("Warning: Failed to ensure Caddy server config: %v", err)
+				}
+				syncInterval := config.RouteSyncInterval
+				if syncInterval == 0 {
+					syncInterval = 5 * time.Second
+				}
+				routeSyncJob = app.NewRouteSyncJob(routeStore, proxyManager, syncInterval)
+				log.Printf("Route persistence enabled (standalone) with %v sync interval", syncInterval)
 
-					// Update NetworkServer so the /v1/network/routes API returns routes from PostgreSQL
-					if networkServer != nil {
-						networkServer.routeStore = routeStore
-						networkServer.proxyManager = proxyManager
-						networkServer.baseDomain = config.BaseDomain
-						log.Printf("Network service updated with route store (standalone)")
-					}
+				// Update NetworkServer so the /v1/network/routes API returns routes from PostgreSQL
+				if networkServer != nil {
+					networkServer.routeStore = routeStore
+					networkServer.proxyManager = proxyManager
+					networkServer.baseDomain = config.BaseDomain
+					log.Printf("Network service updated with route store (standalone)")
 				}
 			}
 		}
@@ -508,6 +512,35 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		ds.grpcServer.GracefulStop()
 		return nil
 	}
+}
+
+// connectToPostgres connects to PostgreSQL with retries. It tries up to
+// maxRetries times with retryInterval between attempts. This is defense in
+// depth against the race condition where PostgreSQL is still booting.
+func connectToPostgres(connString string, maxRetries int, retryInterval time.Duration) (*pgxpool.Pool, error) {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		pool, err := pgxpool.New(context.Background(), connString)
+		if err != nil {
+			lastErr = err
+			if i < maxRetries-1 {
+				log.Printf("PostgreSQL connection attempt %d/%d failed: %v (retrying in %v)", i+1, maxRetries, err, retryInterval)
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+		if err := pool.Ping(context.Background()); err != nil {
+			pool.Close()
+			lastErr = err
+			if i < maxRetries-1 {
+				log.Printf("PostgreSQL ping attempt %d/%d failed: %v (retrying in %v)", i+1, maxRetries, err, retryInterval)
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+		return pool, nil
+	}
+	return nil, fmt.Errorf("failed to connect to PostgreSQL after %d attempts: %w", maxRetries, lastErr)
 }
 
 // generateRandomSecret generates a random secret for development mode

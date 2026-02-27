@@ -71,6 +71,9 @@ func (cs *CoreServices) EnsurePostgres(ctx context.Context) (string, error) {
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CorePostgresContainer)
 	if err == nil {
+		// Backfill role label and boot priority for containers created before this change
+		cs.backfillConfig(CorePostgresContainer, incus.RolePostgres, "100")
+
 		// Container exists
 		if info.State == "Running" {
 			cs.postgresIP = info.IPAddress
@@ -114,6 +117,11 @@ func (cs *CoreServices) EnsurePostgres(ctx context.Context) (string, error) {
 	if err := cs.incusClient.CreateContainer(config); err != nil {
 		return "", fmt.Errorf("failed to create postgres container: %w", err)
 	}
+
+	// Set role label and boot priority
+	cs.incusClient.UpdateContainerConfig(CorePostgresContainer, incus.RoleKey, string(incus.RolePostgres))
+	cs.incusClient.UpdateContainerConfig(CorePostgresContainer, "boot.autostart", "true")
+	cs.incusClient.UpdateContainerConfig(CorePostgresContainer, "boot.autostart.priority", "100")
 
 	// Start container
 	if err := cs.incusClient.StartContainer(CorePostgresContainer); err != nil {
@@ -262,6 +270,9 @@ func (cs *CoreServices) EnsureCaddy(ctx context.Context, baseDomain string) (str
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CoreCaddyContainer)
 	if err == nil {
+		// Backfill role label and boot priority for containers created before this change
+		cs.backfillConfig(CoreCaddyContainer, incus.RoleCaddy, "90")
+
 		// Container exists
 		if info.State == "Running" {
 			cs.caddyIP = info.IPAddress
@@ -300,6 +311,11 @@ func (cs *CoreServices) EnsureCaddy(ctx context.Context, baseDomain string) (str
 	if err := cs.incusClient.CreateContainer(config); err != nil {
 		return "", fmt.Errorf("failed to create caddy container: %w", err)
 	}
+
+	// Set role label and boot priority
+	cs.incusClient.UpdateContainerConfig(CoreCaddyContainer, incus.RoleKey, string(incus.RoleCaddy))
+	cs.incusClient.UpdateContainerConfig(CoreCaddyContainer, "boot.autostart", "true")
+	cs.incusClient.UpdateContainerConfig(CoreCaddyContainer, "boot.autostart.priority", "90")
 
 	// Start container
 	if err := cs.incusClient.StartContainer(CoreCaddyContainer); err != nil {
@@ -381,4 +397,28 @@ func (cs *CoreServices) getCaddyAdminURL() string {
 // GetCaddyIP returns the Caddy container IP
 func (cs *CoreServices) GetCaddyIP() string {
 	return cs.caddyIP
+}
+
+// backfillConfig ensures role label and boot priority are set on an existing
+// container. This handles upgrades from older versions that lack these keys.
+func (cs *CoreServices) backfillConfig(containerName string, role incus.Role, priority string) {
+	cfg, _, err := cs.incusClient.GetRawInstance(containerName)
+	if err != nil {
+		return
+	}
+	if cfg[incus.RoleKey] == "" {
+		if err := cs.incusClient.UpdateContainerConfig(containerName, incus.RoleKey, string(role)); err != nil {
+			log.Printf("Warning: failed to backfill role on %s: %v", containerName, err)
+		} else {
+			log.Printf("Backfilled role=%s on %s", role, containerName)
+		}
+	}
+	if cfg["boot.autostart.priority"] == "" {
+		if err := cs.incusClient.UpdateContainerConfig(containerName, "boot.autostart.priority", priority); err != nil {
+			log.Printf("Warning: failed to backfill boot priority on %s: %v", containerName, err)
+		}
+	}
+	if cfg["boot.autostart"] == "" {
+		cs.incusClient.UpdateContainerConfig(containerName, "boot.autostart", "true")
+	}
 }

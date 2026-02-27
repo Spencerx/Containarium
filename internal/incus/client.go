@@ -75,6 +75,24 @@ type ContainerConfig struct {
 // Note: Incus requires user-defined config keys to use the "user." prefix
 const LabelPrefix = "user.containarium.label."
 
+// RoleKey is the Incus config key used to tag core containers by role.
+const RoleKey = "user.containarium.role"
+
+// Role is a typed string for core container roles.
+type Role string
+
+// Core container roles
+const (
+	RoleNone     Role = ""
+	RolePostgres Role = "core-postgres"
+	RoleCaddy    Role = "core-caddy"
+)
+
+// IsCoreRole returns true if the role represents a core container.
+func (r Role) IsCoreRole() bool {
+	return r != RoleNone
+}
+
 // ContainerInfo holds information about a container
 type ContainerInfo struct {
 	Name      string
@@ -85,6 +103,7 @@ type ContainerInfo struct {
 	Disk      string
 	GPU       string // GPU device info (e.g., "nvidia.com/gpu" or GPU ID)
 	Labels    map[string]string
+	Role      Role   // Core container role (e.g., RolePostgres, RoleCaddy), empty for user containers
 	CreatedAt time.Time
 }
 
@@ -326,6 +345,7 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 			State:     inst.Status,
 			CreatedAt: inst.CreatedAt,
 			Labels:    extractLabelsFromConfig(inst.Config),
+			Role:      Role(inst.Config[RoleKey]),
 		}
 
 		// Get CPU and memory limits from config
@@ -448,6 +468,7 @@ func (c *Client) GetContainer(name string) (*ContainerInfo, error) {
 		State:     inst.Status,
 		CreatedAt: inst.CreatedAt,
 		Labels:    extractLabelsFromConfig(inst.Config),
+		Role:      Role(inst.Config[RoleKey]),
 	}
 
 	// Get resource limits
@@ -622,6 +643,103 @@ func (c *Client) FindCaddyContainerIP() (string, error) {
 	}
 
 	return "", fmt.Errorf("no running Caddy container found")
+}
+
+// FindContainerByRole finds a running container with the given role label.
+// Returns the first match. Falls back to name-based matching for containers
+// created before role labels were introduced.
+func (c *Client) FindContainerByRole(role Role) (*ContainerInfo, error) {
+	containers, err := c.ListContainers()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	// First pass: match by role label
+	for i, ct := range containers {
+		if ct.State != "Running" {
+			continue
+		}
+		inst, _, err := c.server.GetInstance(ct.Name)
+		if err != nil {
+			continue
+		}
+		if Role(inst.Config[RoleKey]) == role {
+			return &containers[i], nil
+		}
+	}
+
+	// Fallback: name-based matching for pre-label containers
+	for i, ct := range containers {
+		if ct.State != "Running" {
+			continue
+		}
+		switch role {
+		case RolePostgres:
+			if ct.Name == "containarium-core-postgres" {
+				return &containers[i], nil
+			}
+		case RoleCaddy:
+			if ct.Name == "containarium-core-caddy" || strings.Contains(strings.ToLower(ct.Name), "caddy") {
+				return &containers[i], nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no running container found with role %s", role)
+}
+
+// FindCoreContainers returns all containers with a "core-*" role, sorted by
+// boot priority (highest first). Used to discover which containers must be
+// healthy before the daemon proceeds.
+func (c *Client) FindCoreContainers() ([]ContainerInfo, error) {
+	containers, err := c.ListContainers()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var core []ContainerInfo
+	for _, ct := range containers {
+		inst, _, err := c.server.GetInstance(ct.Name)
+		if err != nil {
+			continue
+		}
+		if r := inst.Config[RoleKey]; strings.HasPrefix(r, "core-") {
+			core = append(core, ct)
+		}
+	}
+	return core, nil
+}
+
+// UpdateContainerConfig sets a single config key on a container.
+func (c *Client) UpdateContainerConfig(name, key, value string) error {
+	inst, etag, err := c.server.GetInstance(name)
+	if err != nil {
+		return fmt.Errorf("failed to get container %s: %w", name, err)
+	}
+	inst.Config[key] = value
+	op, err := c.server.UpdateInstance(name, inst.Writable(), etag)
+	if err != nil {
+		return fmt.Errorf("failed to update container config: %w", err)
+	}
+	return op.Wait()
+}
+
+// HasRole checks whether a container has a role label set (any core-* role).
+func (c *Client) HasRole(name string) bool {
+	inst, _, err := c.server.GetInstance(name)
+	if err != nil {
+		return false
+	}
+	return inst.Config[RoleKey] != ""
+}
+
+// GetRawInstance returns the raw config map for a container.
+func (c *Client) GetRawInstance(name string) (map[string]string, string, error) {
+	inst, etag, err := c.server.GetInstance(name)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get instance %s: %w", name, err)
+	}
+	return inst.Config, etag, nil
 }
 
 // GetServerInfo gets information about the Incus server
