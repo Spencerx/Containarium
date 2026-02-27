@@ -5,6 +5,29 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-27
+
+### Added
+- **Sentinel TLS certificate sync** — sentinel syncs real Let's Encrypt certificates from spot VM's Caddy server, serves valid HTTPS during maintenance mode instead of self-signed certs
+  - New `/certs` endpoint on daemon gateway exports Caddy certificates as JSON
+  - `CertStore` with SNI-based lookup: exact domain → wildcard → self-signed fallback
+  - New daemon flag: `--caddy-cert-dir` (default: `/var/lib/caddy/.local/share/caddy`)
+  - New sentinel flag: `--cert-sync-interval` (default: `6h`)
+  - Immediate cert sync on recovery (MAINTENANCE → PROXY transition)
+- **Sentinel status page** — real-time recovery information at `/sentinel` during maintenance mode
+  - Shows: current mode, spot VM IP, forwarded ports, preemption count, last preemption, outage duration, cert sync status
+  - Dark theme matching maintenance page, auto-refreshes every 10s
+- **Sentinel JSON status API** — machine-readable `/status` endpoint on binary server port (8888), always available regardless of mode
+- **Management SSH on port 2222** — sentinel listens on port 2222 for direct management access (port 22 is DNAT'd to spot VM in proxy mode)
+  - Startup script configures sshd to listen on both port 22 and 2222
+  - New Terraform firewall rule: `sentinel_mgmt_ssh` for port 2222
+- **`docs/SENTINEL-DESIGN.md`** — comprehensive sentinel architecture documentation covering modes, TLS cert sync, status page, CLI reference, one-sentinel-to-many-spot-VMs scaling, Terraform config, and operational runbook
+
+### Changed
+- Updated README.md architecture to reflect one-sentinel-to-many-spot-VMs scaling model
+- Updated `SPOT-RECOVERY.md`, `SPOT-INSTANCES-AND-SCALING.md`, `HORIZONTAL-SCALING-ARCHITECTURE.md`, `terraform/gce/README.md` to reference new `SENTINEL-DESIGN.md`
+- Sentinel startup script: fixed `systemctl restart sshd` → `ssh || sshd || true` for Ubuntu compatibility
+
 ## [0.7.0] - 2026-02-25
 
 ### Added
@@ -514,6 +537,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.8.0** (2026-02-27) - Sentinel TLS Cert Sync, Status Page, Management SSH, Sentinel Design Doc
 - **0.7.0** (2026-02-25) - Collaborator Permissions, Docker CE Stack, Service Install, Daemon Config Persistence
 - **0.6.0** (2026-02-15) - Per-Container Traffic Monitoring, Docker to Podman Migration
 - **0.5.0** (2026-02-10) - Security Hardening Release (5 critical fixes)
@@ -522,7 +546,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.2.0** (2025-01-12) - Resize command, mTLS support, production readiness
 - **0.1.0** (Initial release) - Basic container management, SSH jump server
 
-[Unreleased]: https://github.com/FootprintAI/Containarium/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/FootprintAI/Containarium/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.8.0
 [0.7.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.7.0
 [0.6.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.6.0
 [0.5.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.5.0
