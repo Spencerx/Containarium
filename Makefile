@@ -164,19 +164,6 @@ test-integration: ## Run integration tests (requires running instance)
 	fi
 	@cd test/integration && go test -v -timeout 15m
 
-test-reboot: ## Run reboot persistence test (requires GCP access)
-	@echo "==> Running reboot persistence test..."
-	@chmod +x scripts/reboot-persistence-test.sh
-	@./scripts/reboot-persistence-test.sh full
-
-test-reboot-prepare: ## Prepare reboot test (step 1)
-	@chmod +x scripts/reboot-persistence-test.sh
-	@./scripts/reboot-persistence-test.sh prepare
-
-test-reboot-verify: ## Verify after reboot (step 3)
-	@chmod +x scripts/reboot-persistence-test.sh
-	@./scripts/reboot-persistence-test.sh verify
-
 test-e2e: ## Run end-to-end reboot persistence test using Terraform (RECOMMENDED)
 	@echo "==> Running E2E reboot persistence test with Terraform..."
 	@if [ -z "$$GCP_PROJECT" ]; then \
