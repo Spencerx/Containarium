@@ -21,6 +21,7 @@ import (
 	"github.com/footprintai/containarium/internal/gateway"
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/mtls"
+	"github.com/footprintai/containarium/internal/network"
 	"github.com/footprintai/containarium/internal/traffic"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"google.golang.org/grpc"
@@ -66,20 +67,22 @@ type DualServerConfig struct {
 
 // DualServer runs both gRPC and HTTP/REST servers
 type DualServer struct {
-	config             *DualServerConfig
-	grpcServer         *grpc.Server
-	containerServer    *ContainerServer
-	appServer          *AppServer
-	networkServer      *NetworkServer
-	trafficServer      *TrafficServer
-	trafficCollector   *traffic.Collector
-	gatewayServer      *gateway.GatewayServer
-	tokenManager       *auth.TokenManager
-	authMiddleware     *auth.AuthMiddleware
-	routeStore         *app.RouteStore
-	routeSyncJob       *app.RouteSyncJob
-	collaboratorStore  *collaborator.Store
-	daemonConfigStore  *app.DaemonConfigStore
+	config                *DualServerConfig
+	grpcServer            *grpc.Server
+	containerServer       *ContainerServer
+	appServer             *AppServer
+	networkServer         *NetworkServer
+	trafficServer         *TrafficServer
+	trafficCollector      *traffic.Collector
+	gatewayServer         *gateway.GatewayServer
+	tokenManager          *auth.TokenManager
+	authMiddleware        *auth.AuthMiddleware
+	routeStore            *app.RouteStore
+	routeSyncJob          *app.RouteSyncJob
+	passthroughStore      *network.PassthroughStore
+	passthroughSyncJob    *network.PassthroughSyncJob
+	collaboratorStore     *collaborator.Store
+	daemonConfigStore     *app.DaemonConfigStore
 }
 
 // NewDualServer creates a new dual server instance
@@ -367,6 +370,31 @@ skipAppHosting:
 		}
 	}
 
+	// Setup passthrough route persistence and iptables sync.
+	// This mirrors the route store pattern but for TCP/UDP passthrough routes.
+	var passthroughStore *network.PassthroughStore
+	var passthroughSyncJob *network.PassthroughSyncJob
+	if postgresConnString != "" && networkServer != nil {
+		pool, poolErr := connectToPostgres(postgresConnString, 5, 3*time.Second)
+		if poolErr != nil {
+			log.Printf("Warning: Failed to connect to PostgreSQL for passthrough store: %v", poolErr)
+		} else {
+			passthroughStore, err = network.NewPassthroughStore(context.Background(), pool)
+			if err != nil {
+				log.Printf("Warning: Failed to create passthrough store: %v", err)
+				pool.Close()
+			} else {
+				syncInterval := config.RouteSyncInterval
+				if syncInterval == 0 {
+					syncInterval = 5 * time.Second
+				}
+				passthroughSyncJob = network.NewPassthroughSyncJob(passthroughStore, networkServer.passthroughManager, syncInterval)
+				networkServer.passthroughStore = passthroughStore
+				log.Printf("Passthrough route persistence enabled with %v sync interval", syncInterval)
+			}
+		}
+	}
+
 	reflection.Register(grpcServer)
 
 	// Create gateway server if REST is enabled
@@ -397,20 +425,22 @@ skipAppHosting:
 	}
 
 	return &DualServer{
-		config:            config,
-		grpcServer:        grpcServer,
-		containerServer:   containerServer,
-		appServer:         appServer,
-		networkServer:     networkServer,
-		trafficServer:     trafficServer,
-		trafficCollector:  trafficCollector,
-		gatewayServer:     gatewayServer,
-		tokenManager:      tokenManager,
-		authMiddleware:    authMiddleware,
-		routeStore:        routeStore,
-		routeSyncJob:      routeSyncJob,
-		collaboratorStore: collabStore,
-		daemonConfigStore: config.DaemonConfigStore,
+		config:             config,
+		grpcServer:         grpcServer,
+		containerServer:    containerServer,
+		appServer:          appServer,
+		networkServer:      networkServer,
+		trafficServer:      trafficServer,
+		trafficCollector:   trafficCollector,
+		gatewayServer:      gatewayServer,
+		tokenManager:       tokenManager,
+		authMiddleware:     authMiddleware,
+		routeStore:         routeStore,
+		routeSyncJob:       routeSyncJob,
+		passthroughStore:   passthroughStore,
+		passthroughSyncJob: passthroughSyncJob,
+		collaboratorStore:  collabStore,
+		daemonConfigStore:  config.DaemonConfigStore,
 	}, nil
 }
 
@@ -427,6 +457,12 @@ func (ds *DualServer) Start(ctx context.Context) error {
 	if ds.routeSyncJob != nil {
 		ds.routeSyncJob.Start(ctx)
 		log.Printf("Route sync job started")
+	}
+
+	// Start passthrough sync job if available (syncs PostgreSQL -> iptables)
+	if ds.passthroughSyncJob != nil {
+		ds.passthroughSyncJob.Start(ctx)
+		log.Printf("Passthrough sync job started")
 	}
 
 	// Ensure management route persists in PostgreSQL (RouteSyncJob will push to Caddy)
@@ -502,6 +538,9 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		log.Println("Shutting down servers...")
 		if ds.routeSyncJob != nil {
 			ds.routeSyncJob.Stop()
+		}
+		if ds.passthroughSyncJob != nil {
+			ds.passthroughSyncJob.Stop()
 		}
 		if ds.trafficCollector != nil {
 			ds.trafficCollector.Stop()

@@ -18,10 +18,11 @@ type NetworkServer struct {
 	proxyManager       *app.ProxyManager
 	passthroughManager *network.PassthroughManager
 	appStore           app.AppStore
-	routeStore         *app.RouteStore // Source of truth for routes (PostgreSQL)
-	containerNetwork   string          // e.g., "10.100.0.0/24"
-	proxyIP            string          // e.g., "10.100.0.1"
-	baseDomain         string          // e.g., "kafeido.app"
+	routeStore         *app.RouteStore            // Source of truth for routes (PostgreSQL)
+	passthroughStore   *network.PassthroughStore   // Source of truth for passthrough routes (PostgreSQL)
+	containerNetwork   string                      // e.g., "10.100.0.0/24"
+	proxyIP            string                      // e.g., "10.100.0.1"
+	baseDomain         string                      // e.g., "kafeido.app"
 	emitter            *events.Emitter
 }
 
@@ -374,11 +375,6 @@ func (s *NetworkServer) DeleteRoute(ctx context.Context, req *pb.DeleteRouteRequ
 
 // ListPassthroughRoutes lists all TCP/UDP passthrough routes
 func (s *NetworkServer) ListPassthroughRoutes(ctx context.Context, req *pb.ListPassthroughRoutesRequest) (*pb.ListPassthroughRoutesResponse, error) {
-	routes, err := s.passthroughManager.ListRoutes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list passthrough routes: %w", err)
-	}
-
 	// Build IP -> container name map for lookups
 	ipToContainer := make(map[string]string)
 	if s.incusClient != nil {
@@ -392,6 +388,48 @@ func (s *NetworkServer) ListPassthroughRoutes(ctx context.Context, req *pb.ListP
 		}
 	}
 
+	// If PassthroughStore is available, use it as source of truth
+	if s.passthroughStore != nil {
+		records, err := s.passthroughStore.List(ctx, true) // activeOnly = true
+		if err != nil {
+			return nil, fmt.Errorf("failed to list passthrough routes: %w", err)
+		}
+
+		var pbRoutes []*pb.PassthroughRoute
+		for _, rec := range records {
+			protocol := pb.RouteProtocol_ROUTE_PROTOCOL_TCP
+			if rec.Protocol == "udp" {
+				protocol = pb.RouteProtocol_ROUTE_PROTOCOL_UDP
+			}
+
+			containerName := rec.ContainerName
+			if containerName == "" {
+				containerName = ipToContainer[rec.TargetIP]
+			}
+
+			pbRoutes = append(pbRoutes, &pb.PassthroughRoute{
+				ExternalPort:  int32(rec.ExternalPort),
+				TargetIp:      rec.TargetIP,
+				TargetPort:    int32(rec.TargetPort),
+				Protocol:      protocol,
+				Active:        rec.Active,
+				ContainerName: containerName,
+				Description:   rec.Description,
+			})
+		}
+
+		return &pb.ListPassthroughRoutesResponse{
+			Routes:     pbRoutes,
+			TotalCount: int32(len(pbRoutes)),
+		}, nil
+	}
+
+	// Fallback to iptables (legacy)
+	routes, err := s.passthroughManager.ListRoutes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list passthrough routes: %w", err)
+	}
+
 	var pbRoutes []*pb.PassthroughRoute
 	for _, route := range routes {
 		protocol := pb.RouteProtocol_ROUTE_PROTOCOL_TCP
@@ -399,7 +437,6 @@ func (s *NetworkServer) ListPassthroughRoutes(ctx context.Context, req *pb.ListP
 			protocol = pb.RouteProtocol_ROUTE_PROTOCOL_UDP
 		}
 
-		// Lookup container name by IP if not already set
 		containerName := route.ContainerName
 		if containerName == "" {
 			containerName = ipToContainer[route.TargetIP]
@@ -441,9 +478,26 @@ func (s *NetworkServer) AddPassthroughRoute(ctx context.Context, req *pb.AddPass
 		protocol = "udp"
 	}
 
-	// Add the route
-	if err := s.passthroughManager.AddRoute(int(req.ExternalPort), req.TargetIp, int(req.TargetPort), protocol); err != nil {
-		return nil, fmt.Errorf("failed to add passthrough route: %w", err)
+	// If PassthroughStore is available, save to PostgreSQL (source of truth)
+	if s.passthroughStore != nil {
+		record := &network.PassthroughRecord{
+			ExternalPort:  int(req.ExternalPort),
+			TargetIP:      req.TargetIp,
+			TargetPort:    int(req.TargetPort),
+			Protocol:      protocol,
+			ContainerName: req.ContainerName,
+			Description:   req.Description,
+			Active:        true,
+		}
+
+		if err := s.passthroughStore.Save(ctx, record); err != nil {
+			return nil, fmt.Errorf("failed to save passthrough route: %w", err)
+		}
+	} else {
+		// Fallback: directly add to iptables (legacy behavior)
+		if err := s.passthroughManager.AddRoute(int(req.ExternalPort), req.TargetIp, int(req.TargetPort), protocol); err != nil {
+			return nil, fmt.Errorf("failed to add passthrough route: %w", err)
+		}
 	}
 
 	route := &pb.PassthroughRoute{
@@ -458,7 +512,7 @@ func (s *NetworkServer) AddPassthroughRoute(ctx context.Context, req *pb.AddPass
 
 	return &pb.AddPassthroughRouteResponse{
 		Route:   route,
-		Message: fmt.Sprintf("Passthrough route added: %s:%d -> %s:%d", protocol, req.ExternalPort, req.TargetIp, req.TargetPort),
+		Message: fmt.Sprintf("Passthrough route added: %s:%d -> %s:%d (will sync to iptables)", protocol, req.ExternalPort, req.TargetIp, req.TargetPort),
 	}, nil
 }
 
@@ -475,13 +529,21 @@ func (s *NetworkServer) DeletePassthroughRoute(ctx context.Context, req *pb.Dele
 		protocol = "udp"
 	}
 
-	// Remove the route
-	if err := s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol); err != nil {
-		return nil, fmt.Errorf("failed to remove passthrough route: %w", err)
+	// If PassthroughStore is available, delete from PostgreSQL (source of truth)
+	if s.passthroughStore != nil {
+		err := s.passthroughStore.Delete(ctx, int(req.ExternalPort), protocol)
+		if err != nil && err != network.ErrPassthroughNotFound {
+			return nil, fmt.Errorf("failed to delete passthrough route: %w", err)
+		}
+	} else {
+		// Fallback: directly remove from iptables (legacy behavior)
+		if err := s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol); err != nil {
+			return nil, fmt.Errorf("failed to remove passthrough route: %w", err)
+		}
 	}
 
 	return &pb.DeletePassthroughRouteResponse{
-		Message: fmt.Sprintf("Passthrough route removed: %s:%d", protocol, req.ExternalPort),
+		Message: fmt.Sprintf("Passthrough route removed: %s:%d (will sync to iptables)", protocol, req.ExternalPort),
 	}, nil
 }
 
@@ -504,9 +566,15 @@ func (s *NetworkServer) UpdatePassthroughRoute(ctx context.Context, req *pb.Upda
 
 	// Handle enable/disable toggle
 	if req.Active != nil && !*req.Active {
-		// Disable route: remove from iptables
-		if err := s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol); err != nil {
-			return nil, fmt.Errorf("failed to disable passthrough route: %w", err)
+		if s.passthroughStore != nil {
+			if err := s.passthroughStore.SetActive(ctx, int(req.ExternalPort), protocol, false); err != nil {
+				return nil, fmt.Errorf("failed to disable passthrough route: %w", err)
+			}
+		} else {
+			// Fallback: directly remove from iptables
+			if err := s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol); err != nil {
+				return nil, fmt.Errorf("failed to disable passthrough route: %w", err)
+			}
 		}
 
 		return &pb.UpdatePassthroughRouteResponse{
@@ -519,7 +587,7 @@ func (s *NetworkServer) UpdatePassthroughRoute(ctx context.Context, req *pb.Upda
 				ContainerName: req.ContainerName,
 				Description:   req.Description,
 			},
-			Message: fmt.Sprintf("Passthrough route disabled: %s:%d", protocol, req.ExternalPort),
+			Message: fmt.Sprintf("Passthrough route disabled: %s:%d (will sync to iptables)", protocol, req.ExternalPort),
 		}, nil
 	}
 
@@ -531,12 +599,28 @@ func (s *NetworkServer) UpdatePassthroughRoute(ctx context.Context, req *pb.Upda
 		return nil, fmt.Errorf("target_port must be between 1 and 65535")
 	}
 
-	// Remove existing route first (ignore errors if it doesn't exist)
-	s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol)
+	if s.passthroughStore != nil {
+		record := &network.PassthroughRecord{
+			ExternalPort:  int(req.ExternalPort),
+			TargetIP:      req.TargetIp,
+			TargetPort:    int(req.TargetPort),
+			Protocol:      protocol,
+			ContainerName: req.ContainerName,
+			Description:   req.Description,
+			Active:        true,
+		}
 
-	// Add the updated route
-	if err := s.passthroughManager.AddRoute(int(req.ExternalPort), req.TargetIp, int(req.TargetPort), protocol); err != nil {
-		return nil, fmt.Errorf("failed to update passthrough route: %w", err)
+		if err := s.passthroughStore.Save(ctx, record); err != nil {
+			return nil, fmt.Errorf("failed to update passthrough route: %w", err)
+		}
+	} else {
+		// Fallback: directly update iptables (legacy behavior)
+		// Remove existing route first (ignore errors if it doesn't exist)
+		s.passthroughManager.RemoveRoute(int(req.ExternalPort), protocol)
+
+		if err := s.passthroughManager.AddRoute(int(req.ExternalPort), req.TargetIp, int(req.TargetPort), protocol); err != nil {
+			return nil, fmt.Errorf("failed to update passthrough route: %w", err)
+		}
 	}
 
 	return &pb.UpdatePassthroughRouteResponse{
@@ -549,7 +633,7 @@ func (s *NetworkServer) UpdatePassthroughRoute(ctx context.Context, req *pb.Upda
 			ContainerName: req.ContainerName,
 			Description:   req.Description,
 		},
-		Message: fmt.Sprintf("Passthrough route updated: %s:%d -> %s:%d", protocol, req.ExternalPort, req.TargetIp, req.TargetPort),
+		Message: fmt.Sprintf("Passthrough route updated: %s:%d -> %s:%d (will sync to iptables)", protocol, req.ExternalPort, req.TargetIp, req.TargetPort),
 	}, nil
 }
 
