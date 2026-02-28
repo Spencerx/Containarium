@@ -1,31 +1,28 @@
-# Sentinel VM Configuration for HA spot instance recovery
-# All resources are conditional on enable_sentinel + use_spot_instance
-#
-# The sentinel runs in a separate region (default us-west1) for free tier eligibility:
-#   - e2-micro (2 vCPUs, 1 GB RAM)
-#   - pd-standard boot disk up to 30 GB
-#   - us-west1 / us-central1 / us-east1
+# =============================================================================
+# Containarium Terraform Module — Sentinel VM
+# =============================================================================
+# Sentinel VM for HA spot instance recovery.
+# Uses the same static IP as jump_server_ip (sentinel owns it, spot VM uses internal).
+# All resources are conditional on enable_sentinel + use_spot_instance.
 
 locals {
   use_sentinel = var.enable_sentinel && var.use_spot_instance
 }
 
-# Sentinel gets its own static IP in its region (GCP static IPs are regional)
-resource "google_compute_address" "sentinel_ip" {
-  count  = local.use_sentinel ? 1 : 0
-  name   = "${var.instance_name}-sentinel-ip"
-  region = var.sentinel_region
-}
-
+# -----------------------------------------------------------------------------
 # Sentinel VM — tiny always-on instance that owns the public static IP
+# Runs in the SAME region/zone as spot VM (matching production setup).
+# -----------------------------------------------------------------------------
+
 resource "google_compute_instance" "sentinel" {
   count = local.use_sentinel ? 1 : 0
 
   name         = "${var.instance_name}-sentinel"
   machine_type = var.sentinel_machine_type
-  zone         = var.sentinel_zone
+  zone         = var.zone
+  project      = var.project_id
 
-  tags = ["containarium-sentinel"]
+  tags = concat(["containarium-sentinel"], var.instance_tags)
 
   # Always-on: standard provisioning, live-migrate on maintenance
   scheduling {
@@ -45,11 +42,12 @@ resource "google_compute_instance" "sentinel" {
   }
 
   network_interface {
-    network = "default"
+    network    = local.network
+    subnetwork = local.subnetwork
 
     access_config {
       # Sentinel owns the public static IP
-      nat_ip = google_compute_address.sentinel_ip[0].address
+      nat_ip = google_compute_address.jump_server_ip.address
     }
   }
 
@@ -61,7 +59,7 @@ resource "google_compute_instance" "sentinel" {
     startup-script = templatefile("${path.module}/scripts/startup-sentinel.sh", {
       admin_users             = keys(var.admin_ssh_keys)
       containarium_binary_url = var.containarium_binary_url
-      spot_vm_name            = var.instance_name
+      spot_vm_name            = local.spot_vm_name
       zone                    = var.zone
       project_id              = var.project_id
     })
@@ -89,12 +87,17 @@ resource "google_compute_instance" "sentinel" {
   }
 }
 
-# Firewall: allow SSH/HTTP/HTTPS from internet to sentinel
+# -----------------------------------------------------------------------------
+# Sentinel Firewall Rules
+# -----------------------------------------------------------------------------
+
+# Allow SSH/HTTP/HTTPS from internet to sentinel
 resource "google_compute_firewall" "sentinel_ingress" {
   count = local.use_sentinel ? 1 : 0
 
   name    = "${var.instance_name}-sentinel-ingress"
-  network = "default"
+  network = local.network
+  project = var.project_id
 
   allow {
     protocol = "tcp"
@@ -107,12 +110,13 @@ resource "google_compute_firewall" "sentinel_ingress" {
   description = "Allow SSH (sshpiper on :22) / HTTP / HTTPS to Containarium sentinel"
 }
 
-# Firewall: allow sentinel to reach spot VM on forwarded ports (internal network)
+# Allow sentinel to reach spot VM on forwarded ports (internal network)
 resource "google_compute_firewall" "sentinel_to_spot" {
   count = local.use_sentinel ? 1 : 0
 
   name    = "${var.instance_name}-sentinel-to-spot"
-  network = "default"
+  network = local.network
+  project = var.project_id
 
   allow {
     protocol = "tcp"
@@ -125,12 +129,13 @@ resource "google_compute_firewall" "sentinel_to_spot" {
   description = "Allow sentinel to forward traffic to spot backend"
 }
 
-# Firewall: allow spot VM to download binary from sentinel (internal only)
+# Allow spot VM to download binary from sentinel (internal only)
 resource "google_compute_firewall" "spot_to_sentinel_binary" {
   count = local.use_sentinel ? 1 : 0
 
   name    = "${var.instance_name}-spot-to-sentinel-binary"
-  network = "default"
+  network = local.network
+  project = var.project_id
 
   allow {
     protocol = "tcp"
@@ -143,12 +148,13 @@ resource "google_compute_firewall" "spot_to_sentinel_binary" {
   description = "Allow spot VM to download containarium binary from sentinel"
 }
 
-# Firewall: allow SSH management on port 2222 (port 22 is handled by sshpiper)
+# Allow SSH management on port 2222 (port 22 is handled by sshpiper)
 resource "google_compute_firewall" "sentinel_mgmt_ssh" {
   count = local.use_sentinel ? 1 : 0
 
   name    = "${var.instance_name}-sentinel-mgmt-ssh"
-  network = "default"
+  network = local.network
+  project = var.project_id
 
   allow {
     protocol = "tcp"
@@ -161,41 +167,28 @@ resource "google_compute_firewall" "sentinel_mgmt_ssh" {
   description = "Allow SSH management to sentinel on port 2222 (port 22 handled by sshpiper)"
 }
 
-# Copy containarium binary to sentinel VM via SSH provisioner
-# The sentinel owns the static IP, so SSH provisioner can reach it directly.
-resource "null_resource" "copy_binary_to_sentinel" {
-  count = local.use_sentinel && var.containarium_binary_url == "" && var.ssh_private_key_path != "" ? 1 : 0
+# -----------------------------------------------------------------------------
+# Optional: Unmanaged Instance Group for GLB backend
+# -----------------------------------------------------------------------------
 
-  depends_on = [
-    google_compute_instance.sentinel,
+resource "google_compute_instance_group" "sentinel" {
+  count = local.use_sentinel && var.enable_glb_backend ? 1 : 0
+
+  name    = "${var.instance_name}-sentinel-group"
+  zone    = var.zone
+  project = var.project_id
+
+  instances = [
+    google_compute_instance.sentinel[0].self_link,
   ]
 
-  connection {
-    type        = "ssh"
-    user        = keys(var.admin_ssh_keys)[0]
-    host        = google_compute_address.sentinel_ip[0].address
-    port        = 2222  # sshd listens on 2222 only; port 22 is handled by sshpiper
-    private_key = file(var.ssh_private_key_path)
+  named_port {
+    name = "http"
+    port = 8080
   }
 
-  provisioner "file" {
-    source      = "${path.module}/../../bin/containarium-linux-amd64"
-    destination = "/tmp/containarium"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sudo mv /tmp/containarium /usr/local/bin/containarium",
-      "sudo chmod +x /usr/local/bin/containarium",
-      # Install and start the sentinel service
-      "sudo /usr/local/bin/containarium sentinel service install --spot-vm ${var.instance_name} --zone ${var.zone} --project ${var.project_id}",
-      "sleep 2",
-      "sudo systemctl status containarium-sentinel --no-pager || true"
-    ]
-  }
-
-  triggers = {
-    instance_id = google_compute_instance.sentinel[0].id
-    binary_hash = filemd5("${path.module}/../../bin/containarium-linux-amd64")
+  named_port {
+    name = "ssh"
+    port = 22
   }
 }

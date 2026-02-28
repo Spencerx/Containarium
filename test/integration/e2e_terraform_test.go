@@ -110,13 +110,14 @@ func TestE2ERebootPersistenceTerraform(t *testing.T) {
 	t.Log("✅ E2E Reboot Persistence Test with Terraform PASSED!")
 }
 
-// setupTerraformWorkspace creates a temporary Terraform workspace for testing
+// setupTerraformWorkspace creates a temporary Terraform workspace for testing.
+// Copies the full terraform tree (consumer + module) so relative module paths work.
 func setupTerraformWorkspace(t *testing.T) string {
 	// Create temp directory for test workspace
 	tmpDir, err := os.MkdirTemp("", "containarium-e2e-*")
 	require.NoError(t, err, "Failed to create temp directory")
 
-	// Write all embedded Terraform files to workspace
+	// Write all terraform files preserving directory structure
 	for filename, content := range tfembed.AllFiles() {
 		destPath := filepath.Join(tmpDir, filename)
 
@@ -129,8 +130,11 @@ func setupTerraformWorkspace(t *testing.T) string {
 		require.NoError(t, err, "Failed to write %s", filename)
 	}
 
-	t.Logf("Terraform workspace created at: %s", tmpDir)
-	return tmpDir
+	// The consumer (gce/) references the module via relative path "../modules/containarium"
+	// Return the gce/ subdirectory as the workspace for terraform commands
+	workspace := filepath.Join(tmpDir, "gce")
+	t.Logf("Terraform workspace created at: %s", workspace)
+	return workspace
 }
 
 // cleanupTerraformWorkspace removes the temporary workspace
@@ -173,11 +177,6 @@ admin_ssh_keys = {}
 enable_containarium_daemon = false
 containarium_version = "dev"
 containarium_binary_url = ""
-
-# Single server setup
-enable_horizontal_scaling = false
-jump_server_count = 1
-enable_load_balancer = false
 
 # Monitoring and backups
 enable_monitoring = false

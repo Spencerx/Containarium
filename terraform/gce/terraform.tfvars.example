@@ -28,10 +28,8 @@ enable_containarium_daemon = false
 containarium_version       = "latest"
 containarium_binary_url    = ""  # Optional: URL to custom binary
 
-# Scaling configuration
-enable_horizontal_scaling = false
-jump_server_count         = 1
-enable_load_balancer      = false
+# Sentinel HA (recommended for production)
+enable_sentinel = false
 
 # Monitoring and backups
 enable_monitoring     = false

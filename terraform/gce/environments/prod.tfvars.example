@@ -16,7 +16,7 @@ zone   = "us-central1-a"
 # Instance Configuration
 instance_name       = "containarium-prod"
 machine_type        = "n2-standard-8"   # 8 vCPU, 32GB RAM (50-100 users)
-use_spot_instance   = false             # Use regular instances for production
+use_spot_instance   = true              # Use spot for cost savings with sentinel HA
 use_persistent_disk = true              # REQUIRED for data persistence
 
 # Disk Sizes (GB)
@@ -24,16 +24,9 @@ boot_disk_size = 100
 data_disk_size = 500  # Larger disk for production data
 
 # Security - SSH Keys
-# Option 1: Inline (not recommended for production)
 # admin_ssh_keys = {
-#   admin = "ssh-ed25519 AAAAC3... admin@company.com"
+#   admin = "ssh-ed25519 AAAA... admin@company.com"
 # }
-
-# Option 2: Load from GCP Secret Manager (recommended)
-# Configure in main.tf:
-#   data "google_secret_manager_secret_version" "admin_ssh_key" {
-#     secret = "containarium-admin-ssh-key"
-#   }
 
 # Allowed SSH Sources (your office/VPN IP ranges)
 allowed_ssh_sources = [
@@ -48,10 +41,8 @@ enable_containarium_daemon = true
 containarium_version       = "latest"
 containarium_binary_url    = ""  # Optional: URL to custom binary
 
-# Horizontal Scaling (Multi-Server Setup)
-enable_horizontal_scaling = true
-jump_server_count         = 3     # 3 servers for HA
-enable_load_balancer      = true  # Load balance SSH connections
+# Sentinel HA (recommended for production with spot instances)
+enable_sentinel = true
 
 # Monitoring and Backups
 enable_monitoring     = true
