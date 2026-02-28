@@ -5,6 +5,11 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-02-28
+
+### Fixed
+- **Boot disk size validation** — Lowered minimum from 100GB to 10GB to support production environments with small boot disks (e.g., sentinel VMs).
+
 ## [0.9.0] - 2026-02-28
 
 ### Changed
@@ -605,6 +610,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.9.1** (2026-02-28) - Boot disk validation fix for production
 - **0.9.0** (2026-02-28) - Terraform Module Consolidation, single source of truth for dev and production
 - **0.8.2** (2026-02-28) - sshpiper SSH reverse proxy on sentinel
 - **0.8.1** (2026-02-27) - Preemption recovery fix, PostgreSQL retry, sentinel iptables fix, role-based container labeling
@@ -617,6 +623,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.2.0** (2025-01-12) - Resize command, mTLS support, production readiness
 - **0.1.0** (Initial release) - Basic container management, SSH jump server
 
+[0.9.1]: https://github.com/FootprintAI/Containarium/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/FootprintAI/Containarium/compare/0.8.2...0.9.0
 [0.8.2]: https://github.com/FootprintAI/Containarium/compare/0.8.1...0.8.2
 [0.8.1]: https://github.com/FootprintAI/Containarium/compare/0.8.0...0.8.1

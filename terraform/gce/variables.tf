@@ -48,8 +48,8 @@ variable "boot_disk_size" {
   default     = 500
 
   validation {
-    condition     = var.boot_disk_size >= 100 && var.boot_disk_size <= 2000
-    error_message = "Boot disk size must be between 100 and 2000 GB"
+    condition     = var.boot_disk_size >= 10 && var.boot_disk_size <= 2000
+    error_message = "Boot disk size must be between 10 and 2000 GB"
   }
 }
 
