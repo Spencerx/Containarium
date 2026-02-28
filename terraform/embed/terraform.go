@@ -1,69 +1,110 @@
 package embed
 
 import (
-	_ "embed"
+	"os"
+	"path/filepath"
+	"runtime"
 )
 
-// Terraform configuration files
-//
-//go:embed ../gce/main.tf
-var MainTF string
-
-//go:embed ../gce/spot-instance.tf
-var SpotInstanceTF string
-
-//go:embed ../gce/horizontal-scaling.tf
-var HorizontalScalingTF string
-
-//go:embed ../gce/variables.tf
-var VariablesTF string
-
-//go:embed ../gce/outputs.tf
-var OutputsTF string
-
-// Note: providers.tf doesn't exist in terraform/gce/, commenting out
-// //go:embed ../gce/providers.tf
-// var ProvidersTF string
-
-// Startup scripts
-//
-//go:embed ../gce/scripts/startup-spot.sh
-var StartupSpotSH string
-
-//go:embed ../gce/scripts/startup.sh
-var StartupSH string
-
-// TerraformFiles returns a map of filename to content for all Terraform files
-func TerraformFiles() map[string]string {
-	return map[string]string{
-		"main.tf":               MainTF,
-		"spot-instance.tf":      SpotInstanceTF,
-		"horizontal-scaling.tf": HorizontalScalingTF,
-		"variables.tf":          VariablesTF,
-		"outputs.tf":            OutputsTF,
-		// "providers.tf":          ProvidersTF, // Commented out - file doesn't exist
-	}
+// TerraformDir returns the absolute path to the terraform directory.
+// This is useful for tests that need to run terraform commands against
+// the actual configuration files.
+func TerraformDir() string {
+	_, filename, _, _ := runtime.Caller(0)
+	return filepath.Dir(filepath.Dir(filename))
 }
 
-// ScriptFiles returns a map of filename to content for all script files
-func ScriptFiles() map[string]string {
-	return map[string]string{
-		"scripts/startup-spot.sh": StartupSpotSH,
-		"scripts/startup.sh":      StartupSH,
-	}
+// ConsumerDir returns the absolute path to the dev consumer (terraform/gce/) directory.
+func ConsumerDir() string {
+	return filepath.Join(TerraformDir(), "gce")
 }
 
-// AllFiles returns all Terraform and script files
+// ModuleDir returns the absolute path to the containarium module directory.
+func ModuleDir() string {
+	return filepath.Join(TerraformDir(), "modules", "containarium")
+}
+
+// AllFiles returns all Terraform and script files by reading them from disk.
+// This replaces the previous go:embed approach which couldn't reference parent directories.
 func AllFiles() map[string]string {
 	files := make(map[string]string)
 
-	for k, v := range TerraformFiles() {
-		files[k] = v
+	// Read module files
+	moduleFiles := []string{
+		"main.tf",
+		"sentinel.tf",
+		"spot-instance.tf",
+		"variables.tf",
+		"outputs.tf",
+	}
+	for _, f := range moduleFiles {
+		content, err := os.ReadFile(filepath.Join(ModuleDir(), f))
+		if err == nil {
+			files[filepath.Join("modules", "containarium", f)] = string(content)
+		}
 	}
 
-	for k, v := range ScriptFiles() {
-		files[k] = v
+	// Read module scripts
+	scriptFiles := []string{
+		"startup.sh",
+		"startup-spot.sh",
+		"startup-sentinel.sh",
+	}
+	for _, f := range scriptFiles {
+		content, err := os.ReadFile(filepath.Join(ModuleDir(), "scripts", f))
+		if err == nil {
+			files[filepath.Join("modules", "containarium", "scripts", f)] = string(content)
+		}
 	}
 
+	// Read consumer files
+	consumerFiles := []string{
+		"main.tf",
+		"variables.tf",
+		"outputs.tf",
+	}
+	for _, f := range consumerFiles {
+		content, err := os.ReadFile(filepath.Join(ConsumerDir(), f))
+		if err == nil {
+			files[filepath.Join("gce", f)] = string(content)
+		}
+	}
+
+	return files
+}
+
+// TerraformFiles returns module Terraform files by reading from disk.
+func TerraformFiles() map[string]string {
+	files := make(map[string]string)
+	moduleFiles := []string{
+		"main.tf",
+		"sentinel.tf",
+		"spot-instance.tf",
+		"variables.tf",
+		"outputs.tf",
+	}
+	for _, f := range moduleFiles {
+		content, err := os.ReadFile(filepath.Join(ModuleDir(), f))
+		if err == nil {
+			files[f] = string(content)
+		}
+	}
+	return files
+}
+
+// ScriptFiles returns script files by reading from disk.
+func ScriptFiles() map[string]string {
+	files := make(map[string]string)
+	scriptFiles := []string{
+		"startup.sh",
+		"startup-spot.sh",
+		"startup-sentinel.sh",
+	}
+	for _, f := range scriptFiles {
+		content, err := os.ReadFile(filepath.Join(ModuleDir(), "scripts", f))
+		if err == nil {
+			files[filepath.Join("scripts", f)] = string(content)
+		}
+	}
 	return files
 }

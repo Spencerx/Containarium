@@ -1,6 +1,11 @@
 # =============================================================================
-# Dev Consumer Variables — pass-through to containarium module
+# Containarium Terraform Module — Variables
 # =============================================================================
+# Unified variable definitions for both dev and production consumers.
+
+# -----------------------------------------------------------------------------
+# Project & Region
+# -----------------------------------------------------------------------------
 
 variable "project_id" {
   description = "GCP project ID"
@@ -18,6 +23,10 @@ variable "zone" {
   type        = string
   default     = "us-central1-a"
 }
+
+# -----------------------------------------------------------------------------
+# Instance Configuration
+# -----------------------------------------------------------------------------
 
 variable "instance_name" {
   description = "Name of the GCE instance"
@@ -64,6 +73,32 @@ variable "boot_disk_type" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# Networking
+# -----------------------------------------------------------------------------
+
+variable "network_self_link" {
+  description = "VPC network self_link. If empty, uses default network."
+  type        = string
+  default     = ""
+}
+
+variable "subnetwork_self_link" {
+  description = "Subnetwork self_link. If empty, uses default."
+  type        = string
+  default     = ""
+}
+
+variable "instance_tags" {
+  description = "Network tags for the jump server instance"
+  type        = list(string)
+  default     = ["containarium-jump-server"]
+}
+
+# -----------------------------------------------------------------------------
+# SSH & Security
+# -----------------------------------------------------------------------------
+
 variable "admin_ssh_keys" {
   description = "Map of admin users to their SSH public keys"
   type        = map(string)
@@ -75,6 +110,51 @@ variable "allowed_ssh_sources" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+variable "fail2ban_whitelist_cidr" {
+  description = "CIDR to whitelist in fail2ban (e.g., 10.128.0.0/9 for GCE default, 10.0.0.0/8 for VPC)"
+  type        = string
+  default     = "10.0.0.0/8"
+}
+
+variable "jwt_secret" {
+  description = "JWT secret for REST API authentication. If empty, auto-generated at boot."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
+# Conditional Features (production vs dev)
+# -----------------------------------------------------------------------------
+
+variable "enable_iap_firewall" {
+  description = "Create IAP SSH firewall rule (needed in VPC environments)"
+  type        = bool
+  default     = false
+}
+
+variable "enable_health_check_firewall" {
+  description = "Create firewall rule for GCP health check IP ranges"
+  type        = bool
+  default     = false
+}
+
+variable "enable_glb_backend" {
+  description = "Create unmanaged instance group with named ports for GLB"
+  type        = bool
+  default     = false
+}
+
+variable "spot_vm_external_ip" {
+  description = "Give spot VM an ephemeral external IP (false = Cloud NAT only)"
+  type        = bool
+  default     = true
+}
+
+# -----------------------------------------------------------------------------
+# Incus & Software
+# -----------------------------------------------------------------------------
 
 variable "incus_version" {
   description = "Incus version to install (latest stable if empty)"
@@ -88,8 +168,12 @@ variable "enable_monitoring" {
   default     = true
 }
 
+# -----------------------------------------------------------------------------
+# Service Account & Labels
+# -----------------------------------------------------------------------------
+
 variable "service_account_email" {
-  description = "Service account email for the instance (uses default if empty)"
+  description = "Service account email for the instance (uses default if null)"
   type        = string
   default     = null
 }
@@ -103,6 +187,10 @@ variable "labels" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# DNS (optional)
+# -----------------------------------------------------------------------------
+
 variable "dns_zone_name" {
   description = "Cloud DNS zone name for jump server DNS record (optional)"
   type        = string
@@ -115,7 +203,9 @@ variable "dns_zone_domain" {
   default     = ""
 }
 
-# Spot Instance and Persistent Disk Configuration
+# -----------------------------------------------------------------------------
+# Spot Instance & Persistent Disk
+# -----------------------------------------------------------------------------
 
 variable "use_spot_instance" {
   description = "Use spot (preemptible) instance for cost savings (60-91% cheaper)"
@@ -157,7 +247,9 @@ variable "enable_disk_snapshots" {
   default     = true
 }
 
-# Containarium Daemon Configuration
+# -----------------------------------------------------------------------------
+# Containarium Daemon
+# -----------------------------------------------------------------------------
 
 variable "containarium_version" {
   description = "Containarium version to install"
@@ -166,7 +258,7 @@ variable "containarium_version" {
 }
 
 variable "containarium_binary_url" {
-  description = "URL to download containarium binary (empty = use file provisioner)"
+  description = "URL to download containarium binary (empty = not installed via URL)"
   type        = string
   default     = ""
 }
@@ -177,7 +269,9 @@ variable "enable_containarium_daemon" {
   default     = true
 }
 
-# Sentinel HA Configuration
+# -----------------------------------------------------------------------------
+# Sentinel HA
+# -----------------------------------------------------------------------------
 
 variable "enable_sentinel" {
   description = "Enable sentinel HA proxy for spot instance recovery (requires use_spot_instance=true)"
@@ -200,4 +294,10 @@ variable "sentinel_boot_disk_size" {
     condition     = var.sentinel_boot_disk_size >= 10 && var.sentinel_boot_disk_size <= 100
     error_message = "Sentinel boot disk size must be between 10 and 100 GB"
   }
+}
+
+variable "spot_vm_name_suffix" {
+  description = "Suffix appended to instance_name for the spot VM when sentinel is enabled (e.g., '-spot' gives 'instance-name-spot'). Empty string uses instance_name as-is."
+  type        = string
+  default     = ""
 }

@@ -15,172 +15,55 @@ provider "google" {
   zone    = var.zone
 }
 
-# Static external IP for the jump server
-resource "google_compute_address" "jump_server_ip" {
-  name   = "${var.instance_name}-ip"
-  region = var.region
+module "containarium" {
+  source = "../modules/containarium"
+
+  # Project & region
+  project_id    = var.project_id
+  region        = var.region
+  zone          = var.zone
+  instance_name = var.instance_name
+  machine_type  = var.machine_type
+
+  # Instance config
+  os_image       = var.os_image
+  boot_disk_size = var.boot_disk_size
+  boot_disk_type = var.boot_disk_type
+
+  # Dev defaults: default network, ephemeral IPs
+  # network_self_link and subnetwork_self_link default to ""
+  spot_vm_external_ip = true
+
+  # SSH & Security
+  admin_ssh_keys      = var.admin_ssh_keys
+  allowed_ssh_sources = var.allowed_ssh_sources
+
+  # Incus & Software
+  incus_version     = var.incus_version
+  enable_monitoring = var.enable_monitoring
+
+  # Service account & labels
+  service_account_email = var.service_account_email
+  labels                = var.labels
+
+  # DNS
+  dns_zone_name   = var.dns_zone_name
+  dns_zone_domain = var.dns_zone_domain
+
+  # Spot instance & persistent disk
+  use_spot_instance    = var.use_spot_instance
+  use_persistent_disk  = var.use_persistent_disk
+  data_disk_size       = var.data_disk_size
+  data_disk_type       = var.data_disk_type
+  enable_disk_snapshots = var.enable_disk_snapshots
+
+  # Containarium daemon
+  containarium_version       = var.containarium_version
+  containarium_binary_url    = var.containarium_binary_url
+  enable_containarium_daemon = var.enable_containarium_daemon
+
+  # Sentinel HA
+  enable_sentinel         = var.enable_sentinel
+  sentinel_machine_type   = var.sentinel_machine_type
+  sentinel_boot_disk_size = var.sentinel_boot_disk_size
 }
-
-# Firewall rule - Allow SSH to jump server
-resource "google_compute_firewall" "allow_ssh" {
-  name    = "${var.instance_name}-allow-ssh"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-
-  source_ranges = var.allowed_ssh_sources
-  target_tags   = ["containarium-jump-server"]
-
-  description = "Allow SSH access to Containarium jump server"
-}
-
-# Firewall rule - Allow gRPC daemon API
-resource "google_compute_firewall" "allow_grpc" {
-  count   = var.enable_containarium_daemon ? 1 : 0
-  name    = "${var.instance_name}-allow-grpc"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["50051"]
-  }
-
-  source_ranges = var.allowed_ssh_sources
-  target_tags   = ["containarium-jump-server"]
-
-  description = "Allow gRPC API access to Containarium daemon"
-}
-
-# Optional: Firewall rule for port forwarding approach
-# Uncomment if using port forwarding instead of ProxyJump
-# resource "google_compute_firewall" "allow_container_ssh" {
-#   name    = "${var.instance_name}-allow-container-ssh"
-#   network = "default"
-#
-#   allow {
-#     protocol = "tcp"
-#     ports    = ["2200-2299"]  # Ports for container SSH access
-#   }
-#
-#   source_ranges = var.allowed_ssh_sources
-#   target_tags   = ["containarium-jump-server"]
-#
-#   description = "Allow direct SSH access to containers via port forwarding"
-# }
-
-# GCE VM Instance - Jump Server + LXC Host (regular instance)
-resource "google_compute_instance" "jump_server" {
-  count = var.use_spot_instance ? 0 : 1
-
-  name         = var.instance_name
-  machine_type = var.machine_type
-  zone         = var.zone
-
-  tags = ["containarium-jump-server"]
-
-  boot_disk {
-    initialize_params {
-      image = var.os_image
-      size  = var.boot_disk_size
-      type  = var.boot_disk_type
-    }
-  }
-
-  network_interface {
-    network = "default"
-
-    access_config {
-      nat_ip = google_compute_address.jump_server_ip.address
-    }
-  }
-
-  metadata = {
-    ssh-keys = join("\n", [
-      for user, key in var.admin_ssh_keys :
-      "${user}:${key}"
-    ])
-    startup-script = templatefile("${path.module}/scripts/startup.sh", {
-      incus_version          = var.incus_version
-      admin_users            = keys(var.admin_ssh_keys)
-      enable_monitoring      = var.enable_monitoring
-      containarium_version   = var.containarium_version
-      containarium_binary_url = var.containarium_binary_url
-    })
-  }
-
-  service_account {
-    email  = var.service_account_email
-    scopes = ["cloud-platform"]
-  }
-
-  labels = merge(
-    var.labels,
-    {
-      component = "containarium"
-      role      = "jump-server"
-    }
-  )
-
-  allow_stopping_for_update = true
-
-  lifecycle {
-    ignore_changes = [
-      metadata["ssh-keys"], # Allow manual SSH key additions
-    ]
-  }
-}
-
-# Copy containarium binary to server (if binary_url is empty)
-# SECURITY FIX: Uses configurable ssh_private_key_path instead of hardcoded path
-# When sentinel is enabled, binary_url is required (sentinel VM has no direct SSH from provisioner)
-resource "null_resource" "copy_containarium_binary" {
-  # Only run if: daemon enabled, no binary URL provided, SSH key configured, and sentinel NOT enabled
-  count = var.enable_containarium_daemon && var.containarium_binary_url == "" && var.ssh_private_key_path != "" && !local.use_sentinel ? 1 : 0
-
-  depends_on = [
-    google_compute_instance.jump_server_spot,
-    google_compute_instance.jump_server,
-  ]
-
-  connection {
-    type        = "ssh"
-    user        = keys(var.admin_ssh_keys)[0]
-    host        = google_compute_address.jump_server_ip.address
-    private_key = file(var.ssh_private_key_path)
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/../../bin/containarium-linux-amd64"
-    destination = "/tmp/containarium"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sudo mv /tmp/containarium /usr/local/bin/containarium",
-      "sudo chmod +x /usr/local/bin/containarium",
-      "sudo systemctl daemon-reload",
-      "sudo systemctl restart containarium",
-      "sleep 2",
-      "sudo systemctl status containarium --no-pager || true"
-    ]
-  }
-
-  triggers = {
-    instance_id = var.use_spot_instance ? google_compute_instance.jump_server_spot[0].id : google_compute_instance.jump_server[0].id
-    binary_hash = filemd5("${path.module}/../../bin/containarium-linux-amd64")
-  }
-}
-
-# Optional: Cloud DNS for jump server
-# resource "google_dns_record_set" "jump_server_dns" {
-#   count = var.dns_zone_name != "" ? 1 : 0
-#
-#   name         = "jump.${var.dns_zone_domain}"
-#   type         = "A"
-#   ttl          = 300
-#   managed_zone = var.dns_zone_name
-#   rrdatas      = [google_compute_address.jump_server_ip.address]
-# }
