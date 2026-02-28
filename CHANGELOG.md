@@ -5,6 +5,37 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-02-28
+
+### Changed
+- **Terraform module consolidation** — Extracted all infrastructure resources into a reusable module at `terraform/modules/containarium/`. The dev consumer (`terraform/gce/`) and any production deployment can now consume a single source of truth via `git::` module source, eliminating config drift.
+- **Startup scripts parameterized** — `fail2ban_whitelist_cidr` and `jwt_secret` are now Terraform template variables instead of hardcoded values, allowing the same scripts to serve different environments (e.g., `10.128.0.0/9` for default network vs `10.0.0.0/8` for VPC).
+- **Sentinel runs in same region as spot VM** — Removed `sentinel_region`/`sentinel_zone` variables. Sentinel always deploys in the same zone as the spot VM, matching the production topology.
+- **Go embed package rewritten** — Replaced broken `//go:embed` directives (Go doesn't allow `../` in embed paths) with `runtime.Caller()` + `os.ReadFile()` approach. Exports `TerraformDir()`, `ConsumerDir()`, `ModuleDir()` helpers.
+- **E2E test updated** — Test workspace now copies the full `gce/` + `modules/` tree so relative module source paths resolve correctly.
+
+### Added
+- **`terraform/modules/containarium/`** — New shared Terraform module containing all GCE resources (VMs, firewall rules, disks, startup scripts). Parameterizes environment differences via variables:
+  - `network_self_link` / `subnetwork_self_link` — VPC vs default network
+  - `spot_vm_external_ip` — ephemeral IP vs Cloud NAT only
+  - `enable_iap_firewall` / `enable_health_check_firewall` — production firewall rules
+  - `enable_glb_backend` — unmanaged instance group for GLB
+  - `jwt_secret` — REST API authentication (empty = auto-generate)
+  - `fail2ban_whitelist_cidr` — internal network whitelist
+  - `instance_tags` — customizable network tags
+  - `spot_vm_name_suffix` — appended to instance name for spot VM (e.g., `-spot`)
+- **Production consumer example** at `terraform/modules/containarium/examples/production-consumer/` showing how to consume the module with VPC networking, GLB backend, and IAP firewall rules.
+
+### Removed
+- **`horizontal-scaling.tf`** — Horizontal scaling (multiple independent jump servers behind an NLB) is incompatible with the sentinel architecture. Multi-region scaling uses one sentinel+spot pair per region instead.
+- **`null_resource` provisioners** — Removed binary SCP provisioners (`copy_containarium_binary`, `copy_binary_to_sentinel`). Binary deployment now uses `containarium_binary_url` exclusively.
+- **`ssh_private_key_path` variable** — No longer needed without SCP provisioners.
+- **Horizontal scaling example tfvars** (`horizontal-scaling-3-servers.tfvars`, `horizontal-scaling-5-servers.tfvars`).
+
+### Fixed
+- **`zpool import -f` in startup-spot.sh** — Forces ZFS pool import when the pool was last used by a different system (common after spot VM recreation). Previously could fail silently.
+- **Incus pre-removal in startup-spot.sh** — Removes Ubuntu 24.04's pre-installed Incus 6.0.0 before installing from Zabbly repo, avoiding package conflicts.
+
 ## [0.8.2] - 2026-02-28
 
 ### Added
@@ -484,7 +515,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Docker build support by requiring Incus 6.19+ (fixes CVE-2025-52881 AppArmor bug)
 - Terraform startup scripts now install Incus from Zabbly repository
-- All Terraform scripts (both Containarium repo and kafeido-infra) updated for Incus 6.19+
+- All Terraform startup scripts updated for Incus 6.19+
 - Fixed typo in proto package name: `continariumv1` → `containariumv1`
 - **JWT secret handling** - Fixed trailing newline issues when reading JWT secrets from files
 - **Gateway mTLS connection** - Fixed HTTP gateway to properly connect to gRPC server with mTLS
@@ -574,6 +605,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.9.0** (2026-02-28) - Terraform Module Consolidation, single source of truth for dev and production
+- **0.8.2** (2026-02-28) - sshpiper SSH reverse proxy on sentinel
 - **0.8.1** (2026-02-27) - Preemption recovery fix, PostgreSQL retry, sentinel iptables fix, role-based container labeling
 - **0.8.0** (2026-02-27) - Sentinel TLS Cert Sync, Status Page, Management SSH, Sentinel Design Doc
 - **0.7.0** (2026-02-25) - Collaborator Permissions, Docker CE Stack, Service Install, Daemon Config Persistence
@@ -584,6 +617,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.2.0** (2025-01-12) - Resize command, mTLS support, production readiness
 - **0.1.0** (Initial release) - Basic container management, SSH jump server
 
+[0.9.0]: https://github.com/FootprintAI/Containarium/compare/0.8.2...0.9.0
+[0.8.2]: https://github.com/FootprintAI/Containarium/compare/0.8.1...0.8.2
 [0.8.1]: https://github.com/FootprintAI/Containarium/compare/0.8.0...0.8.1
 [0.8.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.8.0
 [0.7.0]: https://github.com/FootprintAI/Containarium/releases/tag/0.7.0
