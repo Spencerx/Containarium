@@ -104,7 +104,7 @@ resource "google_compute_firewall" "sentinel_ingress" {
   source_ranges = var.allowed_ssh_sources
   target_tags   = ["containarium-sentinel"]
 
-  description = "Allow SSH/HTTP/HTTPS to Containarium sentinel"
+  description = "Allow SSH (sshpiper on :22) / HTTP / HTTPS to Containarium sentinel"
 }
 
 # Firewall: allow sentinel to reach spot VM on forwarded ports (internal network)
@@ -143,7 +143,7 @@ resource "google_compute_firewall" "spot_to_sentinel_binary" {
   description = "Allow spot VM to download containarium binary from sentinel"
 }
 
-# Firewall: allow SSH management on port 2222 (port 22 is DNAT'd to spot VM)
+# Firewall: allow SSH management on port 2222 (port 22 is handled by sshpiper)
 resource "google_compute_firewall" "sentinel_mgmt_ssh" {
   count = local.use_sentinel ? 1 : 0
 
@@ -158,7 +158,7 @@ resource "google_compute_firewall" "sentinel_mgmt_ssh" {
   source_ranges = var.allowed_ssh_sources
   target_tags   = ["containarium-sentinel"]
 
-  description = "Allow SSH management to sentinel on port 2222 (port 22 forwarded to spot VM)"
+  description = "Allow SSH management to sentinel on port 2222 (port 22 handled by sshpiper)"
 }
 
 # Copy containarium binary to sentinel VM via SSH provisioner
@@ -174,6 +174,7 @@ resource "null_resource" "copy_binary_to_sentinel" {
     type        = "ssh"
     user        = keys(var.admin_ssh_keys)[0]
     host        = google_compute_address.sentinel_ip[0].address
+    port        = 2222  # sshd listens on 2222 only; port 22 is handled by sshpiper
     private_key = file(var.ssh_private_key_path)
   }
 

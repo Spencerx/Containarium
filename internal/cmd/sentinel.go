@@ -31,6 +31,7 @@ var (
 	sentinelBinaryPort         int
 	sentinelRecoveryTimeout    time.Duration
 	sentinelCertSyncInterval   time.Duration
+	sentinelKeySyncInterval    time.Duration
 )
 
 var sentinelCmd = &cobra.Command{
@@ -64,12 +65,13 @@ func init() {
 	sentinelCmd.Flags().DurationVar(&sentinelCheckInterval, "check-interval", 15*time.Second, "Health check interval")
 	sentinelCmd.Flags().IntVar(&sentinelHTTPPort, "http-port", 80, "Maintenance page HTTP port")
 	sentinelCmd.Flags().IntVar(&sentinelHTTPSPort, "https-port", 443, "Maintenance page HTTPS port")
-	sentinelCmd.Flags().StringVar(&sentinelForwardedPorts, "forwarded-ports", "22,80,443,50051", "Comma-separated ports to DNAT forward")
+	sentinelCmd.Flags().StringVar(&sentinelForwardedPorts, "forwarded-ports", "80,443,50051", "Comma-separated ports to DNAT forward (port 22 handled by sshpiper)")
 	sentinelCmd.Flags().IntVar(&sentinelHealthyThreshold, "healthy-threshold", 2, "Consecutive healthy checks before switching to proxy")
 	sentinelCmd.Flags().IntVar(&sentinelUnhealthyThreshold, "unhealthy-threshold", 2, "Consecutive unhealthy checks before switching to maintenance")
 	sentinelCmd.Flags().IntVar(&sentinelBinaryPort, "binary-port", 8888, "Port to serve containarium binary for spot VM downloads (0 to disable)")
 	sentinelCmd.Flags().DurationVar(&sentinelRecoveryTimeout, "recovery-timeout", 10*time.Minute, "Warn if recovery takes longer than this (0 to disable)")
 	sentinelCmd.Flags().DurationVar(&sentinelCertSyncInterval, "cert-sync-interval", 6*time.Hour, "Interval for syncing TLS certificates from backend (0 to use default 6h)")
+	sentinelCmd.Flags().DurationVar(&sentinelKeySyncInterval, "key-sync-interval", 2*time.Minute, "Interval for syncing SSH keys from backend for sshpiper (0 to use default 2m)")
 }
 
 func runSentinel(cmd *cobra.Command, args []string) error {
@@ -118,6 +120,7 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 		BinaryPort:         sentinelBinaryPort,
 		RecoveryTimeout:    sentinelRecoveryTimeout,
 		CertSyncInterval:   sentinelCertSyncInterval,
+		KeySyncInterval:    sentinelKeySyncInterval,
 	}
 
 	manager := sentinel.NewManager(config, provider)

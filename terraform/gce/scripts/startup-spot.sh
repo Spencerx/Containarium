@@ -104,6 +104,15 @@ bantime = 3600
 banaction = iptables-multiport
 EOF
 
+# Whitelist GCE internal IPs (sentinel communicates via internal network)
+# sshpiper on sentinel pre-authenticates, so spot VM should only see valid connections
+cat > /etc/fail2ban/jail.d/containarium-whitelist.conf <<'EOF'
+# Whitelist GCE internal networks — sentinel sshpiper pre-authenticates SSH
+# 10.128.0.0/9 covers all GCE internal IP ranges
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 10.128.0.0/9
+EOF
+
 # Start and enable fail2ban
 systemctl enable fail2ban
 systemctl start fail2ban
@@ -112,6 +121,7 @@ echo "✓ fail2ban configured and started"
 echo "  - Max retries: 3 failed attempts"
 echo "  - Find time: 10 minutes"
 echo "  - Ban time: 1 hour"
+echo "  - Whitelisted: GCE internal networks (10.128.0.0/9)"
 
 # Setup persistent disk if enabled
 if [ "$USE_PERSISTENT_DISK" = "true" ]; then

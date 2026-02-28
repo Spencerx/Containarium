@@ -618,9 +618,11 @@ Internet
    ▼
 ┌─────────────────────────────────┐
 │ Sentinel VM (e2-micro, free)    │  Owns static IP
-│ • iptables DNAT forwarding      │  Port 2222: management SSH
-│ • Maintenance page on preempt   │  Port 8888: binary server
-│ • TLS cert sync from spot VM    │
+│ • sshpiper on :22 (SSH proxy)  │  Port 2222: management SSH
+│ • failtoban (brute-force ban)   │  Port 8888: binary server
+│ • iptables DNAT (:80,:443,etc)  │
+│ • TLS cert + SSH key sync       │
+│ • Maintenance page on preempt   │
 └───────────────┬─────────────────┘
                 │ VPC internal
                 ▼
@@ -645,8 +647,8 @@ Availability: ~99.5% (auto-restart + maintenance page)
                          ▼
               ┌──────────────────────┐
               │  Sentinel VM         │  e2-micro (free tier)
-              │  • Owns static IP    │  Monitors all spot VMs
-              │  • DNAT forwarding   │  Auto-restarts on preemption
+              │  • sshpiper on :22   │  Monitors all spot VMs
+              │  • DNAT (non-SSH)    │  Auto-restarts on preemption
               └──────────┬───────────┘
                          │ VPC internal
           ┌──────────────┼──────────────┐
@@ -684,6 +686,18 @@ One sentinel monitors all spot VMs in the cluster. Each spot VM is independently
 
 #### SSH Connection Flow
 
+**With Sentinel HA (production):**
+```
+1. User: ssh my-dev (from ~/.ssh/config)
+2. SSH: Connect to sentinel:22 (sshpiper)
+3. sshpiper: Authenticate alice's key, route to spot VM
+4. Spot VM: ProxyJump forwards to container IP (10.0.3.x)
+5. Container: Authenticate alice's key (same key!)
+6. User: Shell access in isolated container
+   (If auth fails 3x → sshpiper bans client IP for 1h)
+```
+
+**Without sentinel (single VM):**
 ```
 1. User: ssh my-dev (from ~/.ssh/config)
 2. SSH: Connect to jump server as alice (ProxyJump)
@@ -755,7 +769,7 @@ One sentinel monitors all spot VMs in the cluster. Each spot VM is independently
 - **Same key**: Users use one key for both jump server and container
 - **Admin isolation**: Only admin can access jump server shell
 - **Audit trail**: Each user's connections logged separately
-- **DDoS protection**: fail2ban can block malicious users per account
+- **DDoS protection**: sshpiper failtoban (sentinel) or fail2ban (single VM) blocks malicious users per IP
 - **Zero trust**: Users cannot see other containers or inspect system
 
 #### Spot Instance Recovery Flow
@@ -1246,6 +1260,27 @@ sudo journalctl -u sshd | grep "from 203.0.113.10"
 # Export logs for security audit
 sudo journalctl -u sshd --since "2025-01-01" --until "2025-01-31" > ssh-audit-jan-2025.log
 ```
+
+### Brute-Force Protection
+
+#### With Sentinel HA: sshpiper failtoban (recommended)
+
+When using the sentinel architecture, SSH brute-force protection is handled by [sshpiper](https://github.com/tg123/sshpiper)'s built-in `failtoban` plugin on the sentinel VM:
+
+- sshpiper sits on port 22 and sees **real client IPs** (not the sentinel's IP)
+- After 3 failed SSH auth attempts, the client IP is banned for 1 hour
+- No configuration needed — set up automatically by the startup script
+
+```bash
+# Check sshpiper status (on sentinel, port 2222)
+gcloud compute ssh <sentinel-vm> --tunnel-through-iap --ssh-flag="-p 2222"
+systemctl status sshpiper
+journalctl -u sshpiper | grep "banned"
+```
+
+> **Why not iptables DNAT + fail2ban?** The previous approach forwarded port 22 via iptables DNAT with MASQUERADE. The spot VM only saw connections from the sentinel's IP, so fail2ban would ban the sentinel itself — blocking **all** SSH users. sshpiper operates at SSH protocol level (L7), correctly identifying individual attackers.
+
+#### Without Sentinel: fail2ban (single VM)
 
 ### fail2ban Configuration
 
@@ -2715,6 +2750,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## 🙏 Acknowledgments
 
 - [Incus](https://linuxcontainers.org/incus/) - Modern LXC container manager
+- [sshpiper](https://github.com/tg123/sshpiper) - SSH reverse proxy with failtoban plugin
 - [Protocol Buffers](https://protobuf.dev/) - Type-safe data contracts
 - [Cobra](https://cobra.dev/) - Powerful CLI framework
 - [Terraform](https://terraform.io/) - Infrastructure as Code

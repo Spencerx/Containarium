@@ -5,6 +5,28 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **sshpiper SSH reverse proxy on sentinel** — Deploys [sshpiper](https://github.com/tg123/sshpiper) on sentinel port 22 as an L7 SSH proxy with built-in `failtoban` plugin. Bans client IPs after 3 failed auth attempts (1h ban). Replaces iptables DNAT for SSH, which masked real client IPs and caused fail2ban on the spot VM to ban the sentinel itself.
+- **Authorized keys sync** — New `KeyStore` in sentinel syncs SSH authorized keys from the spot VM via `/authorized-keys` HTTP endpoint. Generates sshpiper YAML config mapping each user to the upstream spot VM. Sync runs every 2 minutes; sshpiper is only restarted when config actually changes (avoids killing active sessions).
+- **`/authorized-keys` HTTP endpoint** on the spot VM daemon — Returns all jump server users' SSH public keys as JSON. Used by sentinel's KeyStore to build sshpiper routing config.
+- **`/authorized-keys/sentinel` POST endpoint** on the spot VM daemon — Accepts the sentinel's upstream public key and appends it to all jump server users' `authorized_keys`, enabling sshpiper to authenticate to the spot VM on behalf of users.
+- **Key sync status on sentinel dashboard** — SSH Proxy (sshpiper) section shows synced user count, last sync time, and errors.
+- **fail2ban whitelist on spot VM** — Whitelists internal VPC ranges so the sentinel IP is never banned as a safety net.
+
+### Changed
+- **Sentinel sshd moved to port 2222 only** — sshd on the sentinel now listens on port 2222 only (management/IAP access). Port 22 is owned by sshpiper. Includes systemd socket override for Ubuntu 24.04 socket activation.
+- **Port 22 removed from iptables DNAT** — `enableForwarding()` in `iptables.go` now filters port 22 from the forwarded ports list. SSH traffic reaches sshpiper on the sentinel directly instead of being DNAT'd to the spot VM.
+- **Default forwarded ports** — Changed from `22,80,443,50051` to `80,443,50051` in the sentinel CLI.
+
+### Fixed
+- **SSH brute-force attacks no longer block all users** — Previously, attackers hitting sentinel:22 were DNAT'd with MASQUERADE to the spot VM, which saw all connections from the sentinel's IP. fail2ban on the spot VM would ban the sentinel IP, blocking all SSH. sshpiper now handles SSH at L7, sees real client IPs, and bans attackers directly.
+
+### Security
+- sshpiper `failtoban` plugin provides IP-level banning based on actual SSH auth failures (not connection rate), correctly identifying attackers vs. legitimate users.
+- Sentinel's upstream key is automatically distributed to all jump server accounts, so sshpiper can authenticate to the spot VM without storing user private keys.
+
 ## [0.8.1] - 2026-02-27
 
 ### Fixed
