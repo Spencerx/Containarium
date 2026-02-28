@@ -257,6 +257,11 @@ func (gs *GatewayServer) Start(ctx context.Context) error {
 	// Cert export endpoint (no auth — only reachable within VPC)
 	httpMux.HandleFunc("/certs", ServeCerts(gs.caddyCertDir))
 
+	// Authorized keys endpoints (no auth — VPC-internal only, same as /certs)
+	// Used by sentinel to sync SSH keys for sshpiper configuration
+	httpMux.HandleFunc("/authorized-keys", ServeAuthorizedKeys())
+	httpMux.HandleFunc("/authorized-keys/sentinel", ServeSentinelKey())
+
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", gs.httpPort)
 	log.Printf("Starting HTTP/REST gateway on %s", addr)

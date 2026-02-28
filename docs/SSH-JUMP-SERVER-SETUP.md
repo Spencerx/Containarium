@@ -4,6 +4,27 @@ This guide explains how to configure SSH access to Containarium containers throu
 
 ## Architecture Overview
 
+### With Sentinel HA (Production)
+
+When using the sentinel + spot VM architecture, SSH traffic flows through sshpiper on the sentinel:
+
+```
+┌─────────────┐      ┌────────────────────┐      ┌──────────────┐      ┌─────────────────┐
+│ User Laptop │─────▶│  Sentinel (e2-micro)│─────▶│  Spot VM     │─────▶│ LXC Containers  │
+│             │ SSH  │  sshpiper on :22   │ SSH  │  (Jump Host) │ SSH  │ (10.x.x.x)      │
+└─────────────┘      └────────────────────┘      └──────────────┘      └─────────────────┘
+                      Static IP                   Internal IP           Private IPs
+                      35.x.x.x                    10.130.0.x            10.0.3.100
+                                                                        10.0.3.101
+```
+
+- **sshpiper** (port 22) acts as an SSH reverse proxy on the sentinel. It sees real client IPs and bans brute-force attackers via the `failtoban` plugin (3 failures = 1h ban).
+- **sshd** on the sentinel listens on port 2222 for management/IAP access only.
+- Authorized keys are synced from the spot VM every 2 minutes. sshpiper routes each user to the spot VM automatically.
+- Client SSH config is unchanged — users connect to the sentinel's static IP on port 22 as before.
+
+### Single VM (Development)
+
 ```
 ┌─────────────┐      ┌──────────────────┐      ┌─────────────────┐
 │ User Laptop │─────▶│  GCE VM (Jump)   │─────▶│ LXC Containers  │
@@ -175,7 +196,30 @@ ssh -p 2201 alice@35.x.x.x
 
 ## Security Considerations
 
-### 1. Jump Server Hardening
+### 1. SSH Brute-Force Protection (Sentinel Architecture)
+
+When using the sentinel HA architecture, SSH brute-force protection is handled by **sshpiper** with its built-in `failtoban` plugin:
+
+- sshpiper sits on the sentinel's port 22 and sees real client IPs
+- After 3 failed auth attempts, the client IP is banned for 1 hour
+- This replaces the previous iptables DNAT approach, which masked real client IPs and caused fail2ban on the spot VM to ban the sentinel itself (blocking all users)
+
+**Verify sshpiper is running:**
+```bash
+# SSH to sentinel via IAP (port 2222)
+gcloud compute ssh <sentinel-vm> --tunnel-through-iap --ssh-flag="-p 2222"
+
+# Check sshpiper status
+systemctl status sshpiper
+
+# Check which IPs are banned
+journalctl -u sshpiper | grep "banned"
+
+# Check sshpiper config (auto-generated from key sync)
+cat /etc/sshpiper/config.yaml
+```
+
+### 2. Jump Server Hardening
 
 ```bash
 # On GCE VM - Edit /etc/ssh/sshd_config
@@ -188,7 +232,7 @@ AllowUsers admin alice bob
 systemctl restart sshd
 ```
 
-### 2. SSH Key Management
+### 3. SSH Key Management
 
 ```bash
 # Generate separate keys for jump server and containers
@@ -201,19 +245,19 @@ ssh-add ~/.ssh/containarium_jump
 ssh-add ~/.ssh/alice_container
 ```
 
-### 3. Firewall Rules
+### 4. Firewall Rules
 
-**ProxyJump approach**:
+**With sentinel architecture**:
+- Port 22 on sentinel: sshpiper (SSH reverse proxy with failtoban)
+- Port 2222 on sentinel: sshd (management/IAP access)
+- Port 80/443/8080: DNAT'd to spot VM
+- Spot VM has no external IP (internal VPC only)
+
+**Without sentinel (single VM)**:
 - Only port 22 open on GCE VM (jump server)
 - Containers only accessible via jump server
-- Most secure
 
-**Port forwarding approach**:
-- Multiple ports open (22, 2201-2299)
-- Can restrict by source IP
-- Less secure than ProxyJump
-
-### 4. Audit Logging
+### 5. Audit Logging
 
 ```bash
 # On jump server - Log all SSH sessions
@@ -222,6 +266,9 @@ LogLevel VERBOSE
 
 # View SSH logs
 journalctl -u ssh -f
+
+# View sshpiper logs (sentinel only)
+journalctl -u sshpiper -f
 ```
 
 ---

@@ -27,6 +27,7 @@ type Config struct {
 	BinaryPort         int           // port to serve containarium binary for spot VM downloads (0 = disabled)
 	RecoveryTimeout    time.Duration // warn if recovery takes longer than this (0 = no warning)
 	CertSyncInterval   time.Duration // interval for syncing TLS certs from backend (0 = default 6h)
+	KeySyncInterval    time.Duration // interval for syncing SSH keys from backend (0 = default 2m)
 }
 
 // Manager is the core sentinel orchestrator.
@@ -40,6 +41,7 @@ type Manager struct {
 
 	stopMaintenance func() // stops the HTTP/HTTPS maintenance servers
 	certStore       *CertStore
+	keyStore        *KeyStore
 
 	// Recovery tracking
 	outageStart    time.Time // when the current outage began
@@ -53,6 +55,7 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 		config:    config,
 		provider:  provider,
 		certStore: NewCertStore(),
+		keyStore:  NewKeyStore(),
 	}
 	m.state.Store(StateMaintenance)
 	return m
@@ -88,6 +91,13 @@ func (m *Manager) Run(ctx context.Context) error {
 		certSyncInterval = 6 * time.Hour
 	}
 	go m.certStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, certSyncInterval)
+
+	// Start key sync loop (for sshpiper SSH proxy configuration)
+	keySyncInterval := m.config.KeySyncInterval
+	if keySyncInterval == 0 {
+		keySyncInterval = 2 * time.Minute
+	}
+	go m.keyStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, keySyncInterval)
 
 	// Start in maintenance mode
 	if err := m.switchToMaintenance(); err != nil {
@@ -174,6 +184,21 @@ func (m *Manager) switchToProxy() error {
 		log.Printf("[sentinel] cert sync on proxy switch failed: %v", err)
 	} else {
 		log.Printf("[sentinel] cert sync on proxy switch: %d certs", m.certStore.SyncedCount())
+	}
+
+	// Immediate key sync — update sshpiper config with fresh keys
+	if err := m.keyStore.Sync(m.spotIP, m.config.HealthPort); err != nil {
+		log.Printf("[sentinel] key sync on proxy switch failed: %v", err)
+	} else {
+		if err := m.keyStore.PushSentinelKey(m.spotIP, m.config.HealthPort); err != nil {
+			log.Printf("[sentinel] push sentinel key on proxy switch failed: %v", err)
+		}
+		if err := m.keyStore.Apply(); err != nil {
+			log.Printf("[sentinel] key apply on proxy switch failed: %v", err)
+		} else {
+			log.Printf("[sentinel] key sync on proxy switch: %d users", m.keyStore.SyncedCount())
+			m.keyStore.RestartSSHPiper()
+		}
 	}
 
 	// Enable iptables forwarding

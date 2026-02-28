@@ -11,10 +11,25 @@ import (
 
 const chainName = "SENTINEL_PREROUTING"
 
+// sshPiperPort is the port used by sshpiper on the sentinel.
+// Port 22 traffic is handled by sshpiper directly, not forwarded via DNAT.
+const sshPiperPort = 22
+
 // enableForwarding sets up iptables DNAT rules to forward traffic to the spot VM.
 // It creates a custom chain, adds DNAT rules for each port, and enables MASQUERADE.
+// Port 22 is excluded from forwarding — it is handled by sshpiper on the sentinel.
 // On non-Linux systems or when iptables is unavailable, it logs a warning and returns nil.
 func enableForwarding(spotIP string, ports []int) error {
+	// Filter out port 22 — handled by sshpiper, not DNAT
+	filtered := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if p == sshPiperPort {
+			log.Printf("[sentinel] iptables: port %d excluded from DNAT (handled by sshpiper)", p)
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	ports = filtered
 	if runtime.GOOS != "linux" {
 		log.Printf("[sentinel] iptables: skipping on %s (non-Linux)", runtime.GOOS)
 		return nil

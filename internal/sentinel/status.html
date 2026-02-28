@@ -157,6 +157,22 @@
             </div>
         </div>
 
+        <div class="status-box">
+            <div class="status-box-title">SSH Proxy (sshpiper)</div>
+            <div class="status-row">
+                <span class="status-label">Synced Users</span>
+                <span class="status-value">{{if gt .KeySyncCount 0}}<span class="value-ok">{{.KeySyncCount}}</span>{{else}}<span class="value-warn">0</span>{{end}}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Last Sync</span>
+                <span class="status-value">{{if .KeyLastSync}}{{.KeyLastSync}}{{else}}<span class="value-muted">never</span>{{end}}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Sync Status</span>
+                <span class="status-value">{{if .KeySyncError}}<span class="value-error">{{.KeySyncError}}</span>{{else}}<span class="value-ok">OK</span>{{end}}</span>
+            </div>
+        </div>
+
         <div class="footer">Containarium Sentinel</div>
     </div>
 </body>

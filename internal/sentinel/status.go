@@ -26,6 +26,9 @@ type StatusData struct {
 	CertSyncCount  int
 	CertLastSync   string
 	CertSyncError  string
+	KeySyncCount   int
+	KeyLastSync    string
+	KeySyncError   string
 }
 
 // StatusHandler returns an HTTP handler that renders the sentinel status page.
@@ -53,6 +56,16 @@ func StatusHandler(m *Manager) http.HandlerFunc {
 			}
 			if err := m.certStore.LastSyncErr(); err != nil {
 				data.CertSyncError = err.Error()
+			}
+		}
+
+		if m.keyStore != nil {
+			data.KeySyncCount = m.keyStore.SyncedCount()
+			if ls := m.keyStore.LastSync(); !ls.IsZero() {
+				data.KeyLastSync = ls.Format(time.RFC3339)
+			}
+			if err := m.keyStore.LastSyncErr(); err != nil {
+				data.KeySyncError = err.Error()
 			}
 		}
 
