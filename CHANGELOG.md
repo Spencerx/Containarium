@@ -5,6 +5,15 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Passthrough routes now persist across VM restarts** — TCP/UDP port-forwarding rules (iptables DNAT) were purely ephemeral and lost on VM recreation. They are now stored in PostgreSQL as the source of truth, mirroring the existing `RouteStore`/`RouteSyncJob` pattern for HTTP proxy routes.
+  - New `PassthroughStore` (`internal/network/passthrough_store.go`) — CRUD operations on `passthrough_routes` table with `UNIQUE (external_port, protocol)` constraint
+  - New `PassthroughSyncJob` (`internal/network/passthrough_sync.go`) — Background worker that diffs PostgreSQL records against live iptables rules, adding missing rules, removing orphans, and updating changed targets
+  - `NetworkServer` handlers (`Add`/`Update`/`Delete`/`ListPassthroughRoutes`) now write to PostgreSQL when available, with legacy iptables-only fallback
+  - `DualServer` initializes `PassthroughStore` and `PassthroughSyncJob` alongside the existing route persistence
+
 ## [0.9.1] - 2026-02-28
 
 ### Fixed
