@@ -5,7 +5,7 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.2] - 2026-02-28
 
 ### Added
 - **sshpiper SSH reverse proxy on sentinel** — Deploys [sshpiper](https://github.com/tg123/sshpiper) on sentinel port 22 as an L7 SSH proxy with built-in `failtoban` plugin. Bans client IPs after 3 failed auth attempts (1h ban). Replaces iptables DNAT for SSH, which masked real client IPs and caused fail2ban on the spot VM to ban the sentinel itself.
