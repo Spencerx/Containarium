@@ -416,6 +416,18 @@ func (m *Manager) Get(username string) (*incus.ContainerInfo, error) {
 	return m.incus.GetContainer(containerName)
 }
 
+// Stop stops a running container
+func (m *Manager) Stop(username string, force bool) error {
+	containerName := username + "-container"
+	return m.incus.StopContainer(containerName, force)
+}
+
+// Start starts a stopped container
+func (m *Manager) Start(username string) error {
+	containerName := username + "-container"
+	return m.incus.StartContainer(containerName)
+}
+
 // Delete deletes a container
 func (m *Manager) Delete(username string, force bool) error {
 	containerName := username + "-container"

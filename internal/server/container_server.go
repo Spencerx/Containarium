@@ -309,8 +309,21 @@ func (s *ContainerServer) StartContainer(ctx context.Context, req *pb.StartConta
 		return nil, fmt.Errorf("username is required")
 	}
 
-	// TODO: Implement start in container manager
-	return nil, fmt.Errorf("not implemented yet")
+	if err := s.manager.Start(req.Username); err != nil {
+		return nil, fmt.Errorf("failed to start container: %w", err)
+	}
+
+	info, err := s.manager.Get(req.Username)
+	if err != nil {
+		return nil, fmt.Errorf("container started but failed to get info: %w", err)
+	}
+
+	s.emitter.EmitContainerStarted(toProtoContainer(info))
+
+	return &pb.StartContainerResponse{
+		Message:   fmt.Sprintf("Container for user %s started successfully", req.Username),
+		Container: toProtoContainer(info),
+	}, nil
 }
 
 // StopContainer stops a running container
@@ -319,8 +332,21 @@ func (s *ContainerServer) StopContainer(ctx context.Context, req *pb.StopContain
 		return nil, fmt.Errorf("username is required")
 	}
 
-	// TODO: Implement stop in container manager
-	return nil, fmt.Errorf("not implemented yet")
+	if err := s.manager.Stop(req.Username, req.Force); err != nil {
+		return nil, fmt.Errorf("failed to stop container: %w", err)
+	}
+
+	info, err := s.manager.Get(req.Username)
+	if err != nil {
+		return nil, fmt.Errorf("container stopped but failed to get info: %w", err)
+	}
+
+	s.emitter.EmitContainerStopped(toProtoContainer(info))
+
+	return &pb.StopContainerResponse{
+		Message:   fmt.Sprintf("Container for user %s stopped successfully", req.Username),
+		Container: toProtoContainer(info),
+	}, nil
 }
 
 // ResizeContainer dynamically resizes container resources
