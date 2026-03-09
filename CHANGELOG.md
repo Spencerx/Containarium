@@ -5,14 +5,22 @@ All notable changes to Containarium will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.10.0] - 2026-03-09
+
+### Added
+- **Monitoring stack** — Auto-provision VictoriaMetrics + Grafana as a core service container (`containarium-core-victoriametrics`). A single consolidated dashboard is embedded in the web UI Monitoring tab via a `/grafana/` reverse proxy, rendered in kiosk mode with light theme.
+  - System metrics: CPU load (1m/5m/15m), memory/disk gauges, running/stopped container counts
+  - Per-container metrics: CPU usage (cores via `rate()`), memory, disk, network I/O
+  - Grafana uses existing PostgreSQL for config database, file-based dashboard provisioning
+- **OpenTelemetry metrics collector** — In-process OTel SDK pushes system and per-container metrics every 30s via OTLP/HTTP to VictoriaMetrics (`internal/metrics/otel.go`)
+- **HTTP metrics middleware** — Tracks API request rate and latency histograms (`internal/metrics/http_middleware.go`)
+- **`GetMonitoringInfo` API** — New gRPC/REST endpoint (`GET /v1/system/monitoring`) returning Grafana URL, VictoriaMetrics URL, and enabled status
+- **Disk cleanup API** — Disk cleanup endpoint, route toggle, and URL-based tab routing (#42)
+- **Stop container API** — Add stop container endpoint (#41)
 
 ### Fixed
-- **Passthrough routes now persist across VM restarts** — TCP/UDP port-forwarding rules (iptables DNAT) were purely ephemeral and lost on VM recreation. They are now stored in PostgreSQL as the source of truth, mirroring the existing `RouteStore`/`RouteSyncJob` pattern for HTTP proxy routes.
-  - New `PassthroughStore` (`internal/network/passthrough_store.go`) — CRUD operations on `passthrough_routes` table with `UNIQUE (external_port, protocol)` constraint
-  - New `PassthroughSyncJob` (`internal/network/passthrough_sync.go`) — Background worker that diffs PostgreSQL records against live iptables rules, adding missing rules, removing orphans, and updating changed targets
-  - `NetworkServer` handlers (`Add`/`Update`/`Delete`/`ListPassthroughRoutes`) now write to PostgreSQL when available, with legacy iptables-only fallback
-  - `DualServer` initializes `PassthroughStore` and `PassthroughSyncJob` alongside the existing route persistence
+- **Passthrough routes now persist across VM restarts** — TCP/UDP port-forwarding rules (iptables DNAT) were purely ephemeral and lost on VM recreation. They are now stored in PostgreSQL as the source of truth, mirroring the existing `RouteStore`/`RouteSyncJob` pattern for HTTP proxy routes (#39).
+- **Subdomain concatenation** — Fix subdomain being incorrectly concatenated in certain configurations (#40)
 
 ## [0.9.1] - 2026-02-28
 
@@ -619,6 +627,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.10.0** (2026-03-09) - Monitoring stack (VictoriaMetrics + Grafana + OTel), disk cleanup, stop container, passthrough persistence
 - **0.9.1** (2026-02-28) - Boot disk validation fix for production
 - **0.9.0** (2026-02-28) - Terraform Module Consolidation, single source of truth for dev and production
 - **0.8.2** (2026-02-28) - sshpiper SSH reverse proxy on sentinel
@@ -632,6 +641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.2.0** (2025-01-12) - Resize command, mTLS support, production readiness
 - **0.1.0** (Initial release) - Basic container management, SSH jump server
 
+[v0.10.0]: https://github.com/FootprintAI/Containarium/compare/0.9.1...v0.10.0
 [0.9.1]: https://github.com/FootprintAI/Containarium/compare/0.9.0...0.9.1
 [0.9.0]: https://github.com/FootprintAI/Containarium/compare/0.8.2...0.9.0
 [0.8.2]: https://github.com/FootprintAI/Containarium/compare/0.8.1...0.8.2
