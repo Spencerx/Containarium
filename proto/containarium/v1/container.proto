@@ -444,3 +444,18 @@ message CleanupDiskResponse {
   // Updated container info after cleanup
   Container container = 3;
 }
+
+// GetMonitoringInfoRequest is the request to get monitoring info
+message GetMonitoringInfoRequest {}
+
+// GetMonitoringInfoResponse is the response with monitoring configuration
+message GetMonitoringInfoResponse {
+  // Whether monitoring is enabled
+  bool enabled = 1;
+
+  // Grafana URL for dashboard access
+  string grafana_url = 2;
+
+  // Victoria Metrics URL for metrics API
+  string victoria_metrics_url = 3;
+}

@@ -28,6 +28,9 @@ type ContainerServer struct {
 	emitter             *events.Emitter
 	pendingCreations    map[string]*PendingCreation
 	pendingMu           sync.RWMutex
+	// Monitoring URLs (set by DualServer after setup)
+	victoriaMetricsURL  string
+	grafanaURL          string
 }
 
 // NewContainerServer creates a new container server
@@ -686,5 +689,20 @@ func (s *ContainerServer) ListCollaborators(ctx context.Context, req *pb.ListCol
 	return &pb.ListCollaboratorsResponse{
 		Collaborators: protoCollaborators,
 		TotalCount:    int32(len(protoCollaborators)),
+	}, nil
+}
+
+// SetMonitoringURLs sets the VictoriaMetrics and Grafana URLs for the monitoring info endpoint
+func (s *ContainerServer) SetMonitoringURLs(victoriaMetricsURL, grafanaURL string) {
+	s.victoriaMetricsURL = victoriaMetricsURL
+	s.grafanaURL = grafanaURL
+}
+
+// GetMonitoringInfo returns monitoring configuration (Grafana/VictoriaMetrics URLs)
+func (s *ContainerServer) GetMonitoringInfo(ctx context.Context, req *pb.GetMonitoringInfoRequest) (*pb.GetMonitoringInfoResponse, error) {
+	return &pb.GetMonitoringInfoResponse{
+		Enabled:            s.victoriaMetricsURL != "",
+		GrafanaUrl:         s.grafanaURL,
+		VictoriaMetricsUrl: s.victoriaMetricsURL,
 	}, nil
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 
@@ -23,15 +25,16 @@ import (
 
 // GatewayServer implements the HTTP/REST gateway for the gRPC service
 type GatewayServer struct {
-	grpcAddress     string
-	httpPort        int
-	authMiddleware  *auth.AuthMiddleware
-	swaggerDir      string
-	certsDir        string // Optional: for mTLS connection to gRPC server
-	caddyCertDir    string // Optional: Caddy certificate directory for /certs endpoint
-	terminalHandler *TerminalHandler
-	labelHandler    *LabelHandler
-	eventHandler    *EventHandler
+	grpcAddress        string
+	httpPort           int
+	authMiddleware     *auth.AuthMiddleware
+	swaggerDir         string
+	certsDir           string // Optional: for mTLS connection to gRPC server
+	caddyCertDir       string // Optional: Caddy certificate directory for /certs endpoint
+	grafanaBackendURL  string // Optional: internal Grafana URL for reverse proxy (e.g., "http://10.0.3.229:3000")
+	terminalHandler    *TerminalHandler
+	labelHandler       *LabelHandler
+	eventHandler       *EventHandler
 }
 
 // NewGatewayServer creates a new gateway server
@@ -62,6 +65,11 @@ func NewGatewayServer(grpcAddress string, httpPort int, authMiddleware *auth.Aut
 		labelHandler:    labelHandler,
 		eventHandler:    eventHandler,
 	}
+}
+
+// SetGrafanaBackendURL sets the internal Grafana URL for the reverse proxy
+func (gs *GatewayServer) SetGrafanaBackendURL(backendURL string) {
+	gs.grafanaBackendURL = backendURL
 }
 
 // Start starts the HTTP gateway server
@@ -253,6 +261,23 @@ func (gs *GatewayServer) Start(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"healthy"}`))
 	})
+
+	// Grafana reverse proxy (no auth — Grafana handles its own anonymous access)
+	if gs.grafanaBackendURL != "" {
+		grafanaTarget, err := url.Parse(gs.grafanaBackendURL)
+		if err != nil {
+			log.Printf("Warning: Invalid Grafana backend URL %q: %v", gs.grafanaBackendURL, err)
+		} else {
+			grafanaProxy := httputil.NewSingleHostReverseProxy(grafanaTarget)
+			httpMux.HandleFunc("/grafana/", func(w http.ResponseWriter, r *http.Request) {
+				grafanaProxy.ServeHTTP(w, r)
+			})
+			httpMux.HandleFunc("/grafana", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/grafana/", http.StatusMovedPermanently)
+			})
+			log.Printf("Grafana reverse proxy enabled at /grafana/ -> %s", gs.grafanaBackendURL)
+		}
+	}
 
 	// Cert export endpoint (no auth — only reachable within VPC)
 	httpMux.HandleFunc("/certs", ServeCerts(gs.caddyCertDir))

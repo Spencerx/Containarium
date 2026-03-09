@@ -1795,6 +1795,30 @@
         ]
       }
     },
+    "/v1/system/monitoring": {
+      "get": {
+        "summary": "Get monitoring information",
+        "description": "Returns monitoring configuration including Grafana and VictoriaMetrics URLs. Used by the web UI to embed the Grafana dashboard.",
+        "operationId": "ContainerService_GetMonitoringInfo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetMonitoringInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
     "/v1/traffic/subscribe": {
       "get": {
         "summary": "Subscribe to traffic events",
@@ -3021,6 +3045,24 @@
         }
       },
       "title": "GetMetricsResponse is the response from getting metrics"
+    },
+    "GetMonitoringInfoResponse": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Whether monitoring is enabled"
+        },
+        "grafanaUrl": {
+          "type": "string",
+          "title": "Grafana URL for dashboard access"
+        },
+        "victoriaMetricsUrl": {
+          "type": "string",
+          "title": "Victoria Metrics URL for metrics API"
+        }
+      },
+      "title": "GetMonitoringInfoResponse is the response with monitoring configuration"
     },
     "GetNetworkTopologyResponse": {
       "type": "object",

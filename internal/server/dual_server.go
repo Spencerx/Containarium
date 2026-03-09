@@ -20,6 +20,7 @@ import (
 	"github.com/footprintai/containarium/internal/events"
 	"github.com/footprintai/containarium/internal/gateway"
 	"github.com/footprintai/containarium/internal/incus"
+	"github.com/footprintai/containarium/internal/metrics"
 	"github.com/footprintai/containarium/internal/mtls"
 	"github.com/footprintai/containarium/internal/network"
 	"github.com/footprintai/containarium/internal/traffic"
@@ -58,6 +59,9 @@ type DualServerConfig struct {
 	// Caddy certificate directory for /certs endpoint (sentinel cert sync)
 	CaddyCertDir string
 
+	// VictoriaMetrics URL (auto-detected or provided)
+	VictoriaMetricsURL string
+
 	// Host IP (extracted from network CIDR, e.g., "10.100.0.1")
 	HostIP string
 
@@ -83,6 +87,7 @@ type DualServer struct {
 	passthroughSyncJob    *network.PassthroughSyncJob
 	collaboratorStore     *collaborator.Store
 	daemonConfigStore     *app.DaemonConfigStore
+	metricsCollector      *metrics.Collector
 }
 
 // NewDualServer creates a new dual server instance
@@ -204,10 +209,11 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 			}
 
 			// If no external PostgreSQL/Caddy provided, set up core services
+			var coreServices *CoreServices
 			if postgresConnString == "" || caddyAdminURL == "" {
 				log.Printf("Setting up core services (PostgreSQL, Caddy) in containers...")
 
-				coreServices := NewCoreServices(incusClient, CoreServicesConfig{
+				coreServices = NewCoreServices(incusClient, CoreServicesConfig{
 					NetworkCIDR: networkCIDR,
 				})
 
@@ -233,6 +239,39 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 					}
 				}
 			}
+
+			// Setup VictoriaMetrics + Grafana if no URL provided
+			victoriaMetricsURL := config.VictoriaMetricsURL
+			if victoriaMetricsURL == "" {
+				// Determine PostgreSQL IP for Grafana config DB
+				var postgresIP string
+				if coreServices != nil {
+					postgresIP = coreServices.GetPostgresIP()
+				}
+				// If coreServices wasn't created (core containers were pre-detected),
+				// look up the PostgreSQL IP from the existing container
+				if postgresIP == "" {
+					if pgInfo, err := incusClient.FindContainerByRole(incus.RolePostgres); err == nil {
+						postgresIP = pgInfo.IPAddress
+					}
+				}
+				if postgresIP != "" {
+					// Ensure coreServices exists for EnsureVictoriaMetrics
+					if coreServices == nil {
+						coreServices = NewCoreServices(incusClient, CoreServicesConfig{
+							NetworkCIDR: networkCIDR,
+						})
+					}
+					vmIP, err := coreServices.EnsureVictoriaMetrics(context.Background(), postgresIP)
+					if err != nil {
+						log.Printf("Warning: Failed to setup VictoriaMetrics: %v. Monitoring disabled.", err)
+					} else {
+						victoriaMetricsURL = fmt.Sprintf("http://%s:%d", vmIP, DefaultVMPort)
+						log.Printf("VictoriaMetrics ready: %s", vmIP)
+					}
+				}
+			}
+			config.VictoriaMetricsURL = victoriaMetricsURL
 
 			// Connect to app store
 			appStore, err := app.NewStore(context.Background(), postgresConnString)
@@ -397,6 +436,34 @@ skipAppHosting:
 
 	reflection.Register(grpcServer)
 
+	// Create OTel metrics collector if VictoriaMetrics URL is available
+	var metricsCollector *metrics.Collector
+	if config.VictoriaMetricsURL != "" {
+		metricsIncusClient, err := incus.New()
+		if err != nil {
+			log.Printf("Warning: Failed to create incus client for metrics: %v", err)
+		} else {
+			collectorConfig := metrics.DefaultCollectorConfig()
+			collectorConfig.VictoriaMetricsURL = config.VictoriaMetricsURL
+			mc, err := metrics.NewCollector(collectorConfig, metricsIncusClient)
+			if err != nil {
+				log.Printf("Warning: Failed to create OTel metrics collector: %v", err)
+			} else {
+				metricsCollector = mc
+				log.Printf("OTel metrics collector configured (target: %s)", config.VictoriaMetricsURL)
+			}
+		}
+	}
+
+	// Set monitoring URLs on container server so GetMonitoringInfo works.
+	// Grafana is served via reverse proxy at /grafana/ on the same host,
+	// so the public URL is relative to the server's own origin.
+	if config.VictoriaMetricsURL != "" {
+		// The web UI derives the full Grafana URL from its own origin + /grafana/
+		grafanaURL := "/grafana"
+		containerServer.SetMonitoringURLs(config.VictoriaMetricsURL, grafanaURL)
+	}
+
 	// Create gateway server if REST is enabled
 	var gatewayServer *gateway.GatewayServer
 	if config.EnableREST {
@@ -421,6 +488,16 @@ skipAppHosting:
 			certsDir,
 			config.CaddyCertDir,
 		)
+
+		// Wire Grafana reverse proxy if VictoriaMetrics is configured
+		if config.VictoriaMetricsURL != "" {
+			vmIP := stripHostFromURL(config.VictoriaMetricsURL)
+			if vmIP != "" {
+				grafanaBackend := fmt.Sprintf("http://%s:%d", vmIP, DefaultGrafanaPort)
+				gatewayServer.SetGrafanaBackendURL(grafanaBackend)
+			}
+		}
+
 		log.Printf("HTTP/REST gateway enabled on port %d", config.HTTPPort)
 	}
 
@@ -441,6 +518,7 @@ skipAppHosting:
 		passthroughSyncJob: passthroughSyncJob,
 		collaboratorStore:  collabStore,
 		daemonConfigStore:  config.DaemonConfigStore,
+		metricsCollector:   metricsCollector,
 	}, nil
 }
 
@@ -451,6 +529,16 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		if err := ds.trafficCollector.Start(); err != nil {
 			log.Printf("Warning: Failed to start traffic collector: %v", err)
 		}
+	}
+
+	// Start OTel metrics collector if available
+	if ds.metricsCollector != nil {
+		ds.metricsCollector.Start()
+	}
+
+	// Log Grafana availability (served via reverse proxy at /grafana/ on the HTTP gateway)
+	if ds.config.VictoriaMetricsURL != "" {
+		log.Printf("Grafana available at /grafana/ (reverse proxy)")
 	}
 
 	// Start route sync job if available (syncs PostgreSQL -> Caddy)
@@ -545,6 +633,9 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		if ds.trafficCollector != nil {
 			ds.trafficCollector.Stop()
 		}
+		if ds.metricsCollector != nil {
+			ds.metricsCollector.Stop()
+		}
 		if ds.collaboratorStore != nil {
 			ds.collaboratorStore.Close()
 		}
@@ -580,6 +671,23 @@ func connectToPostgres(connString string, maxRetries int, retryInterval time.Dur
 		return pool, nil
 	}
 	return nil, fmt.Errorf("failed to connect to PostgreSQL after %d attempts: %w", maxRetries, lastErr)
+}
+
+// stripHostFromURL extracts the host (without port) from a URL like "http://10.100.0.5:8428"
+func stripHostFromURL(rawURL string) string {
+	// Remove protocol
+	s := rawURL
+	if len(s) > 8 && s[:8] == "https://" {
+		s = s[8:]
+	} else if len(s) > 7 && s[:7] == "http://" {
+		s = s[7:]
+	}
+	// Remove port
+	host, _, err := net.SplitHostPort(s)
+	if err != nil {
+		return s // no port, return as is
+	}
+	return host
 }
 
 // generateRandomSecret generates a random secret for development mode

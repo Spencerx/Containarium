@@ -34,6 +34,7 @@ const (
 	ContainerService_GetMetrics_FullMethodName         = "/containarium.v1.ContainerService/GetMetrics"
 	ContainerService_CleanupDisk_FullMethodName        = "/containarium.v1.ContainerService/CleanupDisk"
 	ContainerService_GetSystemInfo_FullMethodName      = "/containarium.v1.ContainerService/GetSystemInfo"
+	ContainerService_GetMonitoringInfo_FullMethodName  = "/containarium.v1.ContainerService/GetMonitoringInfo"
 )
 
 // ContainerServiceClient is the client API for ContainerService service.
@@ -72,6 +73,8 @@ type ContainerServiceClient interface {
 	CleanupDisk(ctx context.Context, in *CleanupDiskRequest, opts ...grpc.CallOption) (*CleanupDiskResponse, error)
 	// GetSystemInfo gets information about the Incus host
 	GetSystemInfo(ctx context.Context, in *GetSystemInfoRequest, opts ...grpc.CallOption) (*GetSystemInfoResponse, error)
+	// GetMonitoringInfo gets monitoring configuration (Grafana/VictoriaMetrics URLs)
+	GetMonitoringInfo(ctx context.Context, in *GetMonitoringInfoRequest, opts ...grpc.CallOption) (*GetMonitoringInfoResponse, error)
 }
 
 type containerServiceClient struct {
@@ -232,6 +235,16 @@ func (c *containerServiceClient) GetSystemInfo(ctx context.Context, in *GetSyste
 	return out, nil
 }
 
+func (c *containerServiceClient) GetMonitoringInfo(ctx context.Context, in *GetMonitoringInfoRequest, opts ...grpc.CallOption) (*GetMonitoringInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMonitoringInfoResponse)
+	err := c.cc.Invoke(ctx, ContainerService_GetMonitoringInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ContainerServiceServer is the server API for ContainerService service.
 // All implementations must embed UnimplementedContainerServiceServer
 // for forward compatibility.
@@ -268,6 +281,8 @@ type ContainerServiceServer interface {
 	CleanupDisk(context.Context, *CleanupDiskRequest) (*CleanupDiskResponse, error)
 	// GetSystemInfo gets information about the Incus host
 	GetSystemInfo(context.Context, *GetSystemInfoRequest) (*GetSystemInfoResponse, error)
+	// GetMonitoringInfo gets monitoring configuration (Grafana/VictoriaMetrics URLs)
+	GetMonitoringInfo(context.Context, *GetMonitoringInfoRequest) (*GetMonitoringInfoResponse, error)
 	mustEmbedUnimplementedContainerServiceServer()
 }
 
@@ -322,6 +337,9 @@ func (UnimplementedContainerServiceServer) CleanupDisk(context.Context, *Cleanup
 }
 func (UnimplementedContainerServiceServer) GetSystemInfo(context.Context, *GetSystemInfoRequest) (*GetSystemInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSystemInfo not implemented")
+}
+func (UnimplementedContainerServiceServer) GetMonitoringInfo(context.Context, *GetMonitoringInfoRequest) (*GetMonitoringInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMonitoringInfo not implemented")
 }
 func (UnimplementedContainerServiceServer) mustEmbedUnimplementedContainerServiceServer() {}
 func (UnimplementedContainerServiceServer) testEmbeddedByValue()                          {}
@@ -614,6 +632,24 @@ func _ContainerService_GetSystemInfo_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ContainerService_GetMonitoringInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMonitoringInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContainerServiceServer).GetMonitoringInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContainerService_GetMonitoringInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContainerServiceServer).GetMonitoringInfo(ctx, req.(*GetMonitoringInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ContainerService_ServiceDesc is the grpc.ServiceDesc for ContainerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -680,6 +716,10 @@ var ContainerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSystemInfo",
 			Handler:    _ContainerService_GetSystemInfo_Handler,
+		},
+		{
+			MethodName: "GetMonitoringInfo",
+			Handler:    _ContainerService_GetMonitoringInfo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
