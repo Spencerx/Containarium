@@ -670,6 +670,28 @@ export class ContaineriumClient {
   }
 
   // ============================================
+  // Monitoring Methods
+  // ============================================
+
+  /**
+   * Get monitoring configuration (Grafana/VictoriaMetrics URLs)
+   */
+  async getMonitoringInfo(): Promise<{ enabled: boolean; grafanaUrl: string; victoriaMetricsUrl: string }> {
+    const response = await this.client.get<{
+      enabled?: boolean;
+      grafanaUrl?: string;
+      grafana_url?: string;
+      victoriaMetricsUrl?: string;
+      victoria_metrics_url?: string;
+    }>('/system/monitoring');
+    return {
+      enabled: response.data.enabled || false,
+      grafanaUrl: response.data.grafanaUrl || response.data.grafana_url || '',
+      victoriaMetricsUrl: response.data.victoriaMetricsUrl || response.data.victoria_metrics_url || '',
+    };
+  }
+
+  // ============================================
   // Label Management Methods
   // ============================================
 

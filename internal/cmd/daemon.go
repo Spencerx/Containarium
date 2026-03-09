@@ -190,6 +190,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Auto-detect VictoriaMetrics container IP
+	var victoriaMetricsURL string
+	if vmInfo, err := incusClient.FindContainerByRole(incus.RoleVictoriaMetrics); err == nil {
+		victoriaMetricsURL = fmt.Sprintf("http://%s:%d", vmInfo.IPAddress, server.DefaultVMPort)
+		log.Printf("Detected VictoriaMetrics at: %s", victoriaMetricsURL)
+	} else {
+		log.Printf("VictoriaMetrics auto-detect: no core-victoriametrics container found")
+	}
+
 	// Auto-detect PostgreSQL container IP if no --postgres flag specified
 	if postgresConnString == "" {
 		if pgInfo, err := incusClient.FindContainerByRole(incus.RolePostgres); err == nil && pgInfo.IPAddress != "" {
@@ -337,21 +346,22 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Create dual server config
 	config := &server.DualServerConfig{
-		GRPCAddress:        daemonAddress,
-		GRPCPort:           daemonPort,
-		EnableMTLS:         enableMTLS,
-		CertsDir:           daemonCertsDir,
-		HTTPPort:           daemonHTTPPort,
-		EnableREST:         enableREST,
-		JWTSecret:          finalJWTSecret,
-		SwaggerDir:         swaggerDir,
-		EnableAppHosting:   enableAppHosting,
-		PostgresConnString: postgresConnString,
-		BaseDomain:         baseDomain,
-		CaddyAdminURL:      caddyAdminURL,
-		HostIP:             hostIPFromCIDR(networkSubnet),
-		DaemonConfigStore:  daemonConfigStore,
-		CaddyCertDir:       caddyCertDir,
+		GRPCAddress:          daemonAddress,
+		GRPCPort:             daemonPort,
+		EnableMTLS:           enableMTLS,
+		CertsDir:             daemonCertsDir,
+		HTTPPort:             daemonHTTPPort,
+		EnableREST:           enableREST,
+		JWTSecret:            finalJWTSecret,
+		SwaggerDir:           swaggerDir,
+		EnableAppHosting:     enableAppHosting,
+		PostgresConnString:   postgresConnString,
+		BaseDomain:           baseDomain,
+		CaddyAdminURL:        caddyAdminURL,
+		HostIP:               hostIPFromCIDR(networkSubnet),
+		DaemonConfigStore:    daemonConfigStore,
+		CaddyCertDir:         caddyCertDir,
+		VictoriaMetricsURL:   victoriaMetricsURL,
 	}
 
 	// Create dual server
@@ -442,6 +452,7 @@ func backfillCoreContainerLabels(incusClient *incus.Client) {
 	cores := []coreContainer{
 		{server.CorePostgresContainer, incus.RolePostgres, "100"},
 		{server.CoreCaddyContainer, incus.RoleCaddy, "90"},
+		{server.CoreVictoriaMetricsContainer, incus.RoleVictoriaMetrics, "80"},
 	}
 	for _, c := range cores {
 		cfg, _, err := incusClient.GetRawInstance(c.name)
@@ -505,6 +516,18 @@ func waitForCoreContainers(incusClient *incus.Client, timeout time.Duration) err
 		} else {
 			allReady = false
 		}
+
+		// Check VictoriaMetrics (HTTP health on 8428) — lenient: skip if container doesn't exist
+		if info, err := incusClient.FindContainerByRole(incus.RoleVictoriaMetrics); err == nil {
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Get("http://" + info.IPAddress + ":8428/health")
+			if err != nil {
+				allReady = false
+			} else {
+				resp.Body.Close()
+			}
+		}
+		// If VM container doesn't exist, don't block — it's optional
 
 		if allReady {
 			log.Printf("All core containers ready")

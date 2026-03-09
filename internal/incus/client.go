@@ -84,9 +84,10 @@ type Role string
 
 // Core container roles
 const (
-	RoleNone     Role = ""
-	RolePostgres Role = "core-postgres"
-	RoleCaddy    Role = "core-caddy"
+	RoleNone              Role = ""
+	RolePostgres          Role = "core-postgres"
+	RoleCaddy             Role = "core-caddy"
+	RoleVictoriaMetrics   Role = "core-victoriametrics"
 )
 
 // IsCoreRole returns true if the role represents a core container.
@@ -681,6 +682,10 @@ func (c *Client) FindContainerByRole(role Role) (*ContainerInfo, error) {
 			}
 		case RoleCaddy:
 			if ct.Name == "containarium-core-caddy" || strings.Contains(strings.ToLower(ct.Name), "caddy") {
+				return &containers[i], nil
+			}
+		case RoleVictoriaMetrics:
+			if ct.Name == "containarium-core-victoriametrics" {
 				return &containers[i], nil
 			}
 		}

@@ -239,4 +239,16 @@ service ContainerService {
       tags: "System";
     };
   }
+
+  // GetMonitoringInfo gets monitoring configuration (Grafana/VictoriaMetrics URLs)
+  rpc GetMonitoringInfo(GetMonitoringInfoRequest) returns (GetMonitoringInfoResponse) {
+    option (google.api.http) = {
+      get: "/v1/system/monitoring"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get monitoring information";
+      description: "Returns monitoring configuration including Grafana and VictoriaMetrics URLs. Used by the web UI to embed the Grafana dashboard.";
+      tags: "Monitoring";
+    };
+  }
 }

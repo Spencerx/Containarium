@@ -8,6 +8,7 @@ import DnsIcon from '@mui/icons-material/Dns';
 import AppsIcon from '@mui/icons-material/Apps';
 import HubIcon from '@mui/icons-material/Hub';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import InsightsIcon from '@mui/icons-material/Insights';
 import AppBar from '@/src/components/layout/AppBar';
 import ServerTabs from '@/src/components/layout/ServerTabs';
 import AddServerDialog from '@/src/components/servers/AddServerDialog';
@@ -21,6 +22,7 @@ import AppsView from '@/src/components/apps/AppsView';
 import NetworkTopologyView from '@/src/components/network/NetworkTopologyView';
 import FirewallEditor from '@/src/components/network/FirewallEditor';
 import TrafficView from '@/src/components/traffic/TrafficView';
+import MonitoringView from '@/src/components/monitoring/MonitoringView';
 import { useServers } from '@/src/lib/hooks/useServers';
 import { useContainers, CreateContainerProgress } from '@/src/lib/hooks/useContainers';
 import { useMetrics } from '@/src/lib/hooks/useMetrics';
@@ -37,13 +39,14 @@ const TerminalDialog = dynamic(
   { ssr: false }
 );
 
-const TAB_PATHS = ['/containers/', '/apps/', '/network/', '/traffic/'] as const;
+const TAB_PATHS = ['/containers/', '/apps/', '/network/', '/traffic/', '/monitoring/'] as const;
 const TAB_INDICES: Record<string, number> = {
   '/': 0,
   '/containers/': 0,
   '/apps/': 1,
   '/network/': 2,
   '/traffic/': 3,
+  '/monitoring/': 4,
 };
 
 export default function Home() {
@@ -326,6 +329,7 @@ export default function Home() {
               <Tab icon={<AppsIcon />} iconPosition="start" label="Apps" />
               <Tab icon={<HubIcon />} iconPosition="start" label="Network" />
               <Tab icon={<TimelineIcon />} iconPosition="start" label="Traffic" />
+              <Tab icon={<InsightsIcon />} iconPosition="start" label="Monitoring" />
             </Tabs>
           </Box>
 
@@ -407,6 +411,10 @@ export default function Home() {
                 proxyRoutes={routes}
                 passthroughRoutes={passthroughRoutes}
               />
+            )}
+
+            {viewTab === 4 && (
+              <MonitoringView server={activeServer} />
             )}
           </Box>
         </>

@@ -24,6 +24,18 @@ const (
 
 	// Default Caddy admin port
 	DefaultCaddyAdminPort = 2019
+
+	// CoreVictoriaMetricsContainer is the name of the core Victoria Metrics + Grafana container
+	CoreVictoriaMetricsContainer = "containarium-core-victoriametrics"
+
+	// Default Victoria Metrics port
+	DefaultVMPort = 8428
+
+	// Default Grafana port
+	DefaultGrafanaPort = 3000
+
+	// Default Victoria Metrics retention period
+	DefaultVMRetention = "30d"
 )
 
 // CoreServicesConfig holds configuration for core services
@@ -37,12 +49,13 @@ type CoreServicesConfig struct {
 	NetworkCIDR string // e.g., "10.100.0.0/24"
 }
 
-// CoreServices manages the core infrastructure containers (PostgreSQL, Caddy)
+// CoreServices manages the core infrastructure containers (PostgreSQL, Caddy, VictoriaMetrics+Grafana)
 type CoreServices struct {
-	incusClient *incus.Client
-	config      CoreServicesConfig
-	postgresIP  string
-	caddyIP     string
+	incusClient        *incus.Client
+	config             CoreServicesConfig
+	postgresIP         string
+	caddyIP            string
+	victoriaMetricsIP  string
 }
 
 // NewCoreServices creates a new core services manager
@@ -397,6 +410,342 @@ func (cs *CoreServices) getCaddyAdminURL() string {
 // GetCaddyIP returns the Caddy container IP
 func (cs *CoreServices) GetCaddyIP() string {
 	return cs.caddyIP
+}
+
+// EnsureVictoriaMetrics ensures the Victoria Metrics + Grafana container is running
+func (cs *CoreServices) EnsureVictoriaMetrics(ctx context.Context, postgresIP string) (string, error) {
+	// Check if container already exists
+	info, err := cs.incusClient.GetContainer(CoreVictoriaMetricsContainer)
+	if err == nil {
+		// Backfill role label and boot priority
+		cs.backfillConfig(CoreVictoriaMetricsContainer, incus.RoleVictoriaMetrics, "80")
+
+		// Container exists
+		if info.State == "Running" {
+			cs.victoriaMetricsIP = info.IPAddress
+			log.Printf("VictoriaMetrics container already running at %s", cs.victoriaMetricsIP)
+			return cs.victoriaMetricsIP, nil
+		}
+		// Container exists but not running, start it
+		log.Printf("Starting existing VictoriaMetrics container...")
+		if err := cs.incusClient.StartContainer(CoreVictoriaMetricsContainer); err != nil {
+			return "", fmt.Errorf("failed to start victoriametrics container: %w", err)
+		}
+		ip, err := cs.incusClient.WaitForNetwork(CoreVictoriaMetricsContainer, 60*time.Second)
+		if err != nil {
+			return "", fmt.Errorf("failed to get victoriametrics IP: %w", err)
+		}
+		cs.victoriaMetricsIP = ip
+		// Wait for services
+		if err := cs.waitForVictoriaMetrics(ctx); err != nil {
+			return "", err
+		}
+		return cs.victoriaMetricsIP, nil
+	}
+
+	// Container doesn't exist, create it
+	log.Printf("Creating VictoriaMetrics + Grafana container...")
+
+	config := incus.ContainerConfig{
+		Name:      CoreVictoriaMetricsContainer,
+		Image:     "images:ubuntu/24.04",
+		CPU:       "1",
+		Memory:    "1GB",
+		AutoStart: true,
+		Disk: &incus.DiskDevice{
+			Path: "/",
+			Pool: "default",
+			Size: "10GB",
+		},
+	}
+
+	if err := cs.incusClient.CreateContainer(config); err != nil {
+		return "", fmt.Errorf("failed to create victoriametrics container: %w", err)
+	}
+
+	// Set role label and boot priority
+	cs.incusClient.UpdateContainerConfig(CoreVictoriaMetricsContainer, incus.RoleKey, string(incus.RoleVictoriaMetrics))
+	cs.incusClient.UpdateContainerConfig(CoreVictoriaMetricsContainer, "boot.autostart", "true")
+	cs.incusClient.UpdateContainerConfig(CoreVictoriaMetricsContainer, "boot.autostart.priority", "80")
+
+	// Start container
+	if err := cs.incusClient.StartContainer(CoreVictoriaMetricsContainer); err != nil {
+		return "", fmt.Errorf("failed to start victoriametrics container: %w", err)
+	}
+
+	// Wait for network
+	ip, err := cs.incusClient.WaitForNetwork(CoreVictoriaMetricsContainer, 60*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to get victoriametrics IP: %w", err)
+	}
+	cs.victoriaMetricsIP = ip
+	log.Printf("VictoriaMetrics container IP: %s", cs.victoriaMetricsIP)
+
+	// Install and configure Victoria Metrics + Grafana
+	if err := cs.setupVictoriaMetrics(ctx, postgresIP); err != nil {
+		return "", fmt.Errorf("failed to setup victoriametrics: %w", err)
+	}
+
+	return cs.victoriaMetricsIP, nil
+}
+
+// setupVictoriaMetrics installs Victoria Metrics and Grafana in the container
+func (cs *CoreServices) setupVictoriaMetrics(ctx context.Context, postgresIP string) error {
+	log.Printf("Installing Victoria Metrics + Grafana...")
+
+	// Wait for apt to be available
+	time.Sleep(5 * time.Second)
+
+	// Install prerequisites
+	commands := [][]string{
+		{"apt-get", "update"},
+		{"apt-get", "install", "-y", "curl", "wget", "apt-transport-https", "software-properties-common", "gnupg"},
+	}
+
+	for _, cmd := range commands {
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, cmd); err != nil {
+			return fmt.Errorf("failed to run %v: %w", cmd, err)
+		}
+	}
+
+	// Install Victoria Metrics single-node binary
+	vmCommands := [][]string{
+		{"bash", "-c", "wget -qO /tmp/victoria-metrics.tar.gz https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v1.108.1/victoria-metrics-linux-amd64-v1.108.1.tar.gz"},
+		{"bash", "-c", "tar -xzf /tmp/victoria-metrics.tar.gz -C /usr/local/bin/ victoria-metrics-prod"},
+		{"bash", "-c", "chmod +x /usr/local/bin/victoria-metrics-prod"},
+		{"mkdir", "-p", "/var/lib/victoria-metrics"},
+	}
+
+	for _, cmd := range vmCommands {
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, cmd); err != nil {
+			return fmt.Errorf("failed to install victoria-metrics: %w", err)
+		}
+	}
+
+	// Create Victoria Metrics systemd service
+	vmService := `[Unit]
+Description=Victoria Metrics
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/victoria-metrics-prod -storageDataPath=/var/lib/victoria-metrics -retentionPeriod=30d -httpListenAddr=:8428 -opentelemetry.usePrometheusNaming
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`
+	if err := cs.incusClient.WriteFile(CoreVictoriaMetricsContainer, "/etc/systemd/system/victoria-metrics.service", []byte(vmService), "0644"); err != nil {
+		return fmt.Errorf("failed to write victoria-metrics service: %w", err)
+	}
+
+	// Start Victoria Metrics
+	vmStartCommands := [][]string{
+		{"systemctl", "daemon-reload"},
+		{"systemctl", "enable", "victoria-metrics"},
+		{"systemctl", "start", "victoria-metrics"},
+	}
+
+	for _, cmd := range vmStartCommands {
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, cmd); err != nil {
+			return fmt.Errorf("failed to start victoria-metrics: %w", err)
+		}
+	}
+
+	// Wait for Victoria Metrics
+	if err := cs.waitForVictoriaMetrics(ctx); err != nil {
+		return fmt.Errorf("victoria-metrics not ready: %w", err)
+	}
+
+	// Install Grafana OSS
+	grafanaCommands := [][]string{
+		{"bash", "-c", "wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key"},
+		{"bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/grafana.key] https://apt.grafana.com stable main' | tee /etc/apt/sources.list.d/grafana.list"},
+		{"apt-get", "update"},
+		{"apt-get", "install", "-y", "grafana"},
+	}
+
+	for _, cmd := range grafanaCommands {
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, cmd); err != nil {
+			return fmt.Errorf("failed to install grafana: %w", err)
+		}
+	}
+
+	// Create grafana database in PostgreSQL container
+	createGrafanaDBCmd := "CREATE DATABASE grafana OWNER containarium;"
+	if err := cs.incusClient.Exec(CorePostgresContainer, []string{
+		"su", "-", "postgres", "-c", fmt.Sprintf("psql -c \"%s\"", createGrafanaDBCmd),
+	}); err != nil {
+		log.Printf("Note: Grafana database might already exist")
+	}
+
+	// Configure Grafana
+	grafanaIni := fmt.Sprintf(`[database]
+type = postgres
+host = %s:5432
+name = grafana
+user = %s
+password = %s
+ssl_mode = disable
+
+[security]
+allow_embedding = true
+admin_user = admin
+admin_password = containarium
+
+[auth.anonymous]
+enabled = true
+org_role = Viewer
+
+[users]
+default_theme = light
+
+[server]
+http_port = 3000
+root_url = %%(protocol)s://%%(domain)s/grafana/
+serve_from_sub_path = true
+`, postgresIP, DefaultPostgresUser, DefaultPostgresPassword)
+
+	if err := cs.incusClient.WriteFile(CoreVictoriaMetricsContainer, "/etc/grafana/grafana.ini", []byte(grafanaIni), "0644"); err != nil {
+		return fmt.Errorf("failed to write grafana.ini: %w", err)
+	}
+
+	// Provision Victoria Metrics datasource
+	if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, []string{"mkdir", "-p", "/etc/grafana/provisioning/datasources"}); err != nil {
+		return fmt.Errorf("failed to create datasource dir: %w", err)
+	}
+
+	datasourceYaml := `apiVersion: 1
+deleteDatasources:
+  - name: VictoriaMetrics
+    orgId: 1
+datasources:
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://localhost:8428
+    isDefault: true
+    editable: false
+`
+	if err := cs.incusClient.WriteFile(CoreVictoriaMetricsContainer, "/etc/grafana/provisioning/datasources/vm.yaml", []byte(datasourceYaml), "0644"); err != nil {
+		return fmt.Errorf("failed to write datasource config: %w", err)
+	}
+
+	// Provision dashboards
+	if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, []string{"mkdir", "-p", "/etc/grafana/provisioning/dashboards"}); err != nil {
+		return fmt.Errorf("failed to create dashboard provisioning dir: %w", err)
+	}
+
+	dashboardProvisionYaml := `apiVersion: 1
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: 'Containarium'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+`
+	if err := cs.incusClient.WriteFile(CoreVictoriaMetricsContainer, "/etc/grafana/provisioning/dashboards/default.yaml", []byte(dashboardProvisionYaml), "0644"); err != nil {
+		return fmt.Errorf("failed to write dashboard provisioning config: %w", err)
+	}
+
+	// Create dashboards directory and write the single consolidated dashboard
+	if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, []string{"mkdir", "-p", "/var/lib/grafana/dashboards"}); err != nil {
+		return fmt.Errorf("failed to create dashboards dir: %w", err)
+	}
+
+	if err := cs.incusClient.WriteFile(CoreVictoriaMetricsContainer, "/var/lib/grafana/dashboards/overview.json", []byte(OverviewDashboard), "0644"); err != nil {
+		return fmt.Errorf("failed to write overview dashboard: %w", err)
+	}
+
+	// Start Grafana
+	grafanaStartCommands := [][]string{
+		{"systemctl", "daemon-reload"},
+		{"systemctl", "enable", "grafana-server"},
+		{"systemctl", "start", "grafana-server"},
+	}
+
+	for _, cmd := range grafanaStartCommands {
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, cmd); err != nil {
+			return fmt.Errorf("failed to start grafana: %w", err)
+		}
+	}
+
+	// Wait for Grafana
+	if err := cs.waitForGrafana(ctx); err != nil {
+		return fmt.Errorf("grafana not ready: %w", err)
+	}
+
+	log.Printf("VictoriaMetrics + Grafana setup complete")
+	return nil
+}
+
+// waitForVictoriaMetrics waits for Victoria Metrics to be ready
+func (cs *CoreServices) waitForVictoriaMetrics(ctx context.Context) error {
+	log.Printf("Waiting for Victoria Metrics to be ready...")
+
+	for i := 0; i < 30; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, []string{
+			"curl", "-sf", "http://localhost:8428/health",
+		}); err == nil {
+			log.Printf("Victoria Metrics is ready")
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for Victoria Metrics to be ready")
+}
+
+// waitForGrafana waits for Grafana to be ready
+func (cs *CoreServices) waitForGrafana(ctx context.Context) error {
+	log.Printf("Waiting for Grafana to be ready...")
+
+	for i := 0; i < 30; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err := cs.incusClient.Exec(CoreVictoriaMetricsContainer, []string{
+			"curl", "-sf", "http://localhost:3000/api/health",
+		}); err == nil {
+			log.Printf("Grafana is ready")
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for Grafana to be ready")
+}
+
+// GetVictoriaMetricsIP returns the Victoria Metrics container IP
+func (cs *CoreServices) GetVictoriaMetricsIP() string {
+	return cs.victoriaMetricsIP
+}
+
+// GetVictoriaMetricsURL returns the Victoria Metrics HTTP API URL
+func (cs *CoreServices) GetVictoriaMetricsURL() string {
+	return fmt.Sprintf("http://%s:%d", cs.victoriaMetricsIP, DefaultVMPort)
+}
+
+// GetGrafanaURL returns the Grafana URL
+func (cs *CoreServices) GetGrafanaURL() string {
+	return fmt.Sprintf("http://%s:%d", cs.victoriaMetricsIP, DefaultGrafanaPort)
 }
 
 // backfillConfig ensures role label and boot priority are set on an existing
