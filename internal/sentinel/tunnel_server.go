@@ -1,0 +1,288 @@
+package sentinel
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hashicorp/yamux"
+)
+
+// TunnelServer listens for incoming tunnel connections from remote spot instances.
+// Each connected spot gets a loopback alias, and the server opens local TCP proxy
+// listeners that forward traffic through the yamux session to the spot.
+type TunnelServer struct {
+	listenAddr string
+	token      string
+	registry   *TunnelRegistry
+
+	// Callbacks for Manager integration
+	OnConnect    func(spot *TunnelSpot)
+	OnDisconnect func(spot *TunnelSpot)
+
+	// Active proxy listeners per spot (spotID -> list of listeners)
+	mu        sync.Mutex
+	proxies   map[string][]net.Listener
+	cancelCtx context.CancelFunc
+}
+
+// NewTunnelServer creates a new tunnel server.
+func NewTunnelServer(listenAddr, token string, registry *TunnelRegistry) *TunnelServer {
+	return &TunnelServer{
+		listenAddr: listenAddr,
+		token:      token,
+		registry:   registry,
+		proxies:    make(map[string][]net.Listener),
+	}
+}
+
+// Run starts the tunnel server on its own port. Blocks until ctx is cancelled.
+func (ts *TunnelServer) Run(ctx context.Context) error {
+	ln, err := net.Listen("tcp", ts.listenAddr)
+	if err != nil {
+		return fmt.Errorf("tunnel server listen on %s: %w", ts.listenAddr, err)
+	}
+	defer ln.Close()
+
+	log.Printf("[tunnel-server] listening on %s", ts.listenAddr)
+	return ts.Serve(ctx, ln)
+}
+
+// Serve accepts tunnel connections from the given listener. Use this when the
+// listener is provided externally (e.g., from a ConnMux). Blocks until ctx is
+// cancelled or the listener is closed.
+func (ts *TunnelServer) Serve(ctx context.Context, ln net.Listener) error {
+	ctx, cancel := context.WithCancel(ctx)
+	ts.cancelCtx = cancel
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				// Check if the listener was closed (net.ErrClosed or similar)
+				if isClosedErr(err) {
+					return nil
+				}
+				log.Printf("[tunnel-server] accept error: %v", err)
+				continue
+			}
+		}
+		go ts.handleConnection(ctx, conn)
+	}
+}
+
+func (ts *TunnelServer) handleConnection(ctx context.Context, conn net.Conn) {
+	remoteAddr := conn.RemoteAddr().String()
+	log.Printf("[tunnel-server] new connection from %s", remoteAddr)
+
+	// Set deadline for handshake
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// Read handshake
+	hs, err := readHandshake(conn)
+	if err != nil {
+		log.Printf("[tunnel-server] handshake read error from %s: %v", remoteAddr, err)
+		conn.Close()
+		return
+	}
+
+	// Validate
+	if err := validateHandshake(hs, ts.token); err != nil {
+		log.Printf("[tunnel-server] handshake validation failed from %s: %v", remoteAddr, err)
+		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: err.Error()})
+		conn.Close()
+		return
+	}
+
+	// Clear deadline after successful handshake validation
+	conn.SetDeadline(time.Time{})
+
+	// Create yamux session. The sentinel is the yamux *client* (it opens streams
+	// to dial into the spot), even though the TCP connection was initiated by the spot.
+	yamuxCfg := yamux.DefaultConfig()
+	yamuxCfg.EnableKeepAlive = true
+	yamuxCfg.KeepAliveInterval = 15 * time.Second
+	yamuxCfg.ConnectionWriteTimeout = 10 * time.Second
+
+	session, err := yamux.Client(conn, yamuxCfg)
+	if err != nil {
+		log.Printf("[tunnel-server] yamux client creation failed for %s: %v", hs.SpotID, err)
+		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: "yamux init failed"})
+		conn.Close()
+		return
+	}
+
+	// Register in the registry (assigns loopback alias)
+	localIP, err := ts.registry.Register(hs.SpotID, session, hs.Ports)
+	if err != nil {
+		log.Printf("[tunnel-server] registration failed for %s: %v", hs.SpotID, err)
+		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: err.Error()})
+		session.Close()
+		return
+	}
+
+	// Send success response
+	if err := writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: true, AssignedIP: localIP}); err != nil {
+		log.Printf("[tunnel-server] failed to send handshake response to %s: %v", hs.SpotID, err)
+		ts.registry.Unregister(hs.SpotID)
+		session.Close()
+		return
+	}
+
+	log.Printf("[tunnel-server] spot %q authenticated, assigned %s, ports %v", hs.SpotID, localIP, hs.Ports)
+
+	// Start local TCP proxy listeners for each port
+	ts.startProxies(ctx, hs.SpotID, localIP, hs.Ports, session)
+
+	// Notify manager
+	spot := ts.registry.Get(hs.SpotID)
+	if spot != nil && ts.OnConnect != nil {
+		ts.OnConnect(spot)
+	}
+
+	// Monitor session — when it closes, clean up
+	go ts.monitorSession(hs.SpotID, session)
+}
+
+// startProxies opens a local TCP listener on localIP:port for each port.
+// Connections to these listeners are proxied through the yamux session.
+// If binding to localIP fails (e.g., loopback alias not available on non-Linux),
+// it falls back to 127.0.0.1.
+func (ts *TunnelServer) startProxies(ctx context.Context, spotID, localIP string, ports []int, session *yamux.Session) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Close any existing proxies for this spot
+	ts.closeProxiesLocked(spotID)
+
+	var listeners []net.Listener
+	for _, port := range ports {
+		addr := fmt.Sprintf("%s:%d", localIP, port)
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			// Fall back to 127.0.0.1 if the loopback alias isn't available
+			fallbackAddr := fmt.Sprintf("127.0.0.1:%d", port)
+			ln, err = net.Listen("tcp", fallbackAddr)
+			if err != nil {
+				log.Printf("[tunnel-server] failed to listen on %s (and fallback %s) for spot %s: %v", addr, fallbackAddr, spotID, err)
+				continue
+			}
+			log.Printf("[tunnel-server] proxy listening on %s (fallback) → tunnel → spot %s", fallbackAddr, spotID)
+		} else {
+			log.Printf("[tunnel-server] proxy listening on %s → tunnel → spot %s", addr, spotID)
+		}
+		listeners = append(listeners, ln)
+
+		go ts.proxyLoop(ctx, ln, port, session, spotID)
+	}
+	ts.proxies[spotID] = listeners
+}
+
+// proxyLoop accepts connections on the local listener and forwards them
+// through the yamux session to the spot's corresponding port.
+func (ts *TunnelServer) proxyLoop(ctx context.Context, ln net.Listener, port int, session *yamux.Session, spotID string) {
+	for {
+		localConn, err := ln.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				// Listener closed (spot disconnected)
+				return
+			}
+		}
+		go ts.proxyConnection(localConn, port, session, spotID)
+	}
+}
+
+// proxyConnection forwards a single connection through yamux to the spot.
+// The protocol: the sentinel opens a yamux stream, sends a 2-byte port number,
+// then does bidirectional copy.
+func (ts *TunnelServer) proxyConnection(localConn net.Conn, port int, session *yamux.Session, spotID string) {
+	defer localConn.Close()
+
+	// Open a yamux stream to the spot
+	stream, err := session.Open()
+	if err != nil {
+		log.Printf("[tunnel-server] failed to open yamux stream to spot %s for port %d: %v", spotID, port, err)
+		return
+	}
+	defer stream.Close()
+
+	// Send the target port as a 2-byte big-endian header
+	portBytes := []byte{byte(port >> 8), byte(port & 0xff)}
+	if _, err := stream.Write(portBytes); err != nil {
+		log.Printf("[tunnel-server] failed to write port header to spot %s: %v", spotID, err)
+		return
+	}
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+	go func() {
+		io.Copy(stream, localConn)
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(localConn, stream)
+		done <- struct{}{}
+	}()
+	<-done
+}
+
+// monitorSession watches for the yamux session to close and triggers cleanup.
+func (ts *TunnelServer) monitorSession(spotID string, session *yamux.Session) {
+	// Wait for the session to close (this blocks until the underlying conn dies
+	// or the session is explicitly closed)
+	<-session.CloseChan()
+
+	log.Printf("[tunnel-server] spot %q session closed, cleaning up", spotID)
+
+	// Get spot info before unregistering (for callback)
+	spot := ts.registry.Get(spotID)
+
+	// Close proxy listeners
+	ts.mu.Lock()
+	ts.closeProxiesLocked(spotID)
+	ts.mu.Unlock()
+
+	// Unregister from registry (removes loopback alias)
+	ts.registry.Unregister(spotID)
+
+	// Notify manager
+	if spot != nil && ts.OnDisconnect != nil {
+		ts.OnDisconnect(spot)
+	}
+}
+
+// isClosedErr returns true if the error indicates a closed connection/listener.
+func isClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err == net.ErrClosed ||
+		strings.Contains(err.Error(), "use of closed network connection") ||
+		strings.Contains(err.Error(), "closed")
+}
+
+func (ts *TunnelServer) closeProxiesLocked(spotID string) {
+	if listeners, ok := ts.proxies[spotID]; ok {
+		for _, ln := range listeners {
+			ln.Close()
+		}
+		delete(ts.proxies, spotID)
+	}
+}

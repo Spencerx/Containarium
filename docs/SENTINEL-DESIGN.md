@@ -220,7 +220,8 @@ containarium sentinel [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--provider` | `gcp` | Cloud provider: `gcp` or `none` (local testing) |
+| `--provider` | `gcp` | Cloud provider: `gcp`, `none` (local testing), or `tunnel` (reverse tunnel) |
+| `--tunnel-token` | | Pre-shared token for tunnel auth (`tunnel` provider only) |
 | `--spot-vm` | | Name of backend VM instance (required for GCP) |
 | `--zone` | | GCP zone (required for GCP) |
 | `--project` | | GCP project ID (required for GCP) |
@@ -251,6 +252,22 @@ sudo journalctl -u containarium-sentinel -f
 # Restart
 sudo systemctl restart containarium-sentinel
 ```
+
+### Tunnel Mode (Firewalled Spots)
+
+```bash
+# Sentinel accepts reverse tunnel connections on port 443
+containarium sentinel --provider=tunnel --tunnel-token SECRET
+
+# Firewalled spot connects outbound to sentinel
+containarium tunnel \
+  --sentinel-addr sentinel.example.com:443 \
+  --token SECRET \
+  --spot-id my-spot \
+  --ports 22,80,443,8080
+```
+
+See [TUNNEL-REVERSE-PROXY.md](TUNNEL-REVERSE-PROXY.md) for full details.
 
 ### Local Testing
 
@@ -394,13 +411,16 @@ One sentinel monitors all spot VMs. Each is independently recovered — one pree
 | `internal/sentinel/iptables.go` | iptables DNAT rule management |
 | `internal/sentinel/provider_gcp.go` | GCP cloud provider (GetInstanceIP, StartInstance, event watcher) |
 | `internal/sentinel/provider_none.go` | Local testing provider (no cloud, no iptables) |
+| `internal/sentinel/tunnel_*.go` | Reverse tunnel: mux, server, client, registry, provider, auth |
 | `internal/cmd/sentinel.go` | CLI flags and command wiring |
+| `internal/cmd/tunnel.go` | `containarium tunnel` subcommand (spot-side client) |
 | `internal/gateway/certs_handler.go` | Cert export endpoint on daemon side |
 | `terraform/gce/sentinel.tf` | Terraform resources |
 | `terraform/gce/scripts/startup-sentinel.sh` | Startup script template |
 
 ## Related Documents
 
+- [TUNNEL-REVERSE-PROXY.md](TUNNEL-REVERSE-PROXY.md) — Reverse tunnel for firewalled spot instances
 - [SPOT-RECOVERY.md](SPOT-RECOVERY.md) — Recovery timelines and MIG vs sentinel comparison
 - [SPOT-INSTANCES-AND-SCALING.md](SPOT-INSTANCES-AND-SCALING.md) — Spot instance cost savings and scaling strategies
 - [HORIZONTAL-SCALING-ARCHITECTURE.md](HORIZONTAL-SCALING-ARCHITECTURE.md) — Multi-server architectures

@@ -2,7 +2,10 @@ package sentinel
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"sync/atomic"
 	"time"
 )
@@ -28,6 +31,7 @@ type Config struct {
 	RecoveryTimeout    time.Duration // warn if recovery takes longer than this (0 = no warning)
 	CertSyncInterval   time.Duration // interval for syncing TLS certs from backend (0 = default 6h)
 	KeySyncInterval    time.Duration // interval for syncing SSH keys from backend (0 = default 2m)
+	TunnelMode         bool          // if true, the Manager waits for tunnel connections instead of resolving IP at startup
 }
 
 // Manager is the core sentinel orchestrator.
@@ -42,6 +46,10 @@ type Manager struct {
 	stopMaintenance func() // stops the HTTP/HTTPS maintenance servers
 	certStore       *CertStore
 	keyStore        *KeyStore
+
+	// Tunnel mode: ConnMux-based HTTPS handling
+	httpsListener   net.Listener   // from ConnMux, set externally before Run()
+	stopHTTPSProxy  func()         // stops the current HTTPS proxy goroutine
 
 	// Recovery tracking
 	outageStart    time.Time // when the current outage began
@@ -61,6 +69,13 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 	return m
 }
 
+// SetHTTPSListener sets an external HTTPS listener (from ConnMux) for tunnel mode.
+// When set, the manager routes HTTPS connections from this listener instead of
+// using iptables DNAT for port 443. Must be called before Run().
+func (m *Manager) SetHTTPSListener(ln net.Listener) {
+	m.httpsListener = ln
+}
+
 // Run is the main loop. It starts in maintenance mode and switches between
 // proxy and maintenance based on TCP health checks. Blocks until ctx is cancelled.
 func (m *Manager) Run(ctx context.Context) error {
@@ -77,31 +92,43 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 	}
 
-	// Resolve backend IP
-	ip, err := m.provider.GetInstanceIP(ctx)
-	if err != nil {
-		return err
-	}
-	m.spotIP = ip
-	log.Printf("[sentinel] backend IP: %s", m.spotIP)
+	if m.config.TunnelMode {
+		// In tunnel mode, we don't resolve a backend IP at startup.
+		// The tunnel server will call OnTunnelConnect/OnTunnelDisconnect
+		// to drive state transitions. We start in maintenance mode and
+		// the health check loop still runs — it will naturally fail until
+		// a tunnel connects and proxy listeners are established.
+		log.Printf("[sentinel] tunnel mode: waiting for remote spot to connect...")
+		if err := m.switchToMaintenance(); err != nil {
+			return err
+		}
+	} else {
+		// Resolve backend IP
+		ip, err := m.provider.GetInstanceIP(ctx)
+		if err != nil {
+			return err
+		}
+		m.spotIP = ip
+		log.Printf("[sentinel] backend IP: %s", m.spotIP)
 
-	// Start cert sync loop
-	certSyncInterval := m.config.CertSyncInterval
-	if certSyncInterval == 0 {
-		certSyncInterval = 6 * time.Hour
-	}
-	go m.certStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, certSyncInterval)
+		// Start cert sync loop
+		certSyncInterval := m.config.CertSyncInterval
+		if certSyncInterval == 0 {
+			certSyncInterval = 6 * time.Hour
+		}
+		go m.certStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, certSyncInterval)
 
-	// Start key sync loop (for sshpiper SSH proxy configuration)
-	keySyncInterval := m.config.KeySyncInterval
-	if keySyncInterval == 0 {
-		keySyncInterval = 2 * time.Minute
-	}
-	go m.keyStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, keySyncInterval)
+		// Start key sync loop (for sshpiper SSH proxy configuration)
+		keySyncInterval := m.config.KeySyncInterval
+		if keySyncInterval == 0 {
+			keySyncInterval = 2 * time.Minute
+		}
+		go m.keyStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, keySyncInterval)
 
-	// Start in maintenance mode
-	if err := m.switchToMaintenance(); err != nil {
-		return err
+		// Start in maintenance mode
+		if err := m.switchToMaintenance(); err != nil {
+			return err
+		}
 	}
 
 	// Start event watcher if provider supports it
@@ -201,8 +228,16 @@ func (m *Manager) switchToProxy() error {
 		}
 	}
 
-	// Enable iptables forwarding
-	if err := enableForwarding(m.spotIP, m.config.ForwardedPorts); err != nil {
+	// In tunnel mode with a ConnMux, port 443 is handled by the HTTPS proxy
+	// (not iptables DNAT). Exclude it from the forwarded ports for DNAT.
+	forwardedPorts := m.config.ForwardedPorts
+	if m.httpsListener != nil {
+		forwardedPorts = excludePort(forwardedPorts, m.config.HTTPSPort)
+		m.startHTTPSProxy()
+	}
+
+	// Enable iptables forwarding (remaining ports, e.g., 80)
+	if err := enableForwarding(m.spotIP, forwardedPorts); err != nil {
 		return err
 	}
 
@@ -217,18 +252,105 @@ func (m *Manager) switchToMaintenance() error {
 		log.Printf("[sentinel] warning: failed to disable forwarding: %v", err)
 	}
 
+	// Stop HTTPS proxy if running (tunnel mode)
+	if m.stopHTTPSProxy != nil {
+		m.stopHTTPSProxy()
+		m.stopHTTPSProxy = nil
+	}
+
 	// Start maintenance HTTP servers (if not already running)
 	if m.stopMaintenance == nil {
-		stop, err := startMaintenanceServers(m.config.HTTPPort, m.config.HTTPSPort, m.certStore, m)
-		if err != nil {
-			return err
+		if m.httpsListener != nil {
+			// Tunnel mode: port 443 comes from ConnMux, only start HTTP on port 80
+			stop, err := startMaintenanceHTTPOnly(m.config.HTTPPort, m)
+			if err != nil {
+				return err
+			}
+			m.stopMaintenance = stop
+			// Serve maintenance page on the ConnMux HTTPS listener
+			m.startHTTPSMaintenance()
+		} else {
+			stop, err := startMaintenanceServers(m.config.HTTPPort, m.config.HTTPSPort, m.certStore, m)
+			if err != nil {
+				return err
+			}
+			m.stopMaintenance = stop
 		}
-		m.stopMaintenance = stop
 	}
 
 	m.state.Store(StateMaintenance)
 	log.Printf("[sentinel] mode: MAINTENANCE → serving maintenance page")
 	return nil
+}
+
+// startHTTPSProxy starts proxying HTTPS connections from the ConnMux to the spot VM.
+func (m *Manager) startHTTPSProxy() {
+	if m.stopHTTPSProxy != nil {
+		m.stopHTTPSProxy()
+	}
+
+	target := net.JoinHostPort(m.spotIP, fmt.Sprintf("%d", m.config.HTTPSPort))
+	proxy := &HTTPSProxy{target: target}
+
+	// We need a new chanListener that we control. The httpsListener from ConnMux
+	// is shared — we swap who's consuming it by stopping the old consumer first.
+	// The ConnMux.HTTPSListener() is a chanListener that buffers connections.
+	// We just start a goroutine that drains it and proxies.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		proxy.Serve(m.httpsListener)
+	}()
+
+	m.stopHTTPSProxy = func() {
+		// The proxy.Serve loop returns when the listener errors on Accept.
+		// We don't close the ConnMux listener here — we just let the Manager
+		// swap to a different consumer. The chanListener will block on Accept
+		// once we stop draining it, which is fine.
+		// We signal stop by noting it was stopped; new connections will queue
+		// in the chanListener until the next consumer starts.
+	}
+	log.Printf("[sentinel] HTTPS proxy started → %s", target)
+}
+
+// startHTTPSMaintenance serves the maintenance page on HTTPS connections from the ConnMux.
+func (m *Manager) startHTTPSMaintenance() {
+	srv := NewMaintenanceTLSServer(0, m.certStore, m)
+
+	go func() {
+		log.Printf("[sentinel] maintenance HTTPS server on ConnMux listener")
+		if err := srv.ServeTLS(m.httpsListener, "", ""); err != nil {
+			// Expected when we swap to proxy mode and close the server
+			log.Printf("[sentinel] maintenance HTTPS (mux) stopped: %v", err)
+		}
+	}()
+
+	// When switching away from maintenance, stopMaintenance is called,
+	// which needs to also close this server
+	origStop := m.stopMaintenance
+	m.stopMaintenance = func() {
+		srv.Close()
+		if origStop != nil {
+			origStop()
+		}
+	}
+}
+
+// startMaintenanceHTTPOnly starts only the HTTP (port 80) maintenance server.
+// Used in tunnel mode where port 443 is handled by the ConnMux.
+func startMaintenanceHTTPOnly(httpPort int, manager *Manager) (stop func(), err error) {
+	httpSrv := NewMaintenanceServer(httpPort, manager)
+
+	go func() {
+		log.Printf("[sentinel] maintenance HTTP server listening on :%d", httpPort)
+		if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Printf("[sentinel] maintenance HTTP server error: %v", err)
+		}
+	}()
+
+	return func() {
+		httpSrv.Close()
+	}, nil
 }
 
 // handleEvent processes a VM lifecycle event from the event watcher.
@@ -329,6 +451,44 @@ func (m *Manager) cleanup() {
 	log.Printf("[sentinel] cleanup complete")
 }
 
+// --- Tunnel callbacks ---
+
+// OnTunnelConnect is called by the TunnelServer when a remote spot connects.
+// It sets the spot IP to the tunnel's loopback alias and switches to proxy mode.
+func (m *Manager) OnTunnelConnect(spot *TunnelSpot) {
+	m.spotIP = spot.LocalIP
+	log.Printf("[sentinel] tunnel connected: spot %q at %s", spot.ID, spot.LocalIP)
+
+	// Start cert and key sync loops targeting the tunnel endpoint
+	certSyncInterval := m.config.CertSyncInterval
+	if certSyncInterval == 0 {
+		certSyncInterval = 6 * time.Hour
+	}
+	ctx := context.Background()
+	go m.certStore.RunSyncLoop(ctx, spot.LocalIP, m.config.HealthPort, certSyncInterval)
+
+	keySyncInterval := m.config.KeySyncInterval
+	if keySyncInterval == 0 {
+		keySyncInterval = 2 * time.Minute
+	}
+	go m.keyStore.RunSyncLoop(ctx, spot.LocalIP, m.config.HealthPort, keySyncInterval)
+
+	// The health check loop in Run() will detect the tunnel endpoint as healthy
+	// and switch to proxy mode via the normal threshold logic. No need to force it here.
+}
+
+// OnTunnelDisconnect is called by the TunnelServer when a remote spot disconnects.
+// It immediately switches to maintenance mode.
+func (m *Manager) OnTunnelDisconnect(spot *TunnelSpot) {
+	log.Printf("[sentinel] tunnel disconnected: spot %q (was at %s)", spot.ID, spot.LocalIP)
+	m.outageStart = time.Now()
+	if m.currentState() == StateProxy {
+		if err := m.switchToMaintenance(); err != nil {
+			log.Printf("[sentinel] failed to switch to maintenance on tunnel disconnect: %v", err)
+		}
+	}
+}
+
 // --- Exported state getters ---
 
 // CurrentState returns the current sentinel mode (proxy or maintenance).
@@ -357,4 +517,15 @@ func (m *Manager) PreemptCount() int {
 // LastPreemption returns the timestamp of the last preemption event.
 func (m *Manager) LastPreemption() time.Time {
 	return m.lastPreemption
+}
+
+// excludePort returns a copy of ports with the given port removed.
+func excludePort(ports []int, exclude int) []int {
+	result := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if p != exclude {
+			result = append(result, p)
+		}
+	}
+	return result
 }

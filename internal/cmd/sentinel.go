@@ -32,6 +32,7 @@ var (
 	sentinelRecoveryTimeout    time.Duration
 	sentinelCertSyncInterval   time.Duration
 	sentinelKeySyncInterval    time.Duration
+	sentinelTunnelToken        string
 )
 
 var sentinelCmd = &cobra.Command{
@@ -49,14 +50,18 @@ Examples:
   containarium sentinel --spot-vm my-spot-vm --zone us-central1-a --project my-project
 
   # Local testing (no cloud, no iptables)
-  containarium sentinel --provider=none --backend-addr=127.0.0.1 --health-port 8080 --http-port 9090`,
+  containarium sentinel --provider=none --backend-addr=127.0.0.1 --health-port 8080 --http-port 9090
+
+  # Tunnel mode (accept reverse tunnel connections from firewalled spots on port 443)
+  containarium sentinel --provider=tunnel --tunnel-token SECRET`,
 	RunE: runSentinel,
 }
 
 func init() {
 	rootCmd.AddCommand(sentinelCmd)
 
-	sentinelCmd.Flags().StringVar(&sentinelProvider, "provider", "gcp", "Cloud provider: \"gcp\" or \"none\" (for local testing)")
+	sentinelCmd.Flags().StringVar(&sentinelProvider, "provider", "gcp", "Cloud provider: \"gcp\", \"none\" (local testing), or \"tunnel\" (reverse tunnel)")
+	sentinelCmd.Flags().StringVar(&sentinelTunnelToken, "tunnel-token", "", "Pre-shared token for tunnel authentication (tunnel provider only, or CONTAINARIUM_TUNNEL_TOKEN env)")
 	sentinelCmd.Flags().StringVar(&sentinelSpotVM, "spot-vm", "", "Name of the backend VM instance (required for gcp provider)")
 	sentinelCmd.Flags().StringVar(&sentinelZone, "zone", "", "Cloud zone (required for gcp provider)")
 	sentinelCmd.Flags().StringVar(&sentinelProject, "project", "", "Cloud project ID (required for gcp provider)")
@@ -105,8 +110,71 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 		}
 		provider = sentinel.NewNoOpProvider(sentinelBackendAddr)
 
+	case "tunnel":
+		tunnelToken := sentinelTunnelToken
+		if tunnelToken == "" {
+			tunnelToken = os.Getenv("CONTAINARIUM_TUNNEL_TOKEN")
+		}
+		if tunnelToken == "" {
+			return fmt.Errorf("--tunnel-token or CONTAINARIUM_TUNNEL_TOKEN is required for tunnel provider")
+		}
+		registry := sentinel.NewTunnelRegistry()
+		provider = sentinel.NewTunnelProvider(registry, "")
+
+		config := sentinel.Config{
+			HealthPort:         sentinelHealthPort,
+			CheckInterval:      sentinelCheckInterval,
+			HTTPPort:           sentinelHTTPPort,
+			HTTPSPort:          sentinelHTTPSPort,
+			ForwardedPorts:     ports,
+			HealthyThreshold:   sentinelHealthyThreshold,
+			UnhealthyThreshold: sentinelUnhealthyThreshold,
+			BinaryPort:         sentinelBinaryPort,
+			RecoveryTimeout:    sentinelRecoveryTimeout,
+			CertSyncInterval:   sentinelCertSyncInterval,
+			KeySyncInterval:    sentinelKeySyncInterval,
+			TunnelMode:         true,
+		}
+
+		manager := sentinel.NewManager(config, provider)
+
+		// Start ConnMux on port 443 — multiplexes tunnel handshakes and HTTPS
+		// on the same port. No extra firewall port needed.
+		muxAddr := fmt.Sprintf(":%d", sentinelHTTPSPort)
+		connMux, err := sentinel.NewConnMux(muxAddr)
+		if err != nil {
+			return fmt.Errorf("failed to start ConnMux on %s: %w", muxAddr, err)
+		}
+		defer connMux.Close()
+
+		// Wire up: tunnel connections → tunnel server, HTTPS → manager
+		tunnelServer := sentinel.NewTunnelServer("", tunnelToken, registry)
+		tunnelServer.OnConnect = manager.OnTunnelConnect
+		tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
+		manager.SetHTTPSListener(connMux.HTTPSListener())
+
+		// Graceful shutdown on signals
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+		go func() {
+			sig := <-sigChan
+			log.Printf("[sentinel] received signal: %v", sig)
+			cancel()
+		}()
+
+		// Start ConnMux, tunnel server, and manager
+		go connMux.Run()
+		go func() {
+			if err := tunnelServer.Serve(ctx, connMux.TunnelListener()); err != nil {
+				log.Printf("[sentinel] tunnel server error: %v", err)
+			}
+		}()
+
+		return manager.Run(ctx)
+
 	default:
-		return fmt.Errorf("unknown provider: %q (supported: gcp, none)", sentinelProvider)
+		return fmt.Errorf("unknown provider: %q (supported: gcp, none, tunnel)", sentinelProvider)
 	}
 
 	config := sentinel.Config{

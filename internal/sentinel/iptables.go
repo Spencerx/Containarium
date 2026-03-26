@@ -45,6 +45,15 @@ func enableForwarding(spotIP string, ports []int) error {
 		return fmt.Errorf("failed to enable ip_forward: %w", err)
 	}
 
+	// Enable route_localnet if DNAT target is a loopback address (needed for tunnel mode).
+	// This allows iptables DNAT to route packets to 127.0.0.0/8 addresses.
+	if strings.HasPrefix(spotIP, "127.") {
+		if err := exec.Command("sysctl", "-w", "net.ipv4.conf.all.route_localnet=1").Run(); err != nil {
+			return fmt.Errorf("failed to enable route_localnet: %w", err)
+		}
+		log.Printf("[sentinel] iptables: enabled route_localnet for loopback DNAT to %s", spotIP)
+	}
+
 	// Flush any existing sentinel chain rules
 	if err := disableForwarding(); err != nil {
 		log.Printf("[sentinel] iptables: warning during cleanup: %v", err)
