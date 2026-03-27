@@ -93,6 +93,15 @@ func (s *Store) initSchema(ctx context.Context) error {
 			ON zap_scan_jobs(created_at DESC);
 	`
 	_, err := s.pool.Exec(ctx, schema)
+	if err != nil {
+		return err
+	}
+
+	// Migration: add report columns
+	_, err = s.pool.Exec(ctx, `
+		ALTER TABLE zap_scan_runs ADD COLUMN IF NOT EXISTS report_html TEXT NOT NULL DEFAULT '';
+		ALTER TABLE zap_scan_runs ADD COLUMN IF NOT EXISTS report_json TEXT NOT NULL DEFAULT '';
+	`)
 	return err
 }
 
@@ -192,6 +201,22 @@ func (s *Store) UpdateScanRun(ctx context.Context, run *ScanRun) error {
 		run.HighCount, run.MediumCount, run.LowCount,
 		run.InfoCount, run.ErrorMessage, run.CompletedAt)
 	return err
+}
+
+// SaveReport stores generated HTML and JSON reports for a scan run
+func (s *Store) SaveReport(ctx context.Context, scanRunID, htmlReport, jsonReport string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE zap_scan_runs SET report_html = $2, report_json = $3 WHERE id = $1
+	`, scanRunID, htmlReport, jsonReport)
+	return err
+}
+
+// GetReport retrieves stored reports for a scan run
+func (s *Store) GetReport(ctx context.Context, scanRunID string) (htmlReport, jsonReport string, err error) {
+	err = s.pool.QueryRow(ctx, `
+		SELECT report_html, report_json FROM zap_scan_runs WHERE id = $1
+	`, scanRunID).Scan(&htmlReport, &jsonReport)
+	return
 }
 
 // ListScanRuns returns recent scan runs

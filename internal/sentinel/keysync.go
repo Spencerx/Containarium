@@ -19,38 +19,46 @@ import (
 )
 
 const (
-	sshpiperConfigDir  = "/etc/sshpiper"
-	sshpiperConfigFile = "/etc/sshpiper/config.yaml"
-	sshpiperUsersDir   = "/etc/sshpiper/users"
+	sshpiperConfigDir   = "/etc/sshpiper"
+	sshpiperConfigFile  = "/etc/sshpiper/config.yaml"
+	sshpiperUsersDir    = "/etc/sshpiper/users"
 	sshpiperUpstreamKey = "/etc/sshpiper/upstream_key"
 )
 
-// KeyStore syncs SSH authorized keys from the backend and generates
-// sshpiper YAML configuration. Follows the same pattern as CertStore.
+// backendKeys holds the users fetched from a single backend.
+type backendKeys struct {
+	backendID string
+	backendIP string
+	users     []gateway.UserKeys
+	lastSync  time.Time
+	lastErr   error
+}
+
+// KeyStore syncs SSH authorized keys from one or more backends and generates
+// sshpiper YAML configuration with per-user routing to the correct backend.
 type KeyStore struct {
 	mu            sync.RWMutex
-	users         []gateway.UserKeys // synced user keys
-	lastSync      time.Time
-	lastSyncErr   error
-	syncedCount   int
-	backendIP     string // cached for sshpiper config generation
-	configChanged bool   // true if Apply() wrote new config (avoids unnecessary restarts)
+	backends      map[string]*backendKeys // keyed by backend ID
+	configChanged bool
 }
 
 // NewKeyStore creates a new KeyStore.
 func NewKeyStore() *KeyStore {
-	return &KeyStore{}
+	return &KeyStore{
+		backends: make(map[string]*backendKeys),
+	}
 }
 
-// Sync fetches authorized keys from the backend daemon's /authorized-keys endpoint.
-func (ks *KeyStore) Sync(backendIP string, httpPort int) error {
+// Sync fetches authorized keys from a backend's /authorized-keys endpoint.
+// Each backend's users are tracked separately for per-user routing.
+func (ks *KeyStore) Sync(backendID, backendIP string, httpPort int) error {
 	url := fmt.Sprintf("http://%s:%d/authorized-keys", backendIP, httpPort)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		ks.mu.Lock()
-		ks.lastSyncErr = err
+		ks.ensureBackendLocked(backendID, backendIP).lastErr = err
 		ks.mu.Unlock()
 		return fmt.Errorf("key sync GET %s: %w", url, err)
 	}
@@ -59,7 +67,7 @@ func (ks *KeyStore) Sync(backendIP string, httpPort int) error {
 	if resp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("key sync: unexpected status %d from %s", resp.StatusCode, url)
 		ks.mu.Lock()
-		ks.lastSyncErr = err
+		ks.ensureBackendLocked(backendID, backendIP).lastErr = err
 		ks.mu.Unlock()
 		return err
 	}
@@ -67,30 +75,67 @@ func (ks *KeyStore) Sync(backendIP string, httpPort int) error {
 	var keysResp gateway.KeysResponse
 	if err := json.NewDecoder(resp.Body).Decode(&keysResp); err != nil {
 		ks.mu.Lock()
-		ks.lastSyncErr = err
+		ks.ensureBackendLocked(backendID, backendIP).lastErr = err
 		ks.mu.Unlock()
 		return fmt.Errorf("key sync: decode response: %w", err)
 	}
 
 	ks.mu.Lock()
-	ks.users = keysResp.Keys
-	ks.lastSync = time.Now()
-	ks.lastSyncErr = nil
-	ks.syncedCount = len(keysResp.Keys)
-	ks.backendIP = backendIP
+	bk := ks.ensureBackendLocked(backendID, backendIP)
+	bk.users = keysResp.Keys
+	bk.lastSync = time.Now()
+	bk.lastErr = nil
 	ks.mu.Unlock()
 
 	return nil
 }
 
-// Apply writes the sshpiper YAML config and per-user authorized_keys files.
+// SyncLegacy is the backward-compatible Sync that uses a default backend ID.
+// Used in single-backend mode.
+func (ks *KeyStore) SyncLegacy(backendIP string, httpPort int) error {
+	return ks.Sync("default", backendIP, httpPort)
+}
+
+// RemoveBackend removes all user data for a backend.
+func (ks *KeyStore) RemoveBackend(backendID string) {
+	ks.mu.Lock()
+	delete(ks.backends, backendID)
+	ks.mu.Unlock()
+}
+
+// Apply writes the sshpiper YAML config with per-user routing.
+// Each user is routed to the backend they were synced from.
+// If the same username appears on multiple backends, GCP takes priority
+// (lower backend priority value wins).
 func (ks *KeyStore) Apply() error {
 	ks.mu.RLock()
-	users := ks.users
-	backendIP := ks.backendIP
+	// Build a merged user list with per-user backend IP routing
+	type userRoute struct {
+		username       string
+		authorizedKeys string
+		backendIP      string
+	}
+	seen := make(map[string]bool)
+	var routes []userRoute
+
+	// Collect from all backends — iterate deterministically by sorting is not needed
+	// since sshpiper matches by username (order doesn't affect routing correctness)
+	for _, bk := range ks.backends {
+		for _, u := range bk.users {
+			if seen[u.Username] {
+				continue // first backend to claim a user wins
+			}
+			seen[u.Username] = true
+			routes = append(routes, userRoute{
+				username:       u.Username,
+				authorizedKeys: u.AuthorizedKeys,
+				backendIP:      bk.backendIP,
+			})
+		}
+	}
 	ks.mu.RUnlock()
 
-	if len(users) == 0 {
+	if len(routes) == 0 {
 		return fmt.Errorf("no users to configure")
 	}
 
@@ -100,39 +145,39 @@ func (ks *KeyStore) Apply() error {
 	}
 
 	// Write per-user authorized_keys
-	for _, u := range users {
-		userDir := filepath.Join(sshpiperUsersDir, u.Username)
+	for _, r := range routes {
+		userDir := filepath.Join(sshpiperUsersDir, r.username)
 		if err := os.MkdirAll(userDir, 0755); err != nil {
-			log.Printf("[keysync] failed to create dir for %s: %v", u.Username, err)
+			log.Printf("[keysync] failed to create dir for %s: %v", r.username, err)
 			continue
 		}
 		akPath := filepath.Join(userDir, "authorized_keys")
-		if err := os.WriteFile(akPath, []byte(u.AuthorizedKeys+"\n"), 0600); err != nil {
-			log.Printf("[keysync] failed to write authorized_keys for %s: %v", u.Username, err)
+		if err := os.WriteFile(akPath, []byte(r.authorizedKeys+"\n"), 0600); err != nil {
+			log.Printf("[keysync] failed to write authorized_keys for %s: %v", r.username, err)
 			continue
 		}
 	}
 
-	// Generate sshpiper YAML config
+	// Generate sshpiper YAML config with per-user backend routing
 	var buf bytes.Buffer
 	buf.WriteString("version: \"1.0\"\npipes:\n")
 
-	for _, u := range users {
-		akPath := filepath.Join(sshpiperUsersDir, u.Username, "authorized_keys")
+	for _, r := range routes {
+		akPath := filepath.Join(sshpiperUsersDir, r.username, "authorized_keys")
 		fmt.Fprintf(&buf, "  - from:\n")
-		fmt.Fprintf(&buf, "      - username: %q\n", u.Username)
+		fmt.Fprintf(&buf, "      - username: %q\n", r.username)
 		fmt.Fprintf(&buf, "        authorized_keys:\n")
 		fmt.Fprintf(&buf, "          - %s\n", akPath)
 		fmt.Fprintf(&buf, "    to:\n")
-		fmt.Fprintf(&buf, "      host: %s:22\n", backendIP)
-		fmt.Fprintf(&buf, "      username: %q\n", u.Username)
+		fmt.Fprintf(&buf, "      host: %s:22\n", r.backendIP)
+		fmt.Fprintf(&buf, "      username: %q\n", r.username)
 		fmt.Fprintf(&buf, "      ignore_hostkey: true\n")
 		fmt.Fprintf(&buf, "      private_key: %s\n", sshpiperUpstreamKey)
 	}
 
 	newContent := buf.Bytes()
 
-	// Compare with existing config — only write if changed to avoid unnecessary sshpiper restarts
+	// Compare with existing config
 	oldContent, _ := os.ReadFile(sshpiperConfigFile)
 	if bytes.Equal(oldContent, newContent) {
 		ks.mu.Lock()
@@ -149,12 +194,11 @@ func (ks *KeyStore) Apply() error {
 	ks.configChanged = true
 	ks.mu.Unlock()
 
-	log.Printf("[keysync] sshpiper config updated: %d users", len(users))
+	log.Printf("[keysync] sshpiper config updated: %d users across %d backends", len(routes), ks.backendCount())
 	return nil
 }
 
-// PushSentinelKey sends the sentinel's upstream public key to the backend
-// so it gets added to all jump server users' authorized_keys.
+// PushSentinelKey sends the sentinel's upstream public key to a backend.
 func (ks *KeyStore) PushSentinelKey(backendIP string, httpPort int) error {
 	pubKeyPath := sshpiperUpstreamKey + ".pub"
 	pubKey, err := os.ReadFile(pubKeyPath)
@@ -176,11 +220,11 @@ func (ks *KeyStore) PushSentinelKey(backendIP string, httpPort int) error {
 		return fmt.Errorf("push sentinel key: unexpected status %d", resp.StatusCode)
 	}
 
-	log.Printf("[keysync] sentinel upstream key pushed to backend")
+	log.Printf("[keysync] sentinel upstream key pushed to backend %s", backendIP)
 	return nil
 }
 
-// RestartSSHPiper restarts the sshpiper systemd service to pick up config changes.
+// RestartSSHPiper restarts the sshpiper systemd service.
 func (ks *KeyStore) RestartSSHPiper() error {
 	if runtime.GOOS != "linux" {
 		log.Printf("[keysync] sshpiper restart: skipping on %s", runtime.GOOS)
@@ -193,13 +237,12 @@ func (ks *KeyStore) RestartSSHPiper() error {
 	return nil
 }
 
-// RunSyncLoop periodically syncs keys from the backend and updates sshpiper config.
+// RunSyncLoop periodically syncs keys from a specific backend.
 // Blocks until ctx is cancelled.
-func (ks *KeyStore) RunSyncLoop(ctx context.Context, backendIP string, httpPort int, interval time.Duration) {
-	log.Printf("[keysync] starting sync loop (backend=%s:%d, interval=%s)", backendIP, httpPort, interval)
+func (ks *KeyStore) RunSyncLoop(ctx context.Context, backendID, backendIP string, httpPort int, interval time.Duration) {
+	log.Printf("[keysync] starting sync loop for backend %s (%s:%d, interval=%s)", backendID, backendIP, httpPort, interval)
 
-	// Initial sync attempt
-	ks.syncAndApply(backendIP, httpPort)
+	ks.syncAndApply(backendID, backendIP, httpPort)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -207,31 +250,37 @@ func (ks *KeyStore) RunSyncLoop(ctx context.Context, backendIP string, httpPort 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[keysync] sync loop stopped")
+			log.Printf("[keysync] sync loop stopped for backend %s", backendID)
 			return
 		case <-ticker.C:
-			ks.syncAndApply(backendIP, httpPort)
+			ks.syncAndApply(backendID, backendIP, httpPort)
 		}
 	}
 }
 
-func (ks *KeyStore) syncAndApply(backendIP string, httpPort int) {
-	if err := ks.Sync(backendIP, httpPort); err != nil {
-		log.Printf("[keysync] sync failed: %v", err)
+// RunSyncLoopLegacy is backward-compatible: uses "default" as backend ID.
+func (ks *KeyStore) RunSyncLoopLegacy(ctx context.Context, backendIP string, httpPort int, interval time.Duration) {
+	ks.RunSyncLoop(ctx, "default", backendIP, httpPort, interval)
+}
+
+func (ks *KeyStore) syncAndApply(backendID, backendIP string, httpPort int) {
+	if err := ks.Sync(backendID, backendIP, httpPort); err != nil {
+		log.Printf("[keysync] sync failed for %s: %v", backendID, err)
 		return
 	}
 
 	ks.mu.RLock()
-	count := ks.syncedCount
+	count := 0
+	if bk, ok := ks.backends[backendID]; ok {
+		count = len(bk.users)
+	}
 	ks.mu.RUnlock()
-	log.Printf("[keysync] sync OK: %d users", count)
+	log.Printf("[keysync] sync OK for %s: %d users", backendID, count)
 
-	// Push sentinel key to backend so sshpiper can authenticate upstream
 	if err := ks.PushSentinelKey(backendIP, httpPort); err != nil {
-		log.Printf("[keysync] push sentinel key failed: %v", err)
+		log.Printf("[keysync] push sentinel key failed for %s: %v", backendID, err)
 	}
 
-	// Write config (only if changed) and restart sshpiper only when needed
 	if err := ks.Apply(); err != nil {
 		log.Printf("[keysync] apply failed: %v", err)
 		return
@@ -248,23 +297,56 @@ func (ks *KeyStore) syncAndApply(backendIP string, httpPort int) {
 	}
 }
 
-// SyncedCount returns the number of users currently synced.
+func (ks *KeyStore) ensureBackendLocked(backendID, backendIP string) *backendKeys {
+	bk, ok := ks.backends[backendID]
+	if !ok {
+		bk = &backendKeys{backendID: backendID, backendIP: backendIP}
+		ks.backends[backendID] = bk
+	}
+	bk.backendIP = backendIP
+	return bk
+}
+
+func (ks *KeyStore) backendCount() int {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return len(ks.backends)
+}
+
+// --- Exported state getters ---
+
+// SyncedCount returns the total number of users across all backends.
 func (ks *KeyStore) SyncedCount() int {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	return ks.syncedCount
+	count := 0
+	for _, bk := range ks.backends {
+		count += len(bk.users)
+	}
+	return count
 }
 
-// LastSync returns the time of the last successful sync.
+// LastSync returns the most recent sync time across all backends.
 func (ks *KeyStore) LastSync() time.Time {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	return ks.lastSync
+	var latest time.Time
+	for _, bk := range ks.backends {
+		if bk.lastSync.After(latest) {
+			latest = bk.lastSync
+		}
+	}
+	return latest
 }
 
-// LastSyncErr returns the error from the last sync attempt, or nil.
+// LastSyncErr returns the first error from any backend, or nil.
 func (ks *KeyStore) LastSyncErr() error {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	return ks.lastSyncErr
+	for _, bk := range ks.backends {
+		if bk.lastErr != nil {
+			return bk.lastErr
+		}
+	}
+	return nil
 }

@@ -350,4 +350,37 @@ func (m *Manager) finalizeScanRun(ctx context.Context, scanRunID string) {
 		scanRunID, run.TargetsCount, totalAlerts,
 		byRisk["high"], byRisk["medium"], byRisk["low"], byRisk["informational"],
 		duration.Truncate(time.Second))
+
+	// Generate and store reports while ZAP daemon is still warm
+	m.generateAndStoreReports(ctx, scanRunID)
+}
+
+// generateAndStoreReports generates HTML and JSON reports from ZAP and stores them in the DB
+func (m *Manager) generateAndStoreReports(ctx context.Context, scanRunID string) {
+	// Ensure daemon is running and apiBase is set
+	if err := m.scanner.EnsureDaemonRunning(ctx); err != nil {
+		log.Printf("ZAP report: daemon not available for %s: %v", scanRunID, err)
+		return
+	}
+
+	htmlReport, err := m.scanner.GenerateHTMLReport()
+	if err != nil {
+		log.Printf("ZAP report: failed to generate HTML for %s: %v", scanRunID, err)
+		htmlReport = ""
+	}
+
+	jsonReport, err := m.scanner.GenerateJSONReport()
+	if err != nil {
+		log.Printf("ZAP report: failed to generate JSON for %s: %v", scanRunID, err)
+		jsonReport = ""
+	}
+
+	if htmlReport != "" || jsonReport != "" {
+		if err := m.store.SaveReport(ctx, scanRunID, htmlReport, jsonReport); err != nil {
+			log.Printf("ZAP report: failed to save reports for %s: %v", scanRunID, err)
+		} else {
+			log.Printf("ZAP report: saved HTML (%d bytes) and JSON (%d bytes) for %s",
+				len(htmlReport), len(jsonReport), scanRunID)
+		}
+	}
 }

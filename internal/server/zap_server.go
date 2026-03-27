@@ -145,13 +145,11 @@ func (s *ZapServer) GetZapConfig(ctx context.Context, req *pb.GetZapConfigReques
 
 // GetZapReport downloads a scan report
 func (s *ZapServer) GetZapReport(ctx context.Context, req *pb.GetZapReportRequest) (*pb.GetZapReportResponse, error) {
-	// For now, generate a report from current ZAP state
-	// In the future, we could store reports per scan run
-	if s.manager == nil || !s.manager.ZapAvailable() {
-		return nil, fmt.Errorf("ZAP scanner is not available")
+	// Serve pre-generated reports from the database (instant download)
+	htmlReport, jsonReport, err := s.store.GetReport(ctx, req.ScanRunId)
+	if err != nil {
+		return nil, fmt.Errorf("scan run not found: %w", err)
 	}
-
-	scanner := zapscanner.NewScanner()
 
 	format := req.Format
 	if format == "" {
@@ -159,23 +157,22 @@ func (s *ZapServer) GetZapReport(ctx context.Context, req *pb.GetZapReportReques
 	}
 
 	var content, contentType, filename string
-	var err error
 
 	switch format {
 	case "html":
-		content, err = scanner.GenerateHTMLReport()
+		content = htmlReport
 		contentType = "text/html"
 		filename = fmt.Sprintf("zap-report-%s.html", req.ScanRunId)
 	case "json":
-		content, err = scanner.GenerateJSONReport()
+		content = jsonReport
 		contentType = "application/json"
 		filename = fmt.Sprintf("zap-report-%s.json", req.ScanRunId)
 	default:
 		return nil, fmt.Errorf("unsupported report format: %s (supported: html, json)", format)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate %s report: %w", format, err)
+	if content == "" {
+		return nil, fmt.Errorf("no %s report available for this scan run (report may not have been generated)", format)
 	}
 
 	return &pb.GetZapReportResponse{
