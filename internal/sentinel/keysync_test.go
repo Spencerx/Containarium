@@ -188,7 +188,7 @@ func TestKeyStore_SyncError(t *testing.T) {
 	ks := NewKeyStore()
 
 	// Sync to a non-existent server
-	err := ks.Sync("192.0.2.1", 99999)
+	err := ks.Sync("test", "192.0.2.1", 99999)
 	if err == nil {
 		t.Error("expected error when syncing to unreachable server")
 	}

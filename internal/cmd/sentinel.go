@@ -104,6 +104,63 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 		defer gcpProvider.Close()
 		provider = gcpProvider
 
+		// Hybrid mode: GCP + tunnel if --tunnel-token is also provided
+		tunnelToken := sentinelTunnelToken
+		if tunnelToken == "" {
+			tunnelToken = os.Getenv("CONTAINARIUM_TUNNEL_TOKEN")
+		}
+		if tunnelToken != "" {
+			log.Printf("[sentinel] hybrid mode: GCP + tunnel (accepting tunnel connections on port %d)", sentinelHTTPSPort)
+
+			config := sentinel.Config{
+				HealthPort:         sentinelHealthPort,
+				CheckInterval:      sentinelCheckInterval,
+				HTTPPort:           sentinelHTTPPort,
+				HTTPSPort:          sentinelHTTPSPort,
+				ForwardedPorts:     ports,
+				HealthyThreshold:   sentinelHealthyThreshold,
+				UnhealthyThreshold: sentinelUnhealthyThreshold,
+				BinaryPort:         sentinelBinaryPort,
+				RecoveryTimeout:    sentinelRecoveryTimeout,
+				CertSyncInterval:   sentinelCertSyncInterval,
+				KeySyncInterval:    sentinelKeySyncInterval,
+				HybridMode:         true,
+			}
+
+			manager := sentinel.NewManager(config, gcpProvider)
+
+			// Start ConnMux on port 443
+			muxAddr := fmt.Sprintf(":%d", sentinelHTTPSPort)
+			connMux, err := sentinel.NewConnMux(muxAddr)
+			if err != nil {
+				return fmt.Errorf("failed to start ConnMux on %s: %w", muxAddr, err)
+			}
+			defer connMux.Close()
+
+			registry := sentinel.NewTunnelRegistry()
+			tunnelServer := sentinel.NewTunnelServer("", tunnelToken, registry)
+			tunnelServer.OnConnect = manager.OnTunnelConnect
+			tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
+			manager.SetHTTPSListener(connMux.HTTPSListener())
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				sig := <-sigChan
+				log.Printf("[sentinel] received signal: %v", sig)
+				cancel()
+			}()
+
+			go connMux.Run()
+			go func() {
+				if err := tunnelServer.Serve(ctx, connMux.TunnelListener()); err != nil {
+					log.Printf("[sentinel] tunnel server error: %v", err)
+				}
+			}()
+
+			return manager.Run(ctx)
+		}
+
 	case "none":
 		if sentinelBackendAddr == "" {
 			return fmt.Errorf("--backend-addr is required for provider=none")

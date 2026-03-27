@@ -99,7 +99,25 @@ The token is configured via `--tunnel-token` flag or `CONTAINARIUM_TUNNEL_TOKEN`
 
 ## Usage
 
-### Sentinel Side
+### Hybrid Mode (GCP + Tunnel) — Recommended for Production
+
+Run both the GCP spot VM and firewalled bare metal simultaneously. Add `--tunnel-token` to your existing GCP sentinel command:
+
+```bash
+containarium sentinel \
+  --spot-vm my-spot-vm --zone us-west1-a --project my-project \
+  --tunnel-token SECRET \
+  --forwarded-ports 80,443
+```
+
+This gives you:
+- **GCP spot VM** as the primary backend (auto-restart on preemption)
+- **Bare metal** as a secondary backend (connects via tunnel)
+- **Automatic failover**: if GCP is preempted, HTTP switches to the tunnel backend
+- **Per-user SSH routing**: sshpiper routes each user to whichever backend they belong to
+- **Independent health checks**: each backend is monitored separately
+
+### Pure Tunnel Mode (no GCP)
 
 ```bash
 containarium sentinel \
@@ -183,6 +201,22 @@ Sentinel KeyStore sync
   → 127.0.0.1:8080 on spot (containarium daemon)
   → JSON response with user keys
 ```
+
+## Hybrid Mode Failover
+
+In hybrid mode, the sentinel manages multiple backends with automatic failover:
+
+```
+GCP healthy + Tunnel healthy  → PROXY via GCP (primary), SSH routes to both
+GCP preempted + Tunnel healthy → PROXY via Tunnel (failover), sentinel restarts GCP VM
+GCP healthy + Tunnel disconnects → PROXY via GCP (no interruption)
+Both down                      → MAINTENANCE page served
+GCP recovers                   → PROXY via GCP (failback to primary)
+```
+
+**HTTP/HTTPS routing**: always goes to the highest-priority healthy backend (GCP > Tunnel).
+
+**SSH routing**: per-user — each user is routed to the backend they were synced from. This means GCP users keep SSHing to GCP, and bare metal users SSH to the tunnel backend, regardless of which backend is primary for HTTP.
 
 ## State Transitions
 

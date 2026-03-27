@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -32,24 +33,30 @@ type Config struct {
 	CertSyncInterval   time.Duration // interval for syncing TLS certs from backend (0 = default 6h)
 	KeySyncInterval    time.Duration // interval for syncing SSH keys from backend (0 = default 2m)
 	TunnelMode         bool          // if true, the Manager waits for tunnel connections instead of resolving IP at startup
+	HybridMode         bool          // if true, GCP + tunnel backends coexist
 }
 
 // Manager is the core sentinel orchestrator.
-// It health-checks the backend spot VM and switches between proxy and maintenance modes.
+// It health-checks backend VMs and switches between proxy and maintenance modes.
+// Supports multiple backends (GCP + tunnel) in hybrid mode.
 type Manager struct {
 	config   Config
-	provider CloudProvider
+	provider CloudProvider // primary provider (GCP in hybrid mode)
 
 	state atomic.Value // holds State
-	spotIP string
+
+	// Multi-backend support
+	mu       sync.RWMutex
+	backends *BackendPool
+	primary  *Backend // currently active backend for HTTP forwarding
 
 	stopMaintenance func() // stops the HTTP/HTTPS maintenance servers
 	certStore       *CertStore
 	keyStore        *KeyStore
 
 	// Tunnel mode: ConnMux-based HTTPS handling
-	httpsListener   net.Listener   // from ConnMux, set externally before Run()
-	stopHTTPSProxy  func()         // stops the current HTTPS proxy goroutine
+	httpsListener  net.Listener // from ConnMux, set externally before Run()
+	stopHTTPSProxy func()       // stops the current HTTPS proxy goroutine
 
 	// Recovery tracking
 	outageStart    time.Time // when the current outage began
@@ -62,6 +69,7 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 	m := &Manager{
 		config:    config,
 		provider:  provider,
+		backends:  NewBackendPool(),
 		certStore: NewCertStore(),
 		keyStore:  NewKeyStore(),
 	}
@@ -69,18 +77,15 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 	return m
 }
 
-// SetHTTPSListener sets an external HTTPS listener (from ConnMux) for tunnel mode.
-// When set, the manager routes HTTPS connections from this listener instead of
-// using iptables DNAT for port 443. Must be called before Run().
+// SetHTTPSListener sets an external HTTPS listener (from ConnMux) for tunnel/hybrid mode.
 func (m *Manager) SetHTTPSListener(ln net.Listener) {
 	m.httpsListener = ln
 }
 
-// Run is the main loop. It starts in maintenance mode and switches between
-// proxy and maintenance based on TCP health checks. Blocks until ctx is cancelled.
+// Run is the main loop. Blocks until ctx is cancelled.
 func (m *Manager) Run(ctx context.Context) error {
-	log.Printf("[sentinel] starting (check-interval=%s, health-port=%d, forwarded-ports=%v)",
-		m.config.CheckInterval, m.config.HealthPort, m.config.ForwardedPorts)
+	log.Printf("[sentinel] starting (check-interval=%s, health-port=%d, forwarded-ports=%v, hybrid=%v)",
+		m.config.CheckInterval, m.config.HealthPort, m.config.ForwardedPorts, m.config.HybridMode)
 
 	// Start binary server if configured
 	if m.config.BinaryPort > 0 {
@@ -92,46 +97,28 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 	}
 
-	if m.config.TunnelMode {
-		// In tunnel mode, we don't resolve a backend IP at startup.
-		// The tunnel server will call OnTunnelConnect/OnTunnelDisconnect
-		// to drive state transitions. We start in maintenance mode and
-		// the health check loop still runs — it will naturally fail until
-		// a tunnel connects and proxy listeners are established.
+	if m.config.TunnelMode && !m.config.HybridMode {
+		// Pure tunnel mode: wait for tunnel connections
 		log.Printf("[sentinel] tunnel mode: waiting for remote spot to connect...")
-		if err := m.switchToMaintenance(); err != nil {
+	} else if m.config.HybridMode {
+		// Hybrid mode: resolve GCP backend, also accept tunnels
+		if err := m.initGCPBackend(ctx); err != nil {
 			return err
 		}
+		log.Printf("[sentinel] hybrid mode: GCP backend active, also accepting tunnel connections...")
 	} else {
-		// Resolve backend IP
-		ip, err := m.provider.GetInstanceIP(ctx)
-		if err != nil {
-			return err
-		}
-		m.spotIP = ip
-		log.Printf("[sentinel] backend IP: %s", m.spotIP)
-
-		// Start cert sync loop
-		certSyncInterval := m.config.CertSyncInterval
-		if certSyncInterval == 0 {
-			certSyncInterval = 6 * time.Hour
-		}
-		go m.certStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, certSyncInterval)
-
-		// Start key sync loop (for sshpiper SSH proxy configuration)
-		keySyncInterval := m.config.KeySyncInterval
-		if keySyncInterval == 0 {
-			keySyncInterval = 2 * time.Minute
-		}
-		go m.keyStore.RunSyncLoop(ctx, m.spotIP, m.config.HealthPort, keySyncInterval)
-
-		// Start in maintenance mode
-		if err := m.switchToMaintenance(); err != nil {
+		// Standard GCP-only mode
+		if err := m.initGCPBackend(ctx); err != nil {
 			return err
 		}
 	}
 
-	// Start event watcher if provider supports it
+	// Start in maintenance mode
+	if err := m.switchToMaintenance(); err != nil {
+		return err
+	}
+
+	// Start event watcher if provider supports it (GCP preemption detection)
 	eventCh := make(chan VMEvent, 10)
 	if watcher, ok := m.provider.(EventWatcher); ok {
 		go func() {
@@ -145,9 +132,6 @@ func (m *Manager) Run(ctx context.Context) error {
 	ticker := time.NewTicker(m.config.CheckInterval)
 	defer ticker.Stop()
 
-	var healthyCount int
-	var unhealthyCount int
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -156,41 +140,138 @@ func (m *Manager) Run(ctx context.Context) error {
 			return nil
 
 		case event := <-eventCh:
-			m.handleEvent(ctx, event, &healthyCount, &unhealthyCount)
+			m.handleEvent(ctx, event)
 
 		case <-ticker.C:
-			healthy := CheckHealth(m.spotIP, m.config.HealthPort, 5*time.Second)
+			m.healthCheckAll(ctx)
+		}
+	}
+}
 
-			if healthy {
-				unhealthyCount = 0
-				healthyCount++
-				if healthyCount >= m.config.HealthyThreshold && m.currentState() == StateMaintenance {
-					recoveryDuration := time.Since(m.outageStart)
-					log.Printf("[sentinel] backend healthy (%d consecutive checks), switching to proxy (recovery took %s)",
-						healthyCount, recoveryDuration.Round(time.Second))
-					if err := m.switchToProxy(); err != nil {
-						log.Printf("[sentinel] failed to switch to proxy: %v", err)
-					}
-				}
-			} else {
-				healthyCount = 0
-				unhealthyCount++
-				if unhealthyCount >= m.config.UnhealthyThreshold && m.currentState() == StateProxy {
-					log.Printf("[sentinel] backend unhealthy (%d consecutive checks), switching to maintenance", unhealthyCount)
-					m.outageStart = time.Now()
-					if err := m.switchToMaintenance(); err != nil {
-						log.Printf("[sentinel] failed to switch to maintenance: %v", err)
-					}
-					m.diagnoseAndRecover(ctx)
-				} else if unhealthyCount >= m.config.UnhealthyThreshold && m.currentState() == StateMaintenance {
-					// Check recovery timeout
-					m.checkRecoveryTimeout()
-					// Periodically try to recover
-					if unhealthyCount%4 == 0 {
-						m.diagnoseAndRecover(ctx)
-					}
+// initGCPBackend resolves the GCP spot VM IP and registers it as a backend.
+func (m *Manager) initGCPBackend(ctx context.Context) error {
+	ip, err := m.provider.GetInstanceIP(ctx)
+	if err != nil {
+		return err
+	}
+
+	b := &Backend{
+		ID:       "gcp",
+		Type:     BackendGCP,
+		IP:       ip,
+		Provider: m.provider,
+		Priority: 0, // GCP is highest priority for HTTP
+	}
+	m.backends.Add(b)
+
+	// Start sync loops for GCP backend
+	m.startSyncLoops(ctx, b)
+
+	log.Printf("[sentinel] GCP backend registered: %s", ip)
+	return nil
+}
+
+// startSyncLoops starts cert and key sync loops for a backend.
+func (m *Manager) startSyncLoops(parentCtx context.Context, b *Backend) {
+	ctx, cancel := context.WithCancel(parentCtx)
+	b.syncCancel = cancel
+
+	certInterval := m.config.CertSyncInterval
+	if certInterval == 0 {
+		certInterval = 6 * time.Hour
+	}
+	go m.certStore.RunSyncLoop(ctx, b.IP, m.config.HealthPort, certInterval)
+
+	keyInterval := m.config.KeySyncInterval
+	if keyInterval == 0 {
+		keyInterval = 2 * time.Minute
+	}
+	go m.keyStore.RunSyncLoop(ctx, b.ID, b.IP, m.config.HealthPort, keyInterval)
+}
+
+// healthCheckAll runs health checks on all registered backends and manages state transitions.
+func (m *Manager) healthCheckAll(ctx context.Context) {
+	backends := m.backends.All()
+	if len(backends) == 0 {
+		// No backends registered (pure tunnel mode, no tunnel connected yet)
+		return
+	}
+
+	anyHealthy := false
+	for _, b := range backends {
+		healthy := CheckHealth(b.IP, m.config.HealthPort, 5*time.Second)
+
+		if healthy {
+			b.unhealthyCount = 0
+			b.healthyCount++
+			if b.healthyCount >= m.config.HealthyThreshold && !b.Healthy {
+				b.Healthy = true
+				log.Printf("[sentinel] backend %s (%s) is healthy", b.ID, b.IP)
+			}
+		} else {
+			b.healthyCount = 0
+			b.unhealthyCount++
+			if b.unhealthyCount >= m.config.UnhealthyThreshold && b.Healthy {
+				b.Healthy = false
+				log.Printf("[sentinel] backend %s (%s) is unhealthy", b.ID, b.IP)
+
+				// If this was the primary, try failover
+				m.mu.RLock()
+				wasPrimary := m.primary == b
+				m.mu.RUnlock()
+				if wasPrimary {
+					m.failoverPrimary(ctx, b)
 				}
 			}
+		}
+
+		if b.Healthy {
+			anyHealthy = true
+		}
+	}
+
+	// State transitions
+	if anyHealthy && m.currentState() == StateMaintenance {
+		best := m.backends.SelectPrimary()
+		if best != nil {
+			log.Printf("[sentinel] backend available, switching to proxy via %s (%s)", best.ID, best.IP)
+			if err := m.switchToProxy(best); err != nil {
+				log.Printf("[sentinel] failed to switch to proxy: %v", err)
+			}
+		}
+	}
+	if !anyHealthy && m.currentState() == StateProxy {
+		log.Printf("[sentinel] all backends unhealthy, switching to maintenance")
+		m.outageStart = time.Now()
+		if err := m.switchToMaintenance(); err != nil {
+			log.Printf("[sentinel] failed to switch to maintenance: %v", err)
+		}
+		// Try to recover GCP backend
+		for _, b := range backends {
+			if b.Type == BackendGCP && b.Provider != nil {
+				m.diagnoseAndRecover(ctx, b)
+			}
+		}
+	}
+}
+
+// failoverPrimary switches HTTP forwarding to the next healthy backend.
+func (m *Manager) failoverPrimary(ctx context.Context, failed *Backend) {
+	next := m.backends.SelectPrimary()
+	if next != nil && next != failed {
+		log.Printf("[sentinel] failover: %s → %s (%s)", failed.ID, next.ID, next.IP)
+		if err := m.switchToProxy(next); err != nil {
+			log.Printf("[sentinel] failover failed: %v", err)
+		}
+	} else {
+		log.Printf("[sentinel] no healthy backend for failover, switching to maintenance")
+		m.outageStart = time.Now()
+		if err := m.switchToMaintenance(); err != nil {
+			log.Printf("[sentinel] failed to switch to maintenance: %v", err)
+		}
+		// Try to recover the failed backend
+		if failed.Provider != nil {
+			m.diagnoseAndRecover(ctx, failed)
 		}
 	}
 }
@@ -199,75 +280,79 @@ func (m *Manager) currentState() State {
 	return m.state.Load().(State)
 }
 
-func (m *Manager) switchToProxy() error {
-	// Stop maintenance HTTP servers (ports needed for iptables)
+func (m *Manager) switchToProxy(backend *Backend) error {
+	// Stop maintenance HTTP servers
 	if m.stopMaintenance != nil {
 		m.stopMaintenance()
 		m.stopMaintenance = nil
 	}
 
-	// Immediate cert sync — spot VM is now healthy, grab fresh certs
-	if err := m.certStore.Sync(m.spotIP, m.config.HealthPort); err != nil {
+	m.mu.Lock()
+	m.primary = backend
+	m.mu.Unlock()
+
+	// Immediate cert sync from the primary backend
+	if err := m.certStore.Sync(backend.IP, m.config.HealthPort); err != nil {
 		log.Printf("[sentinel] cert sync on proxy switch failed: %v", err)
 	} else {
 		log.Printf("[sentinel] cert sync on proxy switch: %d certs", m.certStore.SyncedCount())
 	}
 
-	// Immediate key sync — update sshpiper config with fresh keys
-	if err := m.keyStore.Sync(m.spotIP, m.config.HealthPort); err != nil {
-		log.Printf("[sentinel] key sync on proxy switch failed: %v", err)
-	} else {
-		if err := m.keyStore.PushSentinelKey(m.spotIP, m.config.HealthPort); err != nil {
-			log.Printf("[sentinel] push sentinel key on proxy switch failed: %v", err)
+	// Immediate key sync from ALL healthy backends + apply
+	for _, b := range m.backends.Healthy() {
+		if err := m.keyStore.Sync(b.ID, b.IP, m.config.HealthPort); err != nil {
+			log.Printf("[sentinel] key sync for %s on proxy switch failed: %v", b.ID, err)
 		}
-		if err := m.keyStore.Apply(); err != nil {
-			log.Printf("[sentinel] key apply on proxy switch failed: %v", err)
-		} else {
-			log.Printf("[sentinel] key sync on proxy switch: %d users", m.keyStore.SyncedCount())
-			m.keyStore.RestartSSHPiper()
+		if err := m.keyStore.PushSentinelKey(b.IP, m.config.HealthPort); err != nil {
+			log.Printf("[sentinel] push sentinel key for %s failed: %v", b.ID, err)
 		}
 	}
+	if err := m.keyStore.Apply(); err != nil {
+		log.Printf("[sentinel] key apply on proxy switch failed: %v", err)
+	} else {
+		log.Printf("[sentinel] key sync on proxy switch: %d users", m.keyStore.SyncedCount())
+		m.keyStore.RestartSSHPiper()
+	}
 
-	// In tunnel mode with a ConnMux, port 443 is handled by the HTTPS proxy
-	// (not iptables DNAT). Exclude it from the forwarded ports for DNAT.
+	// Handle port 443 via ConnMux if available (tunnel/hybrid mode)
 	forwardedPorts := m.config.ForwardedPorts
 	if m.httpsListener != nil {
 		forwardedPorts = excludePort(forwardedPorts, m.config.HTTPSPort)
-		m.startHTTPSProxy()
+		m.startHTTPSProxy(backend.IP)
 	}
 
-	// Enable iptables forwarding (remaining ports, e.g., 80)
-	if err := enableForwarding(m.spotIP, forwardedPorts); err != nil {
+	// Enable iptables forwarding to the primary backend
+	if err := enableForwarding(backend.IP, forwardedPorts); err != nil {
 		return err
 	}
 
 	m.state.Store(StateProxy)
-	log.Printf("[sentinel] mode: PROXY → forwarding to %s", m.spotIP)
+	log.Printf("[sentinel] mode: PROXY → primary=%s (%s), total backends=%d",
+		backend.ID, backend.IP, m.backends.Count())
 	return nil
 }
 
 func (m *Manager) switchToMaintenance() error {
-	// Disable iptables forwarding
 	if err := disableForwarding(); err != nil {
 		log.Printf("[sentinel] warning: failed to disable forwarding: %v", err)
 	}
 
-	// Stop HTTPS proxy if running (tunnel mode)
 	if m.stopHTTPSProxy != nil {
 		m.stopHTTPSProxy()
 		m.stopHTTPSProxy = nil
 	}
 
-	// Start maintenance HTTP servers (if not already running)
+	m.mu.Lock()
+	m.primary = nil
+	m.mu.Unlock()
+
 	if m.stopMaintenance == nil {
 		if m.httpsListener != nil {
-			// Tunnel mode: port 443 comes from ConnMux, only start HTTP on port 80
 			stop, err := startMaintenanceHTTPOnly(m.config.HTTPPort, m)
 			if err != nil {
 				return err
 			}
 			m.stopMaintenance = stop
-			// Serve maintenance page on the ConnMux HTTPS listener
 			m.startHTTPSMaintenance()
 		} else {
 			stop, err := startMaintenanceServers(m.config.HTTPPort, m.config.HTTPSPort, m.certStore, m)
@@ -283,33 +368,20 @@ func (m *Manager) switchToMaintenance() error {
 	return nil
 }
 
-// startHTTPSProxy starts proxying HTTPS connections from the ConnMux to the spot VM.
-func (m *Manager) startHTTPSProxy() {
+// startHTTPSProxy starts proxying HTTPS connections from the ConnMux to a backend.
+func (m *Manager) startHTTPSProxy(backendIP string) {
 	if m.stopHTTPSProxy != nil {
 		m.stopHTTPSProxy()
 	}
 
-	target := net.JoinHostPort(m.spotIP, fmt.Sprintf("%d", m.config.HTTPSPort))
+	target := net.JoinHostPort(backendIP, fmt.Sprintf("%d", m.config.HTTPSPort))
 	proxy := &HTTPSProxy{target: target}
 
-	// We need a new chanListener that we control. The httpsListener from ConnMux
-	// is shared — we swap who's consuming it by stopping the old consumer first.
-	// The ConnMux.HTTPSListener() is a chanListener that buffers connections.
-	// We just start a goroutine that drains it and proxies.
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
 		proxy.Serve(m.httpsListener)
 	}()
 
-	m.stopHTTPSProxy = func() {
-		// The proxy.Serve loop returns when the listener errors on Accept.
-		// We don't close the ConnMux listener here — we just let the Manager
-		// swap to a different consumer. The chanListener will block on Accept
-		// once we stop draining it, which is fine.
-		// We signal stop by noting it was stopped; new connections will queue
-		// in the chanListener until the next consumer starts.
-	}
+	m.stopHTTPSProxy = func() {}
 	log.Printf("[sentinel] HTTPS proxy started → %s", target)
 }
 
@@ -320,13 +392,10 @@ func (m *Manager) startHTTPSMaintenance() {
 	go func() {
 		log.Printf("[sentinel] maintenance HTTPS server on ConnMux listener")
 		if err := srv.ServeTLS(m.httpsListener, "", ""); err != nil {
-			// Expected when we swap to proxy mode and close the server
 			log.Printf("[sentinel] maintenance HTTPS (mux) stopped: %v", err)
 		}
 	}()
 
-	// When switching away from maintenance, stopMaintenance is called,
-	// which needs to also close this server
 	origStop := m.stopMaintenance
 	m.stopMaintenance = func() {
 		srv.Close()
@@ -336,8 +405,6 @@ func (m *Manager) startHTTPSMaintenance() {
 	}
 }
 
-// startMaintenanceHTTPOnly starts only the HTTP (port 80) maintenance server.
-// Used in tunnel mode where port 443 is handled by the ConnMux.
 func startMaintenanceHTTPOnly(httpPort int, manager *Manager) (stop func(), err error) {
 	httpSrv := NewMaintenanceServer(httpPort, manager)
 
@@ -353,9 +420,10 @@ func startMaintenanceHTTPOnly(httpPort int, manager *Manager) (stop func(), err 
 	}, nil
 }
 
-// handleEvent processes a VM lifecycle event from the event watcher.
-// Preemption events trigger an immediate switch to maintenance mode (fast-path).
-func (m *Manager) handleEvent(ctx context.Context, event VMEvent, healthyCount, unhealthyCount *int) {
+// handleEvent processes a VM lifecycle event from the GCP event watcher.
+func (m *Manager) handleEvent(ctx context.Context, event VMEvent) {
+	gcpBackend := m.backends.Get("gcp")
+
 	switch event.Type {
 	case EventPreempted:
 		m.preemptCount++
@@ -363,47 +431,49 @@ func (m *Manager) handleEvent(ctx context.Context, event VMEvent, healthyCount, 
 		log.Printf("[sentinel] EVENT: PREEMPTION detected at %s (total: %d) — %s",
 			event.Timestamp.Format(time.RFC3339), m.preemptCount, event.Detail)
 
-		// Immediate switch — don't wait for health check threshold
-		if m.currentState() == StateProxy {
-			*healthyCount = 0
-			*unhealthyCount = 0
-			m.outageStart = event.Timestamp
-			if err := m.switchToMaintenance(); err != nil {
-				log.Printf("[sentinel] failed to switch to maintenance: %v", err)
-			}
-			m.diagnoseAndRecover(ctx)
+		if gcpBackend != nil {
+			gcpBackend.Healthy = false
+			gcpBackend.healthyCount = 0
+			gcpBackend.unhealthyCount = 0
 		}
 
-	case EventStopped:
-		log.Printf("[sentinel] EVENT: VM stopped at %s — %s", event.Timestamp.Format(time.RFC3339), event.Detail)
-		if m.currentState() == StateProxy {
-			*healthyCount = 0
-			*unhealthyCount = 0
-			m.outageStart = event.Timestamp
-			if err := m.switchToMaintenance(); err != nil {
-				log.Printf("[sentinel] failed to switch to maintenance: %v", err)
+		// In hybrid mode: failover to tunnel if available
+		m.mu.RLock()
+		isPrimary := m.primary == gcpBackend
+		m.mu.RUnlock()
+
+		if isPrimary && m.currentState() == StateProxy {
+			m.failoverPrimary(ctx, gcpBackend)
+		}
+
+		// Try to restart the GCP VM
+		if gcpBackend != nil && gcpBackend.Provider != nil {
+			m.diagnoseAndRecover(ctx, gcpBackend)
+		}
+
+	case EventStopped, EventTerminated:
+		log.Printf("[sentinel] EVENT: VM %s at %s — %s", event.Type, event.Timestamp.Format(time.RFC3339), event.Detail)
+		if gcpBackend != nil {
+			gcpBackend.Healthy = false
+			gcpBackend.healthyCount = 0
+
+			m.mu.RLock()
+			isPrimary := m.primary == gcpBackend
+			m.mu.RUnlock()
+
+			if isPrimary && m.currentState() == StateProxy {
+				m.failoverPrimary(ctx, gcpBackend)
 			}
-			m.diagnoseAndRecover(ctx)
+			if gcpBackend.Provider != nil {
+				m.diagnoseAndRecover(ctx, gcpBackend)
+			}
 		}
 
 	case EventStarted:
 		log.Printf("[sentinel] EVENT: VM started at %s — %s", event.Timestamp.Format(time.RFC3339), event.Detail)
-
-	case EventTerminated:
-		log.Printf("[sentinel] EVENT: VM terminated at %s — %s", event.Timestamp.Format(time.RFC3339), event.Detail)
-		if m.currentState() == StateProxy {
-			*healthyCount = 0
-			*unhealthyCount = 0
-			m.outageStart = event.Timestamp
-			if err := m.switchToMaintenance(); err != nil {
-				log.Printf("[sentinel] failed to switch to maintenance: %v", err)
-			}
-			m.diagnoseAndRecover(ctx)
-		}
 	}
 }
 
-// checkRecoveryTimeout logs a warning if recovery is taking too long.
 func (m *Manager) checkRecoveryTimeout() {
 	if m.config.RecoveryTimeout <= 0 || m.outageStart.IsZero() {
 		return
@@ -415,30 +485,31 @@ func (m *Manager) checkRecoveryTimeout() {
 	}
 }
 
-// diagnoseAndRecover queries the cloud provider for VM status and attempts recovery.
-func (m *Manager) diagnoseAndRecover(ctx context.Context) {
-	status, err := m.provider.GetInstanceStatus(ctx)
-	if err != nil {
-		log.Printf("[sentinel] failed to get instance status: %v", err)
+func (m *Manager) diagnoseAndRecover(ctx context.Context, b *Backend) {
+	if b.Provider == nil {
 		return
 	}
 
-	log.Printf("[sentinel] backend VM status: %s", status)
+	status, err := b.Provider.GetInstanceStatus(ctx)
+	if err != nil {
+		log.Printf("[sentinel] failed to get status for %s: %v", b.ID, err)
+		return
+	}
+
+	log.Printf("[sentinel] backend %s status: %s", b.ID, status)
 
 	switch status {
 	case StatusStopped, StatusTerminated:
-		log.Printf("[sentinel] attempting to start backend VM...")
-		if err := m.provider.StartInstance(ctx); err != nil {
-			log.Printf("[sentinel] failed to start VM: %v", err)
+		log.Printf("[sentinel] attempting to start %s...", b.ID)
+		if err := b.Provider.StartInstance(ctx); err != nil {
+			log.Printf("[sentinel] failed to start %s: %v", b.ID, err)
 		} else {
-			log.Printf("[sentinel] start command sent, waiting for VM to boot...")
+			log.Printf("[sentinel] start command sent for %s", b.ID)
 		}
 	case StatusProvisioning:
-		log.Printf("[sentinel] VM is provisioning, waiting for it to become ready...")
+		log.Printf("[sentinel] %s is provisioning...", b.ID)
 	case StatusRunning:
-		log.Printf("[sentinel] VM reports running but health check failed — possible app-level issue")
-	default:
-		log.Printf("[sentinel] VM in unknown state: %s", status)
+		log.Printf("[sentinel] %s reports running but health check failed", b.ID)
 	}
 }
 
@@ -453,70 +524,91 @@ func (m *Manager) cleanup() {
 
 // --- Tunnel callbacks ---
 
-// OnTunnelConnect is called by the TunnelServer when a remote spot connects.
-// It sets the spot IP to the tunnel's loopback alias and switches to proxy mode.
+// OnTunnelConnect is called when a remote spot connects via tunnel.
 func (m *Manager) OnTunnelConnect(spot *TunnelSpot) {
-	m.spotIP = spot.LocalIP
-	log.Printf("[sentinel] tunnel connected: spot %q at %s", spot.ID, spot.LocalIP)
-
-	// Start cert and key sync loops targeting the tunnel endpoint
-	certSyncInterval := m.config.CertSyncInterval
-	if certSyncInterval == 0 {
-		certSyncInterval = 6 * time.Hour
+	b := &Backend{
+		ID:       "tunnel-" + spot.ID,
+		Type:     BackendTunnel,
+		IP:       spot.LocalIP,
+		Provider: NewTunnelProvider(nil, spot.ID), // tunnel provider can't restart VMs
+		Priority: 10, // lower priority than GCP for HTTP
 	}
+	m.backends.Add(b)
+
+	log.Printf("[sentinel] tunnel connected: %s at %s (total backends: %d)", b.ID, b.IP, m.backends.Count())
+
+	// Start sync loops for this tunnel backend
 	ctx := context.Background()
-	go m.certStore.RunSyncLoop(ctx, spot.LocalIP, m.config.HealthPort, certSyncInterval)
+	m.startSyncLoops(ctx, b)
 
-	keySyncInterval := m.config.KeySyncInterval
-	if keySyncInterval == 0 {
-		keySyncInterval = 2 * time.Minute
-	}
-	go m.keyStore.RunSyncLoop(ctx, spot.LocalIP, m.config.HealthPort, keySyncInterval)
-
-	// The health check loop in Run() will detect the tunnel endpoint as healthy
-	// and switch to proxy mode via the normal threshold logic. No need to force it here.
+	// Health check loop will pick it up and switch to proxy if needed
 }
 
-// OnTunnelDisconnect is called by the TunnelServer when a remote spot disconnects.
-// It immediately switches to maintenance mode.
+// OnTunnelDisconnect is called when a remote spot disconnects.
 func (m *Manager) OnTunnelDisconnect(spot *TunnelSpot) {
-	log.Printf("[sentinel] tunnel disconnected: spot %q (was at %s)", spot.ID, spot.LocalIP)
-	m.outageStart = time.Now()
-	if m.currentState() == StateProxy {
-		if err := m.switchToMaintenance(); err != nil {
-			log.Printf("[sentinel] failed to switch to maintenance on tunnel disconnect: %v", err)
+	backendID := "tunnel-" + spot.ID
+	removed := m.backends.Remove(backendID)
+	if removed == nil {
+		return
+	}
+
+	log.Printf("[sentinel] tunnel disconnected: %s (remaining backends: %d)", backendID, m.backends.Count())
+
+	// Remove this backend's users from sshpiper config
+	m.keyStore.RemoveBackend(backendID)
+	if err := m.keyStore.Apply(); err != nil {
+		log.Printf("[sentinel] key apply after tunnel disconnect failed: %v", err)
+	} else {
+		m.keyStore.RestartSSHPiper()
+	}
+
+	// If this was the primary, failover
+	m.mu.RLock()
+	wasPrimary := m.primary == removed
+	m.mu.RUnlock()
+
+	if wasPrimary && m.currentState() == StateProxy {
+		next := m.backends.SelectPrimary()
+		if next != nil {
+			log.Printf("[sentinel] failover after tunnel disconnect: → %s (%s)", next.ID, next.IP)
+			if err := m.switchToProxy(next); err != nil {
+				log.Printf("[sentinel] failover failed: %v", err)
+			}
+		} else {
+			m.outageStart = time.Now()
+			if err := m.switchToMaintenance(); err != nil {
+				log.Printf("[sentinel] failed to switch to maintenance: %v", err)
+			}
 		}
 	}
 }
 
 // --- Exported state getters ---
 
-// CurrentState returns the current sentinel mode (proxy or maintenance).
-func (m *Manager) CurrentState() State {
-	return m.currentState()
-}
+func (m *Manager) CurrentState() State  { return m.currentState() }
+func (m *Manager) PreemptCount() int    { return m.preemptCount }
+func (m *Manager) LastPreemption() time.Time { return m.lastPreemption }
 
-// SpotIP returns the backend spot VM IP address.
+// SpotIP returns the primary backend IP (backward compat).
 func (m *Manager) SpotIP() string {
-	return m.spotIP
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.primary != nil {
+		return m.primary.IP
+	}
+	return ""
 }
 
-// OutageDuration returns the duration of the current outage, or 0 if not in maintenance.
+// Backends returns status info for all backends.
+func (m *Manager) Backends() []*Backend {
+	return m.backends.All()
+}
+
 func (m *Manager) OutageDuration() time.Duration {
 	if m.currentState() != StateMaintenance || m.outageStart.IsZero() {
 		return 0
 	}
 	return time.Since(m.outageStart)
-}
-
-// PreemptCount returns the total number of preemption events observed.
-func (m *Manager) PreemptCount() int {
-	return m.preemptCount
-}
-
-// LastPreemption returns the timestamp of the last preemption event.
-func (m *Manager) LastPreemption() time.Time {
-	return m.lastPreemption
 }
 
 // excludePort returns a copy of ports with the given port removed.
