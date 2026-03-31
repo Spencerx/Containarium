@@ -65,41 +65,106 @@ import { App, NetworkTopology, ProxyRoute, NetworkNode, PassthroughRoute, DNSRec
 import { ClamavContainerSummary, ScanStatusResponse, ScanJob, PentestFinding } from '@/src/types/security';
 import { AuditLogEntry } from '@/src/types/audit';
 
-// Mock system info for system resources card
+// Mock system info for system resources card (primary GCP backend)
 const mockSystemInfo: SystemInfo = {
-  version: '0.11.0',
-  incusVersion: '6.21',
-  hostname: 'gpu-cluster-01',
+  version: '0.15.0',
+  incusVersion: '6.22',
+  hostname: 'containarium-jump-usw1-spot',
   os: 'Ubuntu 24.04 LTS',
   kernel: '6.8.0-49-generic',
   containerCount: 6,
   runningCount: 5,
   networkCidr: '10.0.100.0/24',
-  totalCpus: 32,
-  totalMemoryBytes: 128 * 1024 * 1024 * 1024, // 128GB
-  availableMemoryBytes: 48 * 1024 * 1024 * 1024, // 48GB available (80GB used)
-  totalDiskBytes: 2 * 1024 * 1024 * 1024 * 1024, // 2TB
-  availableDiskBytes: 1.2 * 1024 * 1024 * 1024 * 1024, // 1.2TB available (800GB used)
+  totalCpus: 8,
+  totalMemoryBytes: 64 * 1024 * 1024 * 1024, // 64GB
+  availableMemoryBytes: 28 * 1024 * 1024 * 1024, // 28GB available
+  totalDiskBytes: 500 * 1024 * 1024 * 1024, // 500GB
+  availableDiskBytes: 320 * 1024 * 1024 * 1024, // 320GB available
+  cpuLoad1min: 2.4,
+  cpuLoad5min: 1.8,
+  cpuLoad15min: 1.5,
+  backendId: 'default',
 };
 
-// Mock containers with varied states and resources
+// Mock peer system info (GPU tunnel backend)
+const mockPeerSystemInfo: SystemInfo = {
+  version: '0.15.0',
+  incusVersion: '6.22',
+  hostname: 'gpu-node-h100',
+  os: 'Ubuntu 24.04 LTS',
+  kernel: '6.8.0-52-generic',
+  containerCount: 3,
+  runningCount: 2,
+  networkCidr: '10.100.0.0/24',
+  totalCpus: 128,
+  totalMemoryBytes: 512 * 1024 * 1024 * 1024, // 512GB
+  availableMemoryBytes: 280 * 1024 * 1024 * 1024, // 280GB available
+  totalDiskBytes: 7.6 * 1024 * 1024 * 1024 * 1024, // 7.6TB NVMe
+  availableDiskBytes: 5.2 * 1024 * 1024 * 1024 * 1024, // 5.2TB available
+  cpuLoad1min: 32.5,
+  cpuLoad5min: 28.1,
+  cpuLoad15min: 24.6,
+  gpus: [
+    {
+      vendor: 'GPU_VENDOR_NVIDIA',
+      model: 'GPU_MODEL_NVIDIA_H100',
+      modelName: 'NVIDIA H100 80GB HBM3',
+      pciAddress: '0000:01:00.0',
+      driverVersion: '550.127.05',
+      cudaVersion: '12.6',
+      vramBytes: 80 * 1024 * 1024 * 1024, // 80GB HBM3
+    },
+    {
+      vendor: 'GPU_VENDOR_NVIDIA',
+      model: 'GPU_MODEL_NVIDIA_H100',
+      modelName: 'NVIDIA H100 80GB HBM3',
+      pciAddress: '0000:02:00.0',
+      driverVersion: '550.127.05',
+      cudaVersion: '12.6',
+      vramBytes: 80 * 1024 * 1024 * 1024,
+    },
+    {
+      vendor: 'GPU_VENDOR_NVIDIA',
+      model: 'GPU_MODEL_NVIDIA_H100',
+      modelName: 'NVIDIA H100 80GB HBM3',
+      pciAddress: '0000:03:00.0',
+      driverVersion: '550.127.05',
+      cudaVersion: '12.6',
+      vramBytes: 80 * 1024 * 1024 * 1024,
+    },
+    {
+      vendor: 'GPU_VENDOR_NVIDIA',
+      model: 'GPU_MODEL_NVIDIA_H100',
+      modelName: 'NVIDIA H100 80GB HBM3',
+      pciAddress: '0000:04:00.0',
+      driverVersion: '550.127.05',
+      cudaVersion: '12.6',
+      vramBytes: 80 * 1024 * 1024 * 1024,
+    },
+  ],
+  backendId: 'gpu-node-h100',
+};
+
+// Mock containers with varied states, resources, and backends
 const mockContainers: Container[] = [
+  // --- Primary backend (GCP spot VM) ---
   {
     name: 'alice-container',
     username: 'alice',
     state: 'Running',
     ipAddress: '10.0.100.12',
-    cpu: '8',
-    memory: '16GB',
-    disk: '100GB',
-    gpu: 'NVIDIA RTX 4090',
+    cpu: '4',
+    memory: '8GB',
+    disk: '50GB',
+    gpu: '',
     image: 'ubuntu:24.04',
     podmanEnabled: true,
-    stack: '',
-    createdAt: '2025-01-10T08:30:00Z',
-    updatedAt: '2025-01-15T10:00:00Z',
-    labels: { team: 'ml-research' },
+    stack: 'fullstack',
+    createdAt: '2026-03-10T08:30:00Z',
+    updatedAt: '2026-03-31T10:00:00Z',
+    labels: { team: 'backend' },
     sshKeys: [],
+    backendId: 'default',
   },
   {
     name: 'bob-container',
@@ -112,28 +177,30 @@ const mockContainers: Container[] = [
     gpu: '',
     image: 'ubuntu:22.04',
     podmanEnabled: true,
-    stack: '',
-    createdAt: '2025-01-12T14:20:00Z',
-    updatedAt: '2025-01-15T09:45:00Z',
-    labels: { team: 'backend' },
+    stack: 'python',
+    createdAt: '2026-03-12T14:20:00Z',
+    updatedAt: '2026-03-31T09:45:00Z',
+    labels: { team: 'data' },
     sshKeys: [],
+    backendId: 'default',
   },
   {
-    name: 'charlie-container',
-    username: 'charlie',
+    name: 'emma-container',
+    username: 'emma',
     state: 'Running',
-    ipAddress: '10.0.100.18',
-    cpu: '16',
-    memory: '32GB',
-    disk: '200GB',
-    gpu: 'NVIDIA A100',
-    image: 'ubuntu:24.04',
+    ipAddress: '10.0.100.22',
+    cpu: '2',
+    memory: '4GB',
+    disk: '30GB',
+    gpu: '',
+    image: 'debian:12',
     podmanEnabled: true,
-    stack: '',
-    createdAt: '2025-01-08T11:00:00Z',
-    updatedAt: '2025-01-15T10:15:00Z',
-    labels: { team: 'ml-training' },
+    stack: 'devops',
+    createdAt: '2026-03-11T16:30:00Z',
+    updatedAt: '2026-03-31T08:20:00Z',
+    labels: { team: 'devops' },
     sshKeys: [],
+    backendId: 'default',
   },
   {
     name: 'david-container',
@@ -147,59 +214,82 @@ const mockContainers: Container[] = [
     image: 'ubuntu:22.04',
     podmanEnabled: false,
     stack: '',
-    createdAt: '2025-01-05T09:00:00Z',
-    updatedAt: '2025-01-14T18:00:00Z',
+    createdAt: '2026-03-05T09:00:00Z',
+    updatedAt: '2026-03-28T18:00:00Z',
     labels: { team: 'frontend' },
     sshKeys: [],
+    backendId: 'default',
   },
+  // --- Peer backend (fts-5900x GPU node) ---
   {
-    name: 'emma-container',
-    username: 'emma',
+    name: 'charlie-container',
+    username: 'charlie',
     state: 'Running',
-    ipAddress: '10.0.100.22',
-    cpu: '4',
-    memory: '8GB',
-    disk: '50GB',
-    gpu: '',
-    image: 'debian:12',
+    ipAddress: '10.100.0.12',
+    cpu: '16',
+    memory: '32GB',
+    disk: '200GB',
+    gpu: 'NVIDIA H100',
+    image: 'ubuntu:24.04',
     podmanEnabled: true,
-    stack: '',
-    createdAt: '2025-01-11T16:30:00Z',
-    updatedAt: '2025-01-15T08:20:00Z',
-    labels: { team: 'devops' },
+    stack: 'gpu',
+    createdAt: '2026-03-20T11:00:00Z',
+    updatedAt: '2026-03-31T10:15:00Z',
+    labels: { team: 'ml-training' },
     sshKeys: [],
+    backendId: 'gpu-node-h100',
   },
   {
     name: 'frank-container',
     username: 'frank',
-    state: 'Creating',
-    ipAddress: '',
+    state: 'Running',
+    ipAddress: '10.100.0.15',
     cpu: '8',
     memory: '16GB',
     disk: '100GB',
-    gpu: 'NVIDIA RTX 3090',
+    gpu: 'NVIDIA H100',
     image: 'ubuntu:24.04',
     podmanEnabled: true,
-    stack: '',
-    createdAt: '2025-01-15T10:25:00Z',
-    updatedAt: '2025-01-15T10:25:00Z',
+    stack: 'gpu-docker',
+    createdAt: '2026-03-25T10:00:00Z',
+    updatedAt: '2026-03-31T09:30:00Z',
     labels: { team: 'ml-research' },
     sshKeys: [],
+    backendId: 'gpu-node-h100',
+  },
+  {
+    name: 'grace-container',
+    username: 'grace',
+    state: 'Provisioning',
+    ipAddress: '10.100.0.18',
+    cpu: '8',
+    memory: '16GB',
+    disk: '100GB',
+    gpu: 'NVIDIA H100',
+    image: 'ubuntu:24.04',
+    podmanEnabled: true,
+    stack: 'gpu-docker',
+    createdAt: '2026-03-31T10:25:00Z',
+    updatedAt: '2026-03-31T10:25:00Z',
+    labels: { team: 'ml-research' },
+    sshKeys: [],
+    backendId: 'gpu-node-h100',
   },
 ];
 
 // Mock metrics with varied usage levels
 const mockMetricsMap: Record<string, ContainerMetricsWithRate> = {
+  // Primary backend containers
   'alice-container': {
     name: 'alice-container',
-    cpuUsageSeconds: 45000,
-    cpuUsagePercent: 320, // 320% = using 3.2 of 8 cores (40% bar)
-    memoryUsageBytes: 12 * 1024 * 1024 * 1024, // 12GB of 16GB (75%)
-    memoryPeakBytes: 14 * 1024 * 1024 * 1024,
-    diskUsageBytes: 65 * 1024 * 1024 * 1024, // 65GB of 100GB (65%)
+    cpuUsageSeconds: 25000,
+    cpuUsagePercent: 180, // 180% = using 1.8 of 4 cores (45% bar)
+    memoryUsageBytes: 5.5 * 1024 * 1024 * 1024, // 5.5GB of 8GB (69%)
+    memoryPeakBytes: 7 * 1024 * 1024 * 1024,
+    diskUsageBytes: 28 * 1024 * 1024 * 1024, // 28GB of 50GB (56%)
     networkRxBytes: 2.5 * 1024 * 1024 * 1024,
     networkTxBytes: 1.2 * 1024 * 1024 * 1024,
-    processCount: 156,
+    processCount: 86,
   },
   'bob-container': {
     name: 'bob-container',
@@ -212,27 +302,39 @@ const mockMetricsMap: Record<string, ContainerMetricsWithRate> = {
     networkTxBytes: 320 * 1024 * 1024,
     processCount: 42,
   },
+  'emma-container': {
+    name: 'emma-container',
+    cpuUsageSeconds: 8500,
+    cpuUsagePercent: 45, // 45% = very low (11% bar)
+    memoryUsageBytes: 1.8 * 1024 * 1024 * 1024, // 1.8GB of 4GB (45%)
+    memoryPeakBytes: 3 * 1024 * 1024 * 1024,
+    diskUsageBytes: 8 * 1024 * 1024 * 1024, // 8GB of 30GB (27%)
+    networkRxBytes: 120 * 1024 * 1024,
+    networkTxBytes: 45 * 1024 * 1024,
+    processCount: 28,
+  },
+  // Peer backend containers (GPU node)
   'charlie-container': {
     name: 'charlie-container',
     cpuUsageSeconds: 180000,
-    cpuUsagePercent: 1450, // 1450% = using 14.5 of 16 cores (90% bar - high!)
-    memoryUsageBytes: 28 * 1024 * 1024 * 1024, // 28GB of 32GB (87.5% - high!)
+    cpuUsagePercent: 1450, // 1450% = using 14.5 of 16 cores (90% bar — ML training)
+    memoryUsageBytes: 28 * 1024 * 1024 * 1024, // 28GB of 32GB (87.5%)
     memoryPeakBytes: 30 * 1024 * 1024 * 1024,
     diskUsageBytes: 145 * 1024 * 1024 * 1024, // 145GB of 200GB (72.5%)
     networkRxBytes: 15 * 1024 * 1024 * 1024,
     networkTxBytes: 8 * 1024 * 1024 * 1024,
     processCount: 312,
   },
-  'emma-container': {
-    name: 'emma-container',
-    cpuUsageSeconds: 8500,
-    cpuUsagePercent: 45, // 45% = very low (11% bar)
-    memoryUsageBytes: 1.8 * 1024 * 1024 * 1024, // 1.8GB of 8GB (22.5%)
-    memoryPeakBytes: 3 * 1024 * 1024 * 1024,
-    diskUsageBytes: 8 * 1024 * 1024 * 1024, // 8GB of 50GB (16%)
-    networkRxBytes: 120 * 1024 * 1024,
-    networkTxBytes: 45 * 1024 * 1024,
-    processCount: 28,
+  'frank-container': {
+    name: 'frank-container',
+    cpuUsageSeconds: 45000,
+    cpuUsagePercent: 520, // 520% = using 5.2 of 8 cores (65% bar)
+    memoryUsageBytes: 12 * 1024 * 1024 * 1024, // 12GB of 16GB (75%)
+    memoryPeakBytes: 14 * 1024 * 1024 * 1024,
+    diskUsageBytes: 65 * 1024 * 1024 * 1024, // 65GB of 100GB (65%)
+    networkRxBytes: 4.2 * 1024 * 1024 * 1024,
+    networkTxBytes: 2.1 * 1024 * 1024 * 1024,
+    processCount: 156,
   },
 };
 
@@ -361,14 +463,6 @@ const mockNetworkNodes: NetworkNode[] = [
     aclName: 'acl-permissive',
   },
   {
-    id: 'charlie-container',
-    type: 'container',
-    name: 'charlie',
-    ipAddress: '10.0.100.18',
-    state: 'running',
-    aclName: 'acl-http-only',
-  },
-  {
     id: 'david-container',
     type: 'container',
     name: 'david',
@@ -382,6 +476,30 @@ const mockNetworkNodes: NetworkNode[] = [
     ipAddress: '10.0.100.22',
     state: 'running',
     aclName: 'acl-full-isolation',
+  },
+  // Peer backend containers (fts-5900x GPU node)
+  {
+    id: 'charlie-container',
+    type: 'container',
+    name: 'charlie (GPU)',
+    ipAddress: '10.100.0.12',
+    state: 'running',
+    aclName: 'acl-http-only',
+  },
+  {
+    id: 'frank-container',
+    type: 'container',
+    name: 'frank (GPU)',
+    ipAddress: '10.100.0.15',
+    state: 'running',
+    aclName: 'acl-permissive',
+  },
+  {
+    id: 'grace-container',
+    type: 'container',
+    name: 'grace (GPU)',
+    ipAddress: '10.100.0.18',
+    state: 'running',
   },
 ];
 
@@ -463,7 +581,7 @@ const mockRoutes: ProxyRoute[] = [
 const mockPassthroughRoutes: PassthroughRoute[] = [
   {
     externalPort: 50051,
-    targetIp: '10.0.100.18',
+    targetIp: '10.100.0.12',
     targetPort: 50051,
     protocol: 'ROUTE_PROTOCOL_TCP',
     active: true,
@@ -560,6 +678,15 @@ const mockSecurityContainers: ClamavContainerSummary[] = [
     totalScans: 5,
     infectedScans: 0,
   },
+  {
+    containerName: 'grace-container',
+    username: 'grace',
+    lastScanAt: '',
+    lastStatus: 'never',
+    lastFindingsCount: 0,
+    totalScans: 0,
+    infectedScans: 0,
+  },
 ];
 
 // Mock scan status — shows an active scan in progress
@@ -601,7 +728,7 @@ const mockTrafficStats: RouteTrafficStats[] = [
 // Mock server for TrafficView
 const mockServer = {
   id: 'demo-server',
-  name: 'GPU Cluster',
+  name: 'Containarium Cluster',
   endpoint: 'https://demo-server.local:50051',
   token: 'mock-token',
   addedAt: Date.now() - 86400000, // Added 1 day ago
@@ -1520,6 +1647,14 @@ export default function DemoPage() {
           onEditFirewall={() => {}}
           onEditLabels={handleEditLabels}
           onRefresh={() => {}}
+          backends={[
+            { id: 'default', type: 'gcp', healthy: true, priority: 1 },
+            { id: 'gpu-node-h100', type: 'tunnel', healthy: true, priority: 10 },
+          ]}
+          onSelectBackend={async (backendId: string) => {
+            if (backendId === 'gpu-node-h100') return mockPeerSystemInfo;
+            return mockSystemInfo;
+          }}
         />
       </TabPanel>
 
