@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-03-31
+
+### Added
+- **GPU stacks** — New `gpu` (nvidia-utils-570, CUDA toolkit, cuDNN) and `gpu-docker` (CUDA + Docker CE + nvidia-container-toolkit) stacks for container provisioning
+- **Peer metrics federation** — Local metrics collector pushes peer container and system metrics to VictoriaMetrics with `backend_id` labels; Grafana dashboard adds Backend Node dropdown and per-node panels
+- **Container provisioning state** — New `CONTAINER_STATE_PROVISIONING` proto enum shows stack installation progress during async container creation
+- **Auto ClamAV scan** — Newly created containers are automatically enqueued for ClamAV scanning with a 2-minute delay
+- **Peer API forwarding** — Sentinel forwards metrics, system info, security summary, and container traffic requests to peer backends with service token auth
+- **Per-backend system info** — `backend_id` field on SystemInfo and `peers` field on GetSystemInfoResponse for multi-backend visibility
+- **ZFS backup** — `setup-gpu-host.sh` auto-detects disks, creates HDD RAID1 mirror as `incus-backup` pool, installs daily ZFS backup cron
+
+### Changed
+- **Grafana dashboard** — Reorganized with `$backend` template variable, "Node Metrics" row (CPUs, containers, memory, disk, load), and "Container Metrics" row with per-backend filtering
+- **setup-gpu-host.sh** — Rewritten with `--data-disk`, `--backup-disks`, `--yes` flags and auto-detection of unused NVMe/HDD disks
+- **containarium-shell** — Added ASCII banner for interactive sessions, non-interactive `-c` command support, and auto-detected incus binary path for sudoers
+
+### Fixed
+- **SSH non-interactive command forwarding** — `containarium-shell` now handles `-c "command"` arguments from sshpiper exec forwarding, in addition to `SSH_ORIGINAL_COMMAND`
+- **sshpiper authorized_keys parsing** — Strip blank lines and comments before writing; sshpiper's parser stopped at blank lines, preventing key matching
+- **Tunnel loopback IP reuse** — Reconnecting tunnel clients reuse their previous loopback IP, preventing stale sshpiper config and SSH failures during reconnects
+- **Tunnel clean shutdown** — Close yamux session on context cancel to avoid 90-second SIGKILL timeout
+- **Peer metrics parsing** — Use `protojson.Unmarshal` for gRPC-gateway enum strings and `json.Number` for quoted numeric values
+
 ## [0.14.0] - 2026-03-28
 
 ### Added
