@@ -31,6 +31,9 @@ Built with LXC, SSH jump hosts, and cloud-native automation.
 ### Audit Logs
 ![Audit Logs](docs/screenshots/dashboard-audit.png)
 
+### GPU Node (Multi-Backend)
+![GPU Node](docs/screenshots/dashboard-gpu.png)
+
 ### Security Scanning
 ![Security Scanning](docs/screenshots/dashboard-security.png)
 
