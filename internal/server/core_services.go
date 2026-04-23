@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -93,6 +94,21 @@ func NewCoreServices(incusClient *incus.Client, config CoreServicesConfig) *Core
 	}
 }
 
+// ensureCoreReservation sets a ZFS reservation on a core container's dataset so
+// it can always write even when user containers fill the pool. This prevents
+// cascade failures (e.g. PostgreSQL crashing when the pool is 100% full
+// because user containers overflowed their quotas).
+//
+// Idempotent — safe to call repeatedly. Silently skips on non-ZFS pools.
+func (cs *CoreServices) ensureCoreReservation(containerName, size string) {
+	dataset := fmt.Sprintf("incus-pool/containers/containers/%s", containerName)
+	cmd := exec.Command("zfs", "set", "reservation="+size, dataset)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// ZFS may not be present (dir-backed pool) — not fatal
+		log.Printf("Note: skipping ZFS reservation for %s: %v (output: %s)", containerName, err, string(out))
+	}
+}
+
 // ensurePostgresRestartPolicy adds a systemd override so postgresql@16-main
 // auto-restarts on failure. Ubuntu 24.04 runs postgres via postgresql@16-main.service
 // (a template unit), not plain postgresql.service. Idempotent — safe to call repeatedly.
@@ -109,6 +125,9 @@ func (cs *CoreServices) ensurePostgresRestartPolicy() {
 
 // EnsurePostgres ensures PostgreSQL container is running and returns the connection string
 func (cs *CoreServices) EnsurePostgres(ctx context.Context) (string, error) {
+	// Reserve 5GB so postgres can always write (prevents cascade failures)
+	cs.ensureCoreReservation(CorePostgresContainer, "5G")
+
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CorePostgresContainer)
 	if err == nil {
@@ -316,6 +335,9 @@ func (cs *CoreServices) GetPostgresIP() string {
 
 // EnsureCaddy ensures Caddy container is running and returns the admin URL
 func (cs *CoreServices) EnsureCaddy(ctx context.Context, baseDomain string) (string, error) {
+	// Reserve 2GB so Caddy can always write (prevents cascade failures)
+	cs.ensureCoreReservation(CoreCaddyContainer, "2G")
+
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CoreCaddyContainer)
 	if err == nil {
@@ -506,6 +528,9 @@ func (cs *CoreServices) updateGrafanaDashboard() {
 
 // EnsureVictoriaMetrics ensures the Victoria Metrics + Grafana container is running
 func (cs *CoreServices) EnsureVictoriaMetrics(ctx context.Context, postgresIP string) (string, error) {
+	// Reserve 2GB so metrics/alerts keep flowing even when pool is full
+	cs.ensureCoreReservation(CoreVictoriaMetricsContainer, "2G")
+
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CoreVictoriaMetricsContainer)
 	if err == nil {
@@ -1184,6 +1209,9 @@ func (cs *CoreServices) waitForAlertmanager(ctx context.Context) error {
 
 // EnsureSecurity ensures the ClamAV security container is running
 func (cs *CoreServices) EnsureSecurity(ctx context.Context) error {
+	// Reserve 2GB so scans can continue even when pool is full
+	cs.ensureCoreReservation(CoreSecurityContainer, "2G")
+
 	// Check if container already exists
 	info, err := cs.incusClient.GetContainer(CoreSecurityContainer)
 	if err == nil {
