@@ -16,6 +16,16 @@ const DefaultAlertRules = `groups:
           summary: "High memory usage detected"
           description: "System memory usage is above 90% for more than 5 minutes (current: {{ $value | printf \"%.1f\" }}%%)."
 
+      - alert: DiskUsageWarning
+        expr: system_disk_used_bytes / system_disk_total_bytes * 100 > 70
+        for: 10m
+        labels:
+          severity: warning
+          source: default
+        annotations:
+          summary: "Disk usage approaching capacity"
+          description: "System disk usage is above 70% for more than 10 minutes (current: {{ $value | printf \"%.1f\" }}%%). Plan disk expansion or cleanup."
+
       - alert: HighDiskUsage
         expr: system_disk_used_bytes / system_disk_total_bytes * 100 > 85
         for: 5m
@@ -24,17 +34,17 @@ const DefaultAlertRules = `groups:
           source: default
         annotations:
           summary: "High disk usage detected"
-          description: "System disk usage is above 85% for more than 5 minutes (current: {{ $value | printf \"%.1f\" }}%%)."
+          description: "System disk usage is above 85% for more than 5 minutes (current: {{ $value | printf \"%.1f\" }}%%). Act soon — core services (PostgreSQL, Caddy) may fail if disk fills."
 
       - alert: DiskAlmostFull
-        expr: system_disk_used_bytes / system_disk_total_bytes * 100 > 95
+        expr: system_disk_used_bytes / system_disk_total_bytes * 100 > 90
         for: 2m
         labels:
           severity: critical
           source: default
         annotations:
           summary: "Disk almost full"
-          description: "System disk usage is above 95% for more than 2 minutes (current: {{ $value | printf \"%.1f\" }}%%). Immediate action required."
+          description: "System disk usage is above 90% for more than 2 minutes (current: {{ $value | printf \"%.1f\" }}%%). IMMEDIATE action required — core services will fail at 100%."
 
       - alert: HighCPULoad
         expr: system_cpu_load_5m > system_cpu_count * 0.8
