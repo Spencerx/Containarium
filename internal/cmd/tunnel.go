@@ -44,7 +44,7 @@ func init() {
 	tunnelCmd.Flags().StringVar(&tunnelSentinelAddr, "sentinel-addr", "", "Sentinel address (host:port) to connect to (required)")
 	tunnelCmd.Flags().StringVar(&tunnelToken, "token", "", "Pre-shared authentication token (or CONTAINARIUM_TUNNEL_TOKEN env)")
 	tunnelCmd.Flags().StringVar(&tunnelSpotID, "spot-id", "", "Unique identifier for this spot instance (required)")
-	tunnelCmd.Flags().StringVar(&tunnelPorts, "ports", "22,80,443,8080", "Comma-separated local ports to expose through the tunnel")
+	tunnelCmd.Flags().StringVar(&tunnelPorts, "ports", "22,80,443,3389,8080", "Comma-separated local ports to expose through the tunnel")
 }
 
 func runTunnel(cmd *cobra.Command, args []string) error {

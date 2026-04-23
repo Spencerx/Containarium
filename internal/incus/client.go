@@ -95,9 +95,10 @@ type ContainerConfig struct {
 	Image                  string
 	CPU                    string
 	Memory                 string
-	Disk                   *DiskDevice // Root disk configuration
-	NIC                    *NICDevice  // Network interface configuration
-	GPU                    *GPUDevice  // GPU device configuration for passthrough
+	Disk                   *DiskDevice    // Root disk configuration
+	NIC                    *NICDevice     // Network interface configuration
+	GPU                    *GPUDevice     // GPU device configuration for passthrough
+	InstanceType           api.InstanceType // Container (LXC) or VM (QEMU/KVM). Defaults to Container.
 	EnableNesting          bool
 	EnablePodmanPrivileged bool // Full Docker support (requires privileged container + AppArmor disabled)
 	AutoStart              bool
@@ -120,6 +121,7 @@ const (
 	RoleCaddy             Role = "core-caddy"
 	RoleVictoriaMetrics   Role = "core-victoriametrics"
 	RoleSecurity          Role = "core-security"
+	RoleGuacamole         Role = "core-guacamole"
 )
 
 // IsCoreRole returns true if the role represents a core container.
@@ -129,17 +131,18 @@ func (r Role) IsCoreRole() bool {
 
 // ContainerInfo holds information about a container
 type ContainerInfo struct {
-	Name      string
-	State     string
-	IPAddress string
-	CPU       string
-	Memory    string
-	Disk      string
-	GPU       string // GPU device info (e.g., "nvidia.com/gpu" or GPU ID)
-	Labels    map[string]string
-	Role      Role   // Core container role (e.g., RolePostgres, RoleCaddy), empty for user containers
-	CreatedAt time.Time
-	BackendID string // Backend this container runs on (populated by PeerPool fan-out)
+	Name         string
+	State        string
+	IPAddress    string
+	CPU          string
+	Memory       string
+	Disk         string
+	GPU          string // GPU device info (e.g., "nvidia.com/gpu" or GPU ID)
+	InstanceType string // "container" or "virtual-machine"
+	Labels       map[string]string
+	Role         Role   // Core container role (e.g., RolePostgres, RoleCaddy), empty for user containers
+	CreatedAt    time.Time
+	BackendID    string // Backend this container runs on (populated by PeerPool fan-out)
 }
 
 // ContainerMetrics holds runtime metrics for a container
@@ -230,10 +233,14 @@ func (c *Client) CreateContainer(config ContainerConfig) error {
 	// Debug: Log the image being used
 	fmt.Printf("[DEBUG] CreateContainer - Image: '%s'\n", config.Image)
 
-	// Prepare container creation request
+	// Prepare instance creation request
+	instanceType := config.InstanceType
+	if instanceType == "" {
+		instanceType = api.InstanceTypeContainer
+	}
 	req := api.InstancesPost{
 		Name: config.Name,
-		Type: api.InstanceTypeContainer,
+		Type: instanceType,
 	}
 
 	// Parse image source - handle remote images like "images:ubuntu/24.04"
@@ -367,8 +374,8 @@ func (c *Client) DeleteContainer(name string) error {
 
 // ListContainers lists all containers
 func (c *Client) ListContainers() ([]ContainerInfo, error) {
-	// Get list of instance names first
-	names, err := c.server.GetInstanceNames(api.InstanceTypeContainer)
+	// Get list of instance names (both containers and VMs)
+	names, err := c.server.GetInstanceNames(api.InstanceTypeAny)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
@@ -382,11 +389,12 @@ func (c *Client) ListContainers() ([]ContainerInfo, error) {
 		}
 
 		info := ContainerInfo{
-			Name:      inst.Name,
-			State:     inst.Status,
-			CreatedAt: inst.CreatedAt,
-			Labels:    extractLabelsFromConfig(inst.Config),
-			Role:      Role(inst.Config[RoleKey]),
+			Name:         inst.Name,
+			State:        inst.Status,
+			InstanceType: inst.Type,
+			CreatedAt:    inst.CreatedAt,
+			Labels:       extractLabelsFromConfig(inst.Config),
+			Role:         Role(inst.Config[RoleKey]),
 		}
 
 		// Get CPU and memory limits from config

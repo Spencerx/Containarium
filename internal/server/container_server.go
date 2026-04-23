@@ -13,6 +13,7 @@ import (
 	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/internal/container"
 	"github.com/footprintai/containarium/internal/events"
+	"github.com/footprintai/containarium/internal/guacamole"
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/ostype"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
@@ -51,6 +52,10 @@ type ContainerServer struct {
 	coreServices         *CoreServices
 	daemonConfigStore    *app.DaemonConfigStore
 	peerPool             *PeerPool
+	// Guacamole integration for Windows VM RDP access
+	guacamoleClient      *guacamole.Client
+	guacamoleUser        string // Guacamole admin username
+	guacamolePass        string // Guacamole admin password
 }
 
 // NewContainerServer creates a new container server
@@ -219,21 +224,37 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// Emit container created event
 	s.emitter.EmitContainerCreated(protoContainer)
 
-	// Create host-level jump server account so SSH via sshpiper works.
-	// This is idempotent — skips if the account already exists.
-	go func() {
-		if err := container.EnsureJumpServerAccount(req.Username); err != nil {
-			log.Printf("Warning: failed to create jump server account for %s: %v", req.Username, err)
-		} else {
-			log.Printf("Jump server account ensured for %s", req.Username)
-		}
-	}()
+	resp := &pb.CreateContainerResponse{
+		Container: protoContainer,
+		Message:   fmt.Sprintf("Container %s created successfully", info.Name),
+	}
 
-	return &pb.CreateContainerResponse{
-		Container:  protoContainer,
-		Message:    fmt.Sprintf("Container %s created successfully", info.Name),
-		SshCommand: fmt.Sprintf("ssh %s@%s", req.Username, info.IPAddress),
-	}, nil
+	if ostype.IsWindows(req.OsType) {
+		// Windows VM: return RDP address, skip jump server account
+		resp.RdpAddress = protoContainer.RdpAddress
+
+		// Register RDP connection in Guacamole (best-effort, runs in background)
+		go func() {
+			rdpPassword := info.Labels["rdp-password"]
+			connID := s.registerGuacamoleConnection(info.Name, info.IPAddress, "Administrator", rdpPassword)
+			if connID != "" {
+				// Store connection ID as a label for cleanup on delete
+				_ = s.manager.AddLabel(req.Username, guacamoleConnectionIDLabel, connID)
+			}
+		}()
+	} else {
+		// Linux container: return SSH command and ensure jump server account
+		resp.SshCommand = fmt.Sprintf("ssh %s@%s", req.Username, info.IPAddress)
+		go func() {
+			if err := container.EnsureJumpServerAccount(req.Username); err != nil {
+				log.Printf("Warning: failed to create jump server account for %s: %v", req.Username, err)
+			} else {
+				log.Printf("Jump server account ensured for %s", req.Username)
+			}
+		}()
+	}
+
+	return resp, nil
 }
 
 // ListContainers lists all containers
@@ -405,6 +426,9 @@ func (s *ContainerServer) DeleteContainer(ctx context.Context, req *pb.DeleteCon
 
 	containerName := fmt.Sprintf("%s-container", req.Username)
 
+	// Before deleting, deregister Guacamole connection if this is a Windows VM
+	s.deregisterGuacamoleConnection(req.Username)
+
 	err := s.manager.Delete(req.Username, req.Force)
 	if err != nil {
 		// Not found locally — try peers
@@ -527,13 +551,15 @@ func (s *ContainerServer) ResizeContainer(ctx context.Context, req *pb.ResizeCon
 
 	containerName := fmt.Sprintf("%s-container", req.Username)
 
-	// Perform resize
+	// Perform resize — try local first, then peer
 	if err := s.manager.Resize(containerName, req.Cpu, req.Memory, req.Disk, false); err != nil {
-		// Try peer
+		// Container not found locally — check peers
 		if s.peerPool != nil {
 			authToken := extractAuthToken(ctx)
+			log.Printf("[resize] container %s not local, searching peers (token len=%d)", containerName, len(authToken))
 			peer := s.peerPool.FindContainerPeer(req.Username, authToken)
 			if peer != nil {
+				log.Printf("[resize] found %s on peer %s, forwarding", containerName, peer.ID)
 				body, _ := json.Marshal(map[string]string{
 					"cpu":    req.Cpu,
 					"memory": req.Memory,
@@ -628,6 +654,15 @@ func (s *ContainerServer) InstallStack(ctx context.Context, req *pb.InstallStack
 	}
 	if req.StackId == "" {
 		return nil, fmt.Errorf("stack_id is required")
+	}
+
+	// Reject stack installation on Windows VMs
+	if containerInfo, getErr := s.manager.Get(req.Username); getErr == nil {
+		if osLabel, ok := containerInfo.Labels[ostype.OSTypeLabelKey]; ok {
+			if ostype.IsWindows(ostype.OSTypeFromLabel(osLabel)) {
+				return nil, fmt.Errorf("stack installation is not supported on Windows VMs")
+			}
+		}
 	}
 
 	if err := s.manager.InstallStack(req.Username, req.StackId); err != nil {
@@ -960,6 +995,16 @@ func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
 		osTypeEnum = ostype.OSTypeFromLabel(osLabel)
 	}
 
+	// Determine access type based on OS
+	accessType := pb.AccessType_ACCESS_TYPE_SSH
+	var rdpAddress string
+	if ostype.IsWindows(osTypeEnum) {
+		accessType = pb.AccessType_ACCESS_TYPE_RDP
+		if info.IPAddress != "" {
+			rdpAddress = fmt.Sprintf("%s:3389", info.IPAddress)
+		}
+	}
+
 	return &pb.Container{
 		Name:     info.Name,
 		Username: username,
@@ -979,6 +1024,8 @@ func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
 		GpuDevice:     info.GPU,
 		BackendId:     info.BackendID,
 		OsType:        osTypeEnum,
+		AccessType:    accessType,
+		RdpAddress:    rdpAddress,
 	}
 }
 
@@ -1195,4 +1242,74 @@ func (s *ContainerServer) GetMonitoringInfo(ctx context.Context, req *pb.GetMoni
 		GrafanaUrl:         s.grafanaURL,
 		VictoriaMetricsUrl: s.victoriaMetricsURL,
 	}, nil
+}
+
+// guacamoleConnectionIDLabel is the Incus label key for storing the Guacamole connection ID.
+const guacamoleConnectionIDLabel = "guacamole-connection-id"
+
+// SetGuacamoleClient sets the Guacamole client for Windows VM RDP registration.
+func (s *ContainerServer) SetGuacamoleClient(client *guacamole.Client, adminUser, adminPass string) {
+	s.guacamoleClient = client
+	s.guacamoleUser = adminUser
+	s.guacamolePass = adminPass
+}
+
+// registerGuacamoleConnection registers a Windows VM's RDP connection in Guacamole.
+// Returns the connection ID, or "" if Guacamole is not configured.
+func (s *ContainerServer) registerGuacamoleConnection(containerName, hostname, rdpUser, rdpPassword string) string {
+	if s.guacamoleClient == nil {
+		return ""
+	}
+
+	token, err := s.guacamoleClient.Authenticate(s.guacamoleUser, s.guacamolePass)
+	if err != nil {
+		log.Printf("Warning: Guacamole auth failed, skipping RDP registration: %v", err)
+		return ""
+	}
+
+	connID, err := s.guacamoleClient.CreateConnection(token, guacamole.ConnectionConfig{
+		Name:     containerName,
+		Hostname: hostname,
+		Port:     "3389",
+		Username: rdpUser,
+		Password: rdpPassword,
+	})
+	if err != nil {
+		log.Printf("Warning: Failed to register Guacamole connection for %s: %v", containerName, err)
+		return ""
+	}
+
+	log.Printf("Guacamole RDP connection registered for %s (id=%s)", containerName, connID)
+	return connID
+}
+
+// deregisterGuacamoleConnection removes a Windows VM's RDP connection from Guacamole.
+func (s *ContainerServer) deregisterGuacamoleConnection(username string) {
+	if s.guacamoleClient == nil {
+		return
+	}
+
+	// Look up the connection ID from container labels
+	info, err := s.manager.Get(username)
+	if err != nil {
+		return
+	}
+
+	connID, ok := info.Labels[guacamoleConnectionIDLabel]
+	if !ok || connID == "" {
+		return
+	}
+
+	token, err := s.guacamoleClient.Authenticate(s.guacamoleUser, s.guacamolePass)
+	if err != nil {
+		log.Printf("Warning: Guacamole auth failed during deregistration: %v", err)
+		return
+	}
+
+	if err := s.guacamoleClient.DeleteConnection(token, connID); err != nil {
+		log.Printf("Warning: Failed to deregister Guacamole connection %s: %v", connID, err)
+		return
+	}
+
+	log.Printf("Guacamole RDP connection removed for %s (id=%s)", username, connID)
 }

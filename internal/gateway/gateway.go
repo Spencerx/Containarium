@@ -49,6 +49,9 @@ type GatewayServer struct {
 	eventHandler        *EventHandler
 	coreServicesHandler *CoreServicesHandler
 
+	// Guacamole reverse proxy (browser-based RDP for Windows VMs)
+	guacamoleBackendURL string
+
 	// Backends handler (for multi-backend support, set externally)
 	backendsHandler http.HandlerFunc
 
@@ -106,6 +109,11 @@ func (gs *GatewayServer) SetGrafanaBackendURL(backendURL string) {
 // SetAlertmanagerBackendURL sets the internal Alertmanager URL for the reverse proxy
 func (gs *GatewayServer) SetAlertmanagerBackendURL(backendURL string) {
 	gs.alertmanagerBackendURL = backendURL
+}
+
+// SetGuacamoleBackendURL sets the internal Guacamole URL for the reverse proxy
+func (gs *GatewayServer) SetGuacamoleBackendURL(backendURL string) {
+	gs.guacamoleBackendURL = backendURL
 }
 
 // SetSecurityStore sets the security store for the CSV export endpoint
@@ -544,6 +552,23 @@ func (gs *GatewayServer) Start(ctx context.Context) error {
 				http.Redirect(w, r, "/alertmanager/", http.StatusMovedPermanently)
 			})
 			log.Printf("Alertmanager reverse proxy enabled at /alertmanager/ -> %s", gs.alertmanagerBackendURL)
+		}
+	}
+
+	// Guacamole reverse proxy (browser-based RDP for Windows VMs, no auth — Guacamole handles its own)
+	if gs.guacamoleBackendURL != "" {
+		guacTarget, err := url.Parse(gs.guacamoleBackendURL)
+		if err != nil {
+			log.Printf("Warning: Invalid Guacamole backend URL %q: %v", gs.guacamoleBackendURL, err)
+		} else {
+			guacProxy := httputil.NewSingleHostReverseProxy(guacTarget)
+			httpMux.HandleFunc("/guacamole/", func(w http.ResponseWriter, r *http.Request) {
+				guacProxy.ServeHTTP(w, r)
+			})
+			httpMux.HandleFunc("/guacamole", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/guacamole/", http.StatusMovedPermanently)
+			})
+			log.Printf("Guacamole reverse proxy enabled at /guacamole/ -> %s", gs.guacamoleBackendURL)
 		}
 	}
 

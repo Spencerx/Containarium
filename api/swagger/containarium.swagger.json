@@ -2121,6 +2121,48 @@
         ]
       }
     },
+    "/v1/pentest/findings/{findingId}/remediate": {
+      "post": {
+        "summary": "Remediate a pentest finding",
+        "description": "Upgrades the OS package that contains the vulnerable binary to the latest version. Only works for Trivy container findings where the binary belongs to an installed package.",
+        "operationId": "PentestService_RemediatePentestFinding",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RemediatePentestFindingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "findingId",
+            "description": "Finding ID to remediate",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RemediatePentestFindingBody"
+            }
+          }
+        ],
+        "tags": [
+          "Pentest"
+        ]
+      }
+    },
     "/v1/pentest/findings/{findingId}/suppress": {
       "post": {
         "summary": "Suppress a pentest finding",
@@ -3093,6 +3135,16 @@
       },
       "title": "ACLRule represents a single firewall rule"
     },
+    "AccessType": {
+      "type": "string",
+      "enum": [
+        "ACCESS_TYPE_SSH",
+        "ACCESS_TYPE_RDP"
+      ],
+      "default": "ACCESS_TYPE_SSH",
+      "description": "- ACCESS_TYPE_SSH: SSH access (default for Linux containers)\n - ACCESS_TYPE_RDP: RDP access (for Windows VMs, via Guacamole browser-based client)",
+      "title": "AccessType indicates how to connect to an instance"
+    },
     "AddCollaboratorBody": {
       "type": "object",
       "properties": {
@@ -3854,6 +3906,14 @@
         "osType": {
           "$ref": "#/definitions/OSType",
           "title": "Operating system type of the container"
+        },
+        "accessType": {
+          "$ref": "#/definitions/AccessType",
+          "title": "How to connect to this instance (SSH for Linux, RDP for Windows)"
+        },
+        "rdpAddress": {
+          "type": "string",
+          "title": "RDP connection address (e.g., \"10.100.0.50:3389\") — populated for Windows VMs"
         }
       },
       "title": "Container represents a complete container instance"
@@ -4050,7 +4110,11 @@
         },
         "sshCommand": {
           "type": "string",
-          "title": "SSH connection string for the user"
+          "title": "SSH connection string for the user (Linux containers)"
+        },
+        "rdpAddress": {
+          "type": "string",
+          "title": "RDP connection address (Windows VMs)"
         }
       },
       "title": "CreateContainerResponse is the response from creating a container"
@@ -5236,10 +5300,11 @@
         "OS_TYPE_UNSPECIFIED",
         "OS_TYPE_UBUNTU_2404",
         "OS_TYPE_ROCKY_9",
-        "OS_TYPE_RHEL_9"
+        "OS_TYPE_RHEL_9",
+        "OS_TYPE_WINDOWS_2022"
       ],
       "default": "OS_TYPE_UNSPECIFIED",
-      "description": "- OS_TYPE_UNSPECIFIED: Unspecified OS type (defaults to Ubuntu 24.04)\n - OS_TYPE_UBUNTU_2404: Ubuntu 24.04 LTS\n - OS_TYPE_ROCKY_9: Rocky Linux 9 (RHEL 9 rebuild, for dev/test)\n - OS_TYPE_RHEL_9: Red Hat Enterprise Linux 9 (for production, requires subscription)",
+      "description": "- OS_TYPE_UNSPECIFIED: Unspecified OS type (defaults to Ubuntu 24.04)\n - OS_TYPE_UBUNTU_2404: Ubuntu 24.04 LTS\n - OS_TYPE_ROCKY_9: Rocky Linux 9 (RHEL 9 rebuild, for dev/test)\n - OS_TYPE_RHEL_9: Red Hat Enterprise Linux 9 (for production, requires subscription)\n - OS_TYPE_WINDOWS_2022: Windows Server 2022 (runs as QEMU/KVM VM, RDP access)",
       "title": "OSType represents the operating system type for a container"
     },
     "PassthroughRoute": {
@@ -5578,6 +5643,35 @@
           "title": "Total count matching query"
         }
       }
+    },
+    "RemediatePentestFindingBody": {
+      "type": "object",
+      "description": "RemediatePentestFindingRequest requests remediation of a Trivy finding by\nupgrading the OS package that contains the vulnerable binary."
+    },
+    "RemediatePentestFindingResponse": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string",
+          "title": "Human-readable result (e.g., \"docker-ce upgraded from 27.0.1 to 27.0.3\")"
+        },
+        "packageName": {
+          "type": "string",
+          "title": "Package that was upgraded"
+        },
+        "oldVersion": {
+          "type": "string",
+          "title": "Version before upgrade"
+        },
+        "newVersion": {
+          "type": "string",
+          "title": "Version after upgrade"
+        }
+      },
+      "description": "RemediatePentestFindingResponse returns the result of the remediation attempt."
     },
     "RemoveCollaboratorResponse": {
       "type": "object",

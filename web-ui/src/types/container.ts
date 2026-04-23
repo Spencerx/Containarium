@@ -6,6 +6,11 @@ export type ContainerState = 'Running' | 'Stopped' | 'Frozen' | 'Creating' | 'Pr
 /**
  * Container information from Containarium API
  */
+/**
+ * Access type enum — how to connect to an instance
+ */
+export type AccessType = 'ACCESS_TYPE_SSH' | 'ACCESS_TYPE_RDP';
+
 export interface Container {
   name: string;
   username: string;
@@ -23,6 +28,9 @@ export interface Container {
   labels: Record<string, string>;
   sshKeys: string[];
   backendId?: string;
+  osType?: string;
+  accessType?: AccessType;
+  rdpAddress?: string;
 }
 
 /**
@@ -43,6 +51,7 @@ export interface CreateContainerRequest {
   staticIp?: string; // Static IP address (e.g., "10.100.0.100") - empty for DHCP
   gpu?: string; // GPU device ID for passthrough (e.g., "0" for first GPU)
   backendId?: string; // Target backend for creation (empty = primary)
+  osType?: number; // OS type enum (4 = Windows Server 2022)
 }
 
 /**
@@ -97,6 +106,7 @@ export interface CreateContainerResponse {
   container: Container;
   message: string;
   sshCommand: string;
+  rdpAddress?: string;
 }
 
 /**

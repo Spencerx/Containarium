@@ -26,6 +26,7 @@ import (
 	"github.com/footprintai/containarium/internal/container"
 	"github.com/footprintai/containarium/internal/events"
 	"github.com/footprintai/containarium/internal/gateway"
+	"github.com/footprintai/containarium/internal/guacamole"
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/metrics"
 	"github.com/footprintai/containarium/internal/mtls"
@@ -809,6 +810,20 @@ skipAppHosting:
 				// Wire Alertmanager reverse proxy
 				alertmanagerBackend := fmt.Sprintf("http://%s:%d", vmIP, DefaultAlertmanagerPort)
 				gatewayServer.SetAlertmanagerBackendURL(alertmanagerBackend)
+			}
+		}
+
+		// Wire Guacamole reverse proxy and API client if core Guacamole container is running
+		if coreServices != nil {
+			if guacIP := coreServices.GetGuacamoleIP(); guacIP != "" {
+				guacBackend := fmt.Sprintf("http://%s:8080", guacIP)
+				gatewayServer.SetGuacamoleBackendURL(guacBackend)
+
+				// Wire Guacamole client into container server for auto-registration
+				guacClient := guacamole.New(guacBackend)
+				containerServer.SetGuacamoleClient(guacClient, "guacadmin", "guacadmin")
+
+				log.Printf("Guacamole reverse proxy and API client configured: %s", guacBackend)
 			}
 		}
 

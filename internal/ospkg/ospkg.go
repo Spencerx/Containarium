@@ -38,10 +38,13 @@ type PackageManager interface {
 }
 
 // ForFamily returns the appropriate PackageManager for the given OS family.
+// Panics for Windows — Windows VMs do not use Linux package managers.
 func ForFamily(family ostype.OSFamily) PackageManager {
 	switch family {
 	case ostype.RHEL:
 		return &rhelPkgMgr{}
+	case ostype.Windows:
+		panic("ospkg.ForFamily called with Windows family — Windows VMs skip Linux package installation")
 	default:
 		return &debianPkgMgr{}
 	}

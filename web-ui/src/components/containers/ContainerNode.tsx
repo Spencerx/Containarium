@@ -14,6 +14,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import TerminalIcon from '@mui/icons-material/Terminal';
+import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
 import MemoryIcon from '@mui/icons-material/Memory';
 import StorageIcon from '@mui/icons-material/Storage';
 import DnsIcon from '@mui/icons-material/Dns';
@@ -285,7 +286,18 @@ export default function ContainerNode({ container, metrics, onDelete, onStart, o
         )}
 
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-          {isRunning && onTerminal && (
+          {isRunning && container.accessType === 'ACCESS_TYPE_RDP' && (
+            <Tooltip title="Remote Desktop (RDP)">
+              <IconButton
+                size="small"
+                color="primary"
+                onClick={() => window.open('/guacamole/', '_blank')}
+              >
+                <DesktopWindowsIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+          {isRunning && container.accessType !== 'ACCESS_TYPE_RDP' && onTerminal && (
             <Tooltip title="Open Terminal">
               <IconButton
                 size="small"

@@ -38,6 +38,7 @@ const IMAGES = [
   { value: 'images:ubuntu/22.04', label: 'Ubuntu 22.04' },
   { value: 'images:debian/12', label: 'Debian 12' },
   { value: 'images:alpine/3.19', label: 'Alpine 3.19' },
+  { value: 'windows:server-2022', label: 'Windows Server 2022 (VM)', osType: 4 },
 ];
 
 // Default network CIDR (used when server doesn't provide one)
@@ -199,7 +200,10 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
       return;
     }
 
-    if (!autoGenerateKey && !sshPublicKey) {
+    const selectedImage = IMAGES.find(i => i.value === image);
+    const isWindows = !!(selectedImage && 'osType' in selectedImage);
+
+    if (!isWindows && !autoGenerateKey && !sshPublicKey) {
       setError('Please enter an SSH public key or enable auto-generate');
       return;
     }
@@ -231,19 +235,20 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
       const labels = parseLabels(labelsText);
       const request: CreateContainerRequest = {
         username,
-        image,
+        image: isWindows ? undefined : image,
         resources: {
-          cpu,
-          memory,
-          disk,
+          cpu: isWindows ? (cpu || '4') : cpu,
+          memory: isWindows ? (memory || '8GB') : memory,
+          disk: isWindows ? (disk || '50GB') : disk,
         },
-        sshKeys: [publicKey],
+        sshKeys: isWindows ? undefined : [publicKey],
         labels: Object.keys(labels).length > 0 ? labels : undefined,
-        enablePodman,
-        stack: stack || undefined,
+        enablePodman: isWindows ? false : enablePodman,
+        stack: isWindows ? undefined : (stack || undefined),
         staticIp: staticIp || undefined,
         gpu: gpu || undefined,
         backendId: backendId || undefined,
+        osType: selectedImage && 'osType' in selectedImage ? (selectedImage as { osType: number }).osType : undefined,
       };
 
       const container = await onSubmit(request, (prog) => {

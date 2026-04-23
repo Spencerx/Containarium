@@ -19,6 +19,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import TerminalIcon from '@mui/icons-material/Terminal';
+import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
 import SecurityIcon from '@mui/icons-material/Security';
 import LabelIcon from '@mui/icons-material/Label';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -287,7 +288,18 @@ export default function ContainerListView({
 
                 <TableCell align="right">
                   <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5 }}>
-                    {isRunning && onTerminal && (
+                    {isRunning && container.accessType === 'ACCESS_TYPE_RDP' && (
+                      <Tooltip title="Remote Desktop (RDP)">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => window.open('/guacamole/', '_blank')}
+                        >
+                          <DesktopWindowsIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {isRunning && container.accessType !== 'ACCESS_TYPE_RDP' && onTerminal && (
                       <Tooltip title="Terminal">
                         <IconButton size="small" color="primary" onClick={() => onTerminal(username)}>
                           <TerminalIcon fontSize="small" />

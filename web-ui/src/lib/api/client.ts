@@ -86,6 +86,9 @@ function transformContainer(apiContainer: Record<string, unknown>): Container {
     labels: (apiContainer.labels as Record<string, string>) || {},
     sshKeys: (apiContainer.sshKeys as string[]) || [],
     backendId: (apiContainer.backendId as string) || '',
+    osType: (apiContainer.osType as string) || '',
+    accessType: (apiContainer.accessType as Container['accessType']) || undefined,
+    rdpAddress: (apiContainer.rdpAddress as string) || '',
   };
 }
 
@@ -199,6 +202,7 @@ export class ContaineriumClient {
       static_ip: request.staticIp || '',
       gpu: request.gpu || '',
       backend_id: request.backendId || '',
+      os_type: request.osType || 0,
       async: async,
     }, {
       timeout: async ? 30000 : 300000, // 30s for async, 5min for sync

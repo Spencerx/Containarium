@@ -588,10 +588,12 @@ func (pp *PeerPool) FindContainerPeer(username, authToken string) *PeerClient {
 	containerName := username + "-container"
 	for _, peer := range pp.Peers() {
 		if !peer.Healthy {
+			log.Printf("[FindContainerPeer] skipping unhealthy peer %s", peer.ID)
 			continue
 		}
 		containers, err := peer.fetchContainers(authToken)
 		if err != nil {
+			log.Printf("[FindContainerPeer] peer %s fetchContainers failed: %v", peer.ID, err)
 			continue
 		}
 		for _, c := range containers {

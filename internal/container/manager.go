@@ -1,6 +1,8 @@
 package container
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"github.com/footprintai/containarium/internal/ostype"
 	"github.com/footprintai/containarium/internal/stacks"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
+	incusapi "github.com/lxc/incus/v6/shared/api"
 )
 
 // Manager handles container lifecycle operations
@@ -37,6 +40,7 @@ type CreateOptions struct {
 	Stack                  string    // Software stack to install (e.g., "nodejs", "python")
 	OSType                 pb.OSType // Operating system type for the container
 	OnProvisioning         func()    // Called when container is running but still provisioning (installing packages/stack)
+	RDPPassword            string    // Generated RDP password for Windows VMs (output, set by Create)
 }
 
 // New creates a new container manager
@@ -68,6 +72,8 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 		image = ostype.ImageForOSType(opts.OSType)
 	}
 
+	isWindows := ostype.IsWindows(opts.OSType)
+
 	config := incus.ContainerConfig{
 		Name:                   containerName,
 		Image:                  image,
@@ -78,12 +84,29 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 		AutoStart:              opts.AutoStart,
 	}
 
+	// Windows VMs: set instance type and enforce minimum resources
+	if isWindows {
+		config.InstanceType = incusapi.InstanceTypeVM
+		config.EnableNesting = false
+		config.EnablePodmanPrivileged = false
+		if config.CPU == "" {
+			config.CPU = "4"
+		}
+		if config.Memory == "" {
+			config.Memory = "8GB"
+		}
+	}
+
 	// Configure root disk device if disk size is specified
-	if opts.Disk != "" {
+	diskSize := opts.Disk
+	if diskSize == "" && isWindows {
+		diskSize = "50GB"
+	}
+	if diskSize != "" {
 		config.Disk = &incus.DiskDevice{
 			Path: "/",
 			Pool: "default",
-			Size: opts.Disk,
+			Size: diskSize,
 		}
 	}
 
@@ -130,6 +153,13 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 		_ = m.cleanup(containerName)
 		return nil, fmt.Errorf("failed to set labels: %w", err)
 	}
+
+	// Windows VM: separate provisioning flow
+	if isWindows {
+		return m.provisionWindowsVM(containerName, &opts)
+	}
+
+	// --- Linux container provisioning (steps 3-7) ---
 
 	// Step 3: Create jump server account (proxy-only, no shell access)
 	if opts.Verbose {
@@ -231,6 +261,87 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 	info, err := m.incus.GetContainer(containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container info: %w", err)
+	}
+
+	return info, nil
+}
+
+// generatePassword generates a random password of the given byte length (hex-encoded).
+func generatePassword(byteLen int) (string, error) {
+	b := make([]byte, byteLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random password: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// provisionWindowsVM handles the Windows-specific provisioning after the VM
+// has been created, started, and labelled.
+func (m *Manager) provisionWindowsVM(vmName string, opts *CreateOptions) (*incus.ContainerInfo, error) {
+	if opts.Verbose {
+		fmt.Println("  [3/4] Waiting for Windows VM network (this may take 1-2 minutes)...")
+	}
+
+	// Windows VMs take much longer to boot than Linux containers
+	ipAddr, err := m.incus.WaitForNetwork(vmName, 120*time.Second)
+	if err != nil {
+		_ = m.cleanup(vmName)
+		return nil, fmt.Errorf("failed to get VM IP: %w", err)
+	}
+
+	if opts.Verbose {
+		fmt.Printf("  VM IP: %s\n", ipAddr)
+	}
+
+	// Signal provisioning state
+	if opts.OnProvisioning != nil {
+		opts.OnProvisioning()
+	}
+
+	// Generate and set Administrator password
+	if opts.Verbose {
+		fmt.Println("  [4/4] Setting Administrator password and verifying RDP...")
+	}
+
+	password, err := generatePassword(16)
+	if err != nil {
+		_ = m.cleanup(vmName)
+		return nil, fmt.Errorf("failed to generate password: %w", err)
+	}
+
+	// Set Administrator password via PowerShell
+	psCmd := fmt.Sprintf(
+		"Set-LocalUser -Name Administrator -Password (ConvertTo-SecureString '%s' -AsPlainText -Force)",
+		password,
+	)
+	if err := m.incus.Exec(vmName, []string{"powershell", "-Command", psCmd}); err != nil {
+		_ = m.cleanup(vmName)
+		return nil, fmt.Errorf("failed to set Administrator password: %w", err)
+	}
+
+	// Verify RDP is listening on port 3389
+	rdpCheck := "Test-NetConnection -ComputerName localhost -Port 3389 -InformationLevel Quiet"
+	if err := m.incus.Exec(vmName, []string{"powershell", "-Command", rdpCheck}); err != nil {
+		if opts.Verbose {
+			fmt.Println("  Warning: RDP port 3389 check failed — RDP may not be enabled in the golden image")
+		}
+	}
+
+	// Store RDP password as a label on the VM for the server to retrieve
+	opts.RDPPassword = password
+	if err := m.incus.SetLabels(vmName, map[string]string{
+		"rdp-password": password,
+	}); err != nil {
+		log.Printf("Warning: failed to store RDP password label: %v", err)
+	}
+
+	info, err := m.incus.GetContainer(vmName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VM info: %w", err)
+	}
+
+	if opts.Verbose {
+		fmt.Printf("  Windows VM ready: RDP at %s:3389 (user: Administrator)\n", ipAddr)
 	}
 
 	return info, nil

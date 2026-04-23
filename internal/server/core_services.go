@@ -889,6 +889,20 @@ func (cs *CoreServices) GetGrafanaURL() string {
 	return fmt.Sprintf("http://%s:%d", cs.victoriaMetricsIP, DefaultGrafanaPort)
 }
 
+// GetGuacamoleIP returns the IP of the Guacamole core container, or "" if not found.
+func (cs *CoreServices) GetGuacamoleIP() string {
+	containers, err := cs.incusClient.ListContainers()
+	if err != nil {
+		return ""
+	}
+	for _, c := range containers {
+		if c.Role == incus.RoleGuacamole && c.State == "Running" {
+			return c.IPAddress
+		}
+	}
+	return ""
+}
+
 // SetupAlerting installs vmalert and Alertmanager inside the VictoriaMetrics
 // container. It writes default rules, configures Alertmanager with the
 // webhook URL, creates systemd services, and starts both.

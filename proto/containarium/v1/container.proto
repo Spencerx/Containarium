@@ -24,6 +24,18 @@ enum OSType {
 
   // Red Hat Enterprise Linux 9 (for production, requires subscription)
   OS_TYPE_RHEL_9 = 3;
+
+  // Windows Server 2022 (runs as QEMU/KVM VM, RDP access)
+  OS_TYPE_WINDOWS_2022 = 4;
+}
+
+// AccessType indicates how to connect to an instance
+enum AccessType {
+  // SSH access (default for Linux containers)
+  ACCESS_TYPE_SSH = 0;
+
+  // RDP access (for Windows VMs, via Guacamole browser-based client)
+  ACCESS_TYPE_RDP = 1;
 }
 
 // ContainerState represents the current state of a container
@@ -126,6 +138,12 @@ message Container {
 
   // Operating system type of the container
   OSType os_type = 15;
+
+  // How to connect to this instance (SSH for Linux, RDP for Windows)
+  AccessType access_type = 16;
+
+  // RDP connection address (e.g., "10.100.0.50:3389") — populated for Windows VMs
+  string rdp_address = 17;
 }
 
 // ContainerMetrics contains runtime metrics for a container
@@ -206,8 +224,11 @@ message CreateContainerResponse {
   // Human-readable message about the creation
   string message = 2;
 
-  // SSH connection string for the user
+  // SSH connection string for the user (Linux containers)
   string ssh_command = 3;
+
+  // RDP connection address (Windows VMs)
+  string rdp_address = 4;
 }
 
 // ListContainersRequest is the request to list containers
