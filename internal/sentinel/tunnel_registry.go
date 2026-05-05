@@ -3,6 +3,7 @@ package sentinel
 import (
 	"fmt"
 	"log"
+	"net"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -131,6 +132,34 @@ func (r *TunnelRegistry) Unregister(spotID string) {
 	}
 
 	log.Printf("[tunnel-registry] unregistered spot %q (was at %s)", spotID, spot.LocalIP)
+}
+
+// DialTunnel opens a yamux stream to the spot's local service on the given
+// port. Used by the SNI router to forward inbound TLS bytes to a
+// tunnel-promoted primary's :443 without going through a loopback proxy
+// listener (which would conflict with the sentinel's own ConnMux on 443).
+//
+// The returned net.Conn is a yamux stream — bidirectional, closing it
+// closes the stream cleanly.
+func (r *TunnelRegistry) DialTunnel(spotID string, port int) (net.Conn, error) {
+	r.mu.RLock()
+	spot, ok := r.spots[spotID]
+	r.mu.RUnlock()
+	if !ok || spot == nil || spot.Session == nil {
+		return nil, fmt.Errorf("spot %q not registered (or already closed)", spotID)
+	}
+	stream, err := spot.Session.Open()
+	if err != nil {
+		return nil, fmt.Errorf("yamux open for spot %q: %w", spotID, err)
+	}
+	// Wire protocol: 2-byte big-endian port number, then bidirectional copy.
+	// Same handshake the existing proxyConnection() uses on the loopback path.
+	portBytes := []byte{byte(port >> 8), byte(port & 0xff)}
+	if _, err := stream.Write(portBytes); err != nil {
+		stream.Close()
+		return nil, fmt.Errorf("write port header to spot %q: %w", spotID, err)
+	}
+	return stream, nil
 }
 
 // Get returns the TunnelSpot for the given spotID, or nil.

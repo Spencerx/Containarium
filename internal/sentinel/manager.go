@@ -55,8 +55,14 @@ type Manager struct {
 	primary  *Backend // currently active backend for HTTP forwarding
 
 	// Primary daemon registry (one entry per pool, populated by daemon
-	// self-registration). Slice 4 will use this for SNI-based routing.
+	// self-registration). Used by the SNI router for hostname-based dispatch.
 	primaries *PrimaryRegistry
+
+	// Tunnel registry (set by cmd/sentinel.go via SetTunnelRegistry). Lets
+	// the SNI router open a yamux stream directly to tunnel-promoted
+	// primaries instead of going through a loopback TCP proxy listener
+	// — which would collide with the sentinel's own ConnMux on :443.
+	tunnelRegistry *TunnelRegistry
 
 	stopMaintenance func() // stops the HTTP/HTTPS maintenance servers
 	certStore       *CertStore
@@ -83,6 +89,13 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 	}
 	m.state.Store(StateMaintenance)
 	return m
+}
+
+// SetTunnelRegistry wires in the tunnel registry so the SNI router can open
+// yamux streams directly to tunnel-promoted primaries. Optional — if unset,
+// the SNI router falls back to TCP-dialing the primary's IP:Port.
+func (m *Manager) SetTunnelRegistry(reg *TunnelRegistry) {
+	m.tunnelRegistry = reg
 }
 
 // SetHTTPSListener sets a ConnMux HTTPS chanListener for tunnel/hybrid mode.
@@ -519,8 +532,15 @@ func (m *Manager) startHTTPSProxy(backendIP string) {
 // buildSNIRoutingHandler returns a connection handler that peeks SNI from
 // each incoming TLS ClientHello and forwards the connection to the primary
 // registered for that hostname, falling back to fallbackTarget on miss.
-// Extracted from startHTTPSProxy so it can be exercised directly in tests
-// without spinning up a dispatchListener.
+//
+// Routing precedence:
+//  1. Primary with BackendID set (tunnel-promoted) → open a yamux stream
+//     directly to the primary's PublicPort via the tunnel registry. This
+//     avoids needing a sentinel-side TCP listener on the primary's port,
+//     which would collide with the sentinel's own ConnMux on :443.
+//  2. Primary without BackendID (in-VPC primary) → TCP-dial Primary.IP:Port.
+//  3. SNI doesn't match any primary → TCP-dial fallbackTarget (legacy
+//     single-backend behavior).
 func (m *Manager) buildSNIRoutingHandler(fallbackTarget string) func(net.Conn) {
 	return func(conn net.Conn) {
 		defer conn.Close()
@@ -530,15 +550,28 @@ func (m *Manager) buildSNIRoutingHandler(fallbackTarget string) func(net.Conn) {
 		sni, peekedConn, peekErr := peekSNI(conn)
 		_ = conn.SetReadDeadline(time.Time{})
 
-		target := fallbackTarget
+		var (
+			dst net.Conn
+			err error
+		)
 		if peekErr == nil && sni != "" {
 			if p := m.primaries.LookupByHostname(sni); p != nil {
-				target = net.JoinHostPort(p.IP, fmt.Sprintf("%d", p.Port))
+				if p.BackendID != "" && m.tunnelRegistry != nil {
+					// Tunnel-promoted primary: yamux directly.
+					spotID := strings.TrimPrefix(p.BackendID, "tunnel-")
+					dst, err = m.tunnelRegistry.DialTunnel(spotID, p.Port)
+				} else {
+					// In-VPC primary: TCP dial.
+					target := net.JoinHostPort(p.IP, fmt.Sprintf("%d", p.Port))
+					dst, err = net.DialTimeout("tcp", target, 5*time.Second)
+				}
 			}
 		}
-
-		dst, err := net.DialTimeout("tcp", target, 5*time.Second)
-		if err != nil {
+		if dst == nil {
+			// No primary match (or yamux/TCP failed): fall back.
+			dst, err = net.DialTimeout("tcp", fallbackTarget, 5*time.Second)
+		}
+		if err != nil || dst == nil {
 			return
 		}
 		defer dst.Close()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	certsgen "github.com/footprintai/go-certs/pkg/certs/gen"
+	"github.com/hashicorp/yamux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,6 +65,103 @@ func TestExtractSNI_Errors(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+// TestSNIRouting_DispatchViaYamux verifies slice 8: a tunnel-promoted
+// primary (Primary.BackendID set) is reached via TunnelRegistry.DialTunnel,
+// not by TCP-dialing Primary.IP:Port. The IP/Port on the registry entry
+// is the sentinel-side loopback alias which often collides with the
+// sentinel's own ConnMux; yamux is the correct dispatch path.
+func TestSNIRouting_DispatchViaYamux(t *testing.T) {
+	primaryAddr, primaryHits := startEchoListener(t, "PRIMARY")
+	fallbackAddr, fallbackHits := startEchoListener(t, "FALLBACK")
+
+	// Establish a real yamux session pair: server (primary side) and
+	// client (sentinel side). The "primary" side listens for streams,
+	// reads the 2-byte port header, then proxies to its echo TLS server.
+	primaryConn, sentinelConn := net.Pipe()
+	defer primaryConn.Close()
+	defer sentinelConn.Close()
+
+	primarySession, err := yamux.Server(primaryConn, nil)
+	require.NoError(t, err)
+	sentinelSession, err := yamux.Client(sentinelConn, nil)
+	require.NoError(t, err)
+	defer primarySession.Close()
+	defer sentinelSession.Close()
+
+	// Primary side: accept yamux streams, read 2-byte port header,
+	// dial localhost:<that port>, bidirectional copy.
+	go func() {
+		for {
+			s, err := primarySession.Accept()
+			if err != nil {
+				return
+			}
+			go func(stream net.Conn) {
+				defer stream.Close()
+				hdr := make([]byte, 2)
+				if _, err := io.ReadFull(stream, hdr); err != nil {
+					return
+				}
+				port := int(hdr[0])<<8 | int(hdr[1])
+				_, primaryPortStr, _ := net.SplitHostPort(primaryAddr)
+				if mustAtoi(t, primaryPortStr) != port {
+					return // wrong port → drop
+				}
+				up, err := net.Dial("tcp", primaryAddr)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				done := make(chan struct{}, 2)
+				go func() { io.Copy(up, stream); done <- struct{}{} }()
+				go func() { io.Copy(stream, up); done <- struct{}{} }()
+				<-done
+			}(s)
+		}
+	}()
+
+	// Build the manager with both registries wired in.
+	tr := NewTunnelRegistry()
+	tr.spots["lab-primary-1"] = &TunnelSpot{
+		ID:      "lab-primary-1",
+		Session: sentinelSession,
+		LocalIP: "127.0.0.99",
+	}
+
+	m := &Manager{
+		primaries:      NewPrimaryRegistry(),
+		tunnelRegistry: tr,
+	}
+	_, primaryPortStr, _ := net.SplitHostPort(primaryAddr)
+	primaryPort := mustAtoi(t, primaryPortStr)
+
+	m.primaries.Register(Primary{
+		Pool:      "lab",
+		Hostname:  "containarium-lab.example",
+		IP:        "127.0.0.99", // sentinel-side loopback alias (intentionally bogus — we use yamux instead)
+		Port:      primaryPort,  // primary's side port (matches the echo listener)
+		BackendID: "tunnel-lab-primary-1",
+	})
+
+	handler := m.buildSNIRoutingHandler(fallbackAddr)
+
+	// Inbound TLS with SNI=containarium-lab.example should route via yamux,
+	// not TCP-dial 127.0.0.99 (which has no listener and would fail).
+	got := dialThroughHandler(t, handler, &tls.Config{
+		ServerName: "containarium-lab.example", InsecureSkipVerify: true,
+	})
+	assert.Equal(t, "PRIMARY", got, "tunnel-promoted primary should dispatch via yamux")
+	assert.Equal(t, 1, primaryHits())
+	assert.Equal(t, 0, fallbackHits())
+
+	// Unknown SNI still falls back via TCP dial.
+	got = dialThroughHandler(t, handler, &tls.Config{
+		ServerName: "stranger.example", InsecureSkipVerify: true,
+	})
+	assert.Equal(t, "FALLBACK", got)
+	assert.Equal(t, 1, fallbackHits())
 }
 
 // TestSNIRouting_DispatchToPrimaryOrFallback wires up a fake "primary" TLS

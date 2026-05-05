@@ -150,6 +150,7 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 			tunnelServer := sentinel.NewTunnelServer("", tunnelPolicy, registry)
 			tunnelServer.OnConnect = manager.OnTunnelConnect
 			tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
+			manager.SetTunnelRegistry(registry)
 			manager.SetHTTPSListener(connMux.HTTPSChanListener())
 
 			sigChan := make(chan os.Signal, 1)
@@ -221,6 +222,7 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 		tunnelServer := sentinel.NewTunnelServer("", tunnelPolicy, registry)
 		tunnelServer.OnConnect = manager.OnTunnelConnect
 		tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
+		manager.SetTunnelRegistry(registry)
 		manager.SetHTTPSListener(connMux.HTTPSChanListener())
 
 		// Graceful shutdown on signals
