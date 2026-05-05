@@ -105,10 +105,14 @@ func (m *Manager) PeersHandler() http.HandlerFunc {
 			ID        string `json:"id"`
 			ProxyPath string `json:"proxy_path"` // path prefix on binary server, e.g. "/peer/tunnel-fts-5900x-gpu"
 			Healthy   bool   `json:"healthy"`
-			Pool      string `json:"pool,omitempty"`
+			Pool      Pool   `json:"pool,omitempty"`
 		}
 
 		poolFilter, hasPoolFilter := r.URL.Query()["pool"]
+		var wantPool Pool
+		if hasPoolFilter {
+			wantPool = Pool(poolFilter[0])
+		}
 
 		backends := m.backends.All()
 		peers := make([]peerInfo, 0)
@@ -116,7 +120,7 @@ func (m *Manager) PeersHandler() http.HandlerFunc {
 			if b.Type != BackendTunnel {
 				continue
 			}
-			if hasPoolFilter && b.Pool != poolFilter[0] {
+			if hasPoolFilter && b.Pool != wantPool {
 				continue
 			}
 			peers = append(peers, peerInfo{
@@ -154,9 +158,13 @@ func (m *Manager) PrimariesHandler() http.HandlerFunc {
 		switch {
 		case r.Method == http.MethodGet && rest == "":
 			poolFilter, hasPoolFilter := r.URL.Query()["pool"]
+			var wantPool Pool
+			if hasPoolFilter {
+				wantPool = Pool(poolFilter[0])
+			}
 			out := make([]*Primary, 0)
 			for _, p := range m.primaries.All() {
-				if hasPoolFilter && p.Pool != poolFilter[0] {
+				if hasPoolFilter && p.Pool != wantPool {
 					continue
 				}
 				out = append(out, p)
@@ -186,7 +194,7 @@ func (m *Manager) PrimariesHandler() http.HandlerFunc {
 			json.NewEncoder(w).Encode(stored)
 
 		case r.Method == http.MethodPut && rest != "":
-			updated := m.primaries.Heartbeat(rest)
+			updated := m.primaries.Heartbeat(Pool(rest))
 			if updated == nil {
 				http.Error(w, `{"error":"pool not registered"}`, http.StatusNotFound)
 				return
@@ -194,7 +202,7 @@ func (m *Manager) PrimariesHandler() http.HandlerFunc {
 			json.NewEncoder(w).Encode(updated)
 
 		case r.Method == http.MethodDelete && rest != "":
-			if !m.primaries.Unregister(rest) {
+			if !m.primaries.Unregister(Pool(rest)) {
 				http.Error(w, `{"error":"pool not registered"}`, http.StatusNotFound)
 				return
 			}

@@ -12,7 +12,7 @@ type testPeer struct {
 	ID        string `json:"id"`
 	ProxyPath string `json:"proxy_path"`
 	Healthy   bool   `json:"healthy"`
-	Pool      string `json:"pool,omitempty"`
+	Pool      Pool   `json:"pool,omitempty"`
 }
 
 // TestPeersHandlerPoolFilter verifies that pool tags propagate from the
@@ -51,7 +51,7 @@ func TestPeersHandlerPoolFilter(t *testing.T) {
 		peers := call("?pool=prod")
 		assert.Len(t, peers, 1)
 		assert.Equal(t, "tunnel-a", peers[0].ID)
-		assert.Equal(t, "prod", peers[0].Pool)
+		assert.Equal(t, Pool("prod"), peers[0].Pool)
 	})
 
 	t.Run("filter by pool=dev returns only dev peers", func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestPeersHandlerPoolFilter(t *testing.T) {
 		peers := call("?pool=")
 		assert.Len(t, peers, 1)
 		assert.Equal(t, "tunnel-c", peers[0].ID)
-		assert.Equal(t, "", peers[0].Pool)
+		assert.Equal(t, Pool(""), peers[0].Pool)
 	})
 
 	t.Run("unknown pool returns empty list", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestOnTunnelConnect_PromotesPrimary(t *testing.T) {
 	// Backend pool sees the tunnel as before.
 	b := m.backends.Get("tunnel-lab-primary-1")
 	if assert.NotNil(t, b) {
-		assert.Equal(t, "lab", b.Pool)
+		assert.Equal(t, Pool("lab"), b.Pool)
 		assert.Equal(t, "127.0.0.7", b.IP)
 	}
 
@@ -115,7 +115,7 @@ func TestOnTunnelConnect_PromotesPrimary(t *testing.T) {
 
 	// SNI lookup by alias finds the same primary.
 	if p2 := m.primaries.LookupByHostname("lab-api.kafeido.app"); assert.NotNil(t, p2) {
-		assert.Equal(t, "lab", p2.Pool)
+		assert.Equal(t, Pool("lab"), p2.Pool)
 	}
 
 	// Disconnect removes both backend and primary entries.
@@ -156,12 +156,12 @@ func TestRegisterPropagatesPool(t *testing.T) {
 
 	spot := r.Get("spot-1")
 	assert.NotNil(t, spot)
-	assert.Equal(t, "prod", spot.Pool)
+	assert.Equal(t, Pool("prod"), spot.Pool)
 
 	// Empty pool stays empty (back-compat).
 	_, err = r.Register(&TunnelHandshake{SpotID: "spot-2", Ports: []int{8080}}, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, "", r.Get("spot-2").Pool)
+	assert.Equal(t, Pool(""), r.Get("spot-2").Pool)
 }
 
 func idsOf(peers []testPeer) []string {

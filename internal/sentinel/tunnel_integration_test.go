@@ -89,7 +89,7 @@ func TestTunnelIntegration(t *testing.T) {
 	defer connMux.Close()
 
 	registry := NewTunnelRegistry()
-	tunnelServer := NewTunnelServer("", token, registry)
+	tunnelServer := NewTunnelServer("", policyAny(token), registry)
 
 	connectCh := make(chan *TunnelSpot, 1)
 	disconnectCh := make(chan string, 1)

@@ -65,7 +65,9 @@ func TestTunnelHandshakeValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateHandshake(tt.hs, tt.token)
+			policy := NewTokenPolicy()
+			policy.Allow(tt.token, PoolAny)
+			err := validateHandshake(tt.hs, policy)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -118,7 +120,7 @@ func TestTunnelEndToEnd(t *testing.T) {
 
 	// 2. Start tunnel server
 	registry := NewTunnelRegistry()
-	server := NewTunnelServer(fmt.Sprintf("127.0.0.1:%d", tunnelPort), token, registry)
+	server := NewTunnelServer(fmt.Sprintf("127.0.0.1:%d", tunnelPort), policyAny(token), registry)
 
 	connectCh := make(chan *TunnelSpot, 1)
 	server.OnConnect = func(spot *TunnelSpot) {
@@ -187,7 +189,7 @@ func TestTunnelWrongToken(t *testing.T) {
 
 	tunnelPort := freePort(t)
 	registry := NewTunnelRegistry()
-	server := NewTunnelServer(fmt.Sprintf("127.0.0.1:%d", tunnelPort), "correct-token", registry)
+	server := NewTunnelServer(fmt.Sprintf("127.0.0.1:%d", tunnelPort), policyAny("correct-token"), registry)
 
 	go server.Run(ctx)
 	time.Sleep(100 * time.Millisecond)
@@ -318,7 +320,7 @@ func TestConnMuxWithTunnelClient(t *testing.T) {
 
 	// Start tunnel server on the mux's tunnel listener
 	registry := NewTunnelRegistry()
-	tunnelServer := NewTunnelServer("", token, registry)
+	tunnelServer := NewTunnelServer("", policyAny(token), registry)
 	connectCh := make(chan *TunnelSpot, 1)
 	tunnelServer.OnConnect = func(spot *TunnelSpot) {
 		connectCh <- spot
@@ -355,4 +357,12 @@ func freePort(t *testing.T) int {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 	return port
+}
+
+// policyAny returns a TokenPolicy authorizing the given token for any pool.
+// Test helper for the legacy single-token path.
+func policyAny(token string) *TokenPolicy {
+	p := NewTokenPolicy()
+	p.Allow(token, PoolAny)
+	return p
 }

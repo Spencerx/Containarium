@@ -22,7 +22,7 @@ type TunnelSpot struct {
 	LocalIP      string // assigned loopback alias, e.g. "127.0.0.2"
 	ExternalPort int    // externally reachable port for API access (e.g., 18001)
 	Ports        []int  // ports this spot serves
-	Pool         string // optional pool tag for grouping peers; empty = unpooled
+	Pool         Pool   // optional pool tag for grouping peers; empty = unpooled
 	Connected    time.Time
 
 	// Primary self-registration via handshake (slice 6). Non-empty

@@ -11,7 +11,7 @@ const PrimaryTTL = 90 * time.Second
 
 // Primary represents a registered primary daemon serving one pool.
 type Primary struct {
-	Pool          string    `json:"pool"`
+	Pool          Pool      `json:"pool"`
 	Hostname      string    `json:"hostname"` // primary's own subdomain (e.g. containarium-prod.kafeido.app)
 	Aliases       []string  `json:"aliases,omitempty"` // additional hostnames the primary's Caddy routes (e.g. api.kafeido.app, voice.kafeido.app)
 	IP            string    `json:"ip"`       // primary's reachable IP (typically internal VPC IP)
@@ -26,14 +26,14 @@ type Primary struct {
 // evicted on read.
 type PrimaryRegistry struct {
 	mu        sync.RWMutex
-	primaries map[string]*Primary // keyed by Pool
+	primaries map[Pool]*Primary
 	now       func() time.Time
 }
 
 // NewPrimaryRegistry creates an empty registry.
 func NewPrimaryRegistry() *PrimaryRegistry {
 	return &PrimaryRegistry{
-		primaries: make(map[string]*Primary),
+		primaries: make(map[Pool]*Primary),
 		now:       time.Now,
 	}
 }
@@ -65,7 +65,7 @@ func (r *PrimaryRegistry) Register(p Primary) *Primary {
 
 // Heartbeat refreshes the LastHeartbeat timestamp for a pool. Returns the
 // updated primary, or nil if the pool isn't registered.
-func (r *PrimaryRegistry) Heartbeat(pool string) *Primary {
+func (r *PrimaryRegistry) Heartbeat(pool Pool) *Primary {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -78,7 +78,7 @@ func (r *PrimaryRegistry) Heartbeat(pool string) *Primary {
 }
 
 // Unregister removes a primary by pool name. Returns true if it existed.
-func (r *PrimaryRegistry) Unregister(pool string) bool {
+func (r *PrimaryRegistry) Unregister(pool Pool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, ok := r.primaries[pool]
@@ -104,7 +104,7 @@ func (r *PrimaryRegistry) UnregisterByBackendID(backendID string) int {
 
 // LookupByPool returns the primary serving the given pool, or nil. Stale
 // entries (last heartbeat older than PrimaryTTL) are treated as absent.
-func (r *PrimaryRegistry) LookupByPool(pool string) *Primary {
+func (r *PrimaryRegistry) LookupByPool(pool Pool) *Primary {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.primaries[pool]

@@ -18,7 +18,7 @@ import (
 // listeners that forward traffic through the yamux session to the spot.
 type TunnelServer struct {
 	listenAddr string
-	token      string
+	policy     *TokenPolicy
 	registry   *TunnelRegistry
 
 	// Callbacks for Manager integration
@@ -31,11 +31,17 @@ type TunnelServer struct {
 	cancelCtx context.CancelFunc
 }
 
-// NewTunnelServer creates a new tunnel server.
-func NewTunnelServer(listenAddr, token string, registry *TunnelRegistry) *TunnelServer {
+// NewTunnelServer creates a new tunnel server with a token-bound pool
+// authorization policy. To preserve the legacy single-token behavior
+// (any pool allowed), pass a policy with a single rule:
+//
+//	policy := NewTokenPolicy()
+//	policy.Allow(token, "*")
+//	srv := NewTunnelServer(addr, policy, registry)
+func NewTunnelServer(listenAddr string, policy *TokenPolicy, registry *TunnelRegistry) *TunnelServer {
 	return &TunnelServer{
 		listenAddr: listenAddr,
-		token:      token,
+		policy:     policy,
 		registry:   registry,
 		proxies:    make(map[string][]net.Listener),
 	}
@@ -100,7 +106,7 @@ func (ts *TunnelServer) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	// Validate
-	if err := validateHandshake(hs, ts.token); err != nil {
+	if err := validateHandshake(hs, ts.policy); err != nil {
 		log.Printf("[tunnel-server] handshake validation failed from %s: %v", remoteAddr, err)
 		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: err.Error()})
 		conn.Close()

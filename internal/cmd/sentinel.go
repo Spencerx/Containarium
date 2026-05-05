@@ -32,7 +32,8 @@ var (
 	sentinelRecoveryTimeout    time.Duration
 	sentinelCertSyncInterval   time.Duration
 	sentinelKeySyncInterval    time.Duration
-	sentinelTunnelToken        string
+	sentinelTunnelToken         string
+	sentinelTunnelTokenPolicies []string
 )
 
 var sentinelCmd = &cobra.Command{
@@ -61,7 +62,8 @@ func init() {
 	rootCmd.AddCommand(sentinelCmd)
 
 	sentinelCmd.Flags().StringVar(&sentinelProvider, "provider", "gcp", "Cloud provider: \"gcp\", \"none\" (local testing), or \"tunnel\" (reverse tunnel)")
-	sentinelCmd.Flags().StringVar(&sentinelTunnelToken, "tunnel-token", "", "Pre-shared token for tunnel authentication (tunnel provider only, or CONTAINARIUM_TUNNEL_TOKEN env)")
+	sentinelCmd.Flags().StringVar(&sentinelTunnelToken, "tunnel-token", "", "Pre-shared token for tunnel authentication, allowed for any pool (legacy; use --tunnel-token-policy for pool-restricted tokens, or CONTAINARIUM_TUNNEL_TOKEN env)")
+	sentinelCmd.Flags().StringSliceVar(&sentinelTunnelTokenPolicies, "tunnel-token-policy", nil, "Pool-restricted token in the form 'token=pool1,pool2'. Repeatable. Use '*' to mean any pool. Combined with --tunnel-token if both are provided.")
 	sentinelCmd.Flags().StringVar(&sentinelSpotVM, "spot-vm", "", "Name of the backend VM instance (required for gcp provider)")
 	sentinelCmd.Flags().StringVar(&sentinelZone, "zone", "", "Cloud zone (required for gcp provider)")
 	sentinelCmd.Flags().StringVar(&sentinelProject, "project", "", "Cloud project ID (required for gcp provider)")
@@ -141,7 +143,11 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 			defer connMux.Close()
 
 			registry := sentinel.NewTunnelRegistry()
-			tunnelServer := sentinel.NewTunnelServer("", tunnelToken, registry)
+			tunnelPolicy, polErr := sentinel.PolicyFromCLI(tunnelToken, sentinelTunnelTokenPolicies)
+			if polErr != nil {
+				return polErr
+			}
+			tunnelServer := sentinel.NewTunnelServer("", tunnelPolicy, registry)
 			tunnelServer.OnConnect = manager.OnTunnelConnect
 			tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
 			manager.SetHTTPSListener(connMux.HTTPSChanListener())
@@ -208,7 +214,11 @@ func runSentinel(cmd *cobra.Command, args []string) error {
 		defer connMux.Close()
 
 		// Wire up: tunnel connections → tunnel server, HTTPS → manager
-		tunnelServer := sentinel.NewTunnelServer("", tunnelToken, registry)
+		tunnelPolicy, polErr := sentinel.PolicyFromCLI(tunnelToken, sentinelTunnelTokenPolicies)
+		if polErr != nil {
+			return polErr
+		}
+		tunnelServer := sentinel.NewTunnelServer("", tunnelPolicy, registry)
 		tunnelServer.OnConnect = manager.OnTunnelConnect
 		tunnelServer.OnDisconnect = manager.OnTunnelDisconnect
 		manager.SetHTTPSListener(connMux.HTTPSChanListener())

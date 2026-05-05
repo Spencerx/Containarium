@@ -17,7 +17,7 @@ func TestPrimaryRegistry_RegisterLookupHeartbeat(t *testing.T) {
 	// Initial registration
 	stored := r.Register(Primary{Pool: "prod", Hostname: "containarium-prod.kafeido.app", IP: "10.0.0.10", Port: 443})
 	assert.NotNil(t, stored)
-	assert.Equal(t, "prod", stored.Pool)
+	assert.Equal(t, Pool("prod"), stored.Pool)
 	assert.False(t, stored.RegisteredAt.IsZero())
 	assert.Equal(t, stored.RegisteredAt, stored.LastHeartbeat)
 
@@ -70,19 +70,19 @@ func TestPrimaryRegistry_LookupByHostnameMatchesAliases(t *testing.T) {
 	// Primary hostname matches
 	p := r.LookupByHostname("containarium-prod.kafeido.app")
 	if assert.NotNil(t, p) {
-		assert.Equal(t, "prod", p.Pool)
+		assert.Equal(t, Pool("prod"), p.Pool)
 	}
 
 	// Alias matches
 	p = r.LookupByHostname("api.kafeido.app")
 	if assert.NotNil(t, p) {
-		assert.Equal(t, "prod", p.Pool, "api.kafeido.app should resolve to prod via alias")
+		assert.Equal(t, Pool("prod"), p.Pool, "api.kafeido.app should resolve to prod via alias")
 	}
 
 	// Different pool's alias resolves to that pool
 	p = r.LookupByHostname("lab-api.kafeido.app")
 	if assert.NotNil(t, p) {
-		assert.Equal(t, "lab", p.Pool)
+		assert.Equal(t, Pool("lab"), p.Pool)
 	}
 
 	// Unknown hostname returns nil
@@ -98,7 +98,7 @@ func TestPrimaryRegistry_LookupByHostnameMatchesAliases(t *testing.T) {
 	})
 	assert.Nil(t, r.LookupByHostname("api.kafeido.app"), "old alias should be replaced on re-register")
 	if p := r.LookupByHostname("new-app.kafeido.app"); assert.NotNil(t, p) {
-		assert.Equal(t, "prod", p.Pool)
+		assert.Equal(t, Pool("prod"), p.Pool)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestPrimariesHandler_HTTPFlow(t *testing.T) {
 		}
 		assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.Len(t, resp.Primaries, 1)
-		assert.Equal(t, "prod", resp.Primaries[0].Pool)
+		assert.Equal(t, Pool("prod"), resp.Primaries[0].Pool)
 	})
 
 	t.Run("PUT heartbeats existing primary", func(t *testing.T) {
@@ -214,6 +214,6 @@ func TestPrimariesHandler_HTTPFlow(t *testing.T) {
 		}
 		assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.Len(t, resp.Primaries, 1)
-		assert.Equal(t, "prod", resp.Primaries[0].Pool)
+		assert.Equal(t, Pool("prod"), resp.Primaries[0].Pool)
 	})
 }

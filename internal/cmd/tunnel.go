@@ -93,7 +93,7 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 		Token:          token,
 		SpotID:         tunnelSpotID,
 		Ports:          ports,
-		Pool:           tunnelPool,
+		Pool:           sentinel.Pool(tunnelPool),
 		PublicHostname: tunnelPublicHostname,
 		PublicAliases:  tunnelPublicAliases,
 		PublicPort:     tunnelPublicPort,

@@ -71,6 +71,7 @@ If a single team needs visibility across all containers, **don't use multi-pool*
 | 4 | SNI peeking + routing in the sentinel HTTPS dispatcher; falls back to the legacy single-backend behavior on miss | `internal/sentinel/sni.go`, `internal/sentinel/manager.go` |
 | 5 | Hostname aliases on `Primary` so app domains (e.g. `api.kafeido.app`) route to the right pool's primary; `--public-aliases` flag | `internal/sentinel/primary_registry.go`, `internal/server/primary_register.go` |
 | 6 | Primary registration via tunnel handshake — a primary behind NAT/Tailscale tunnels into the sentinel and gets auto-promoted into the primary registry pointing at its loopback alias | `internal/sentinel/tunnel_auth.go`, `tunnel_registry.go`, `manager.go`, `internal/cmd/tunnel.go`, `scripts/setup-peer.sh` |
+| 7 | Token-bound pool authorization — `--tunnel-token-policy token=pool1,pool2` per-pool tokens; sentinel rejects handshakes whose `pool` field isn't in the token's allow-list. Adds `type Pool string` so pool routing uses a distinct type instead of bare strings. | `internal/sentinel/pool.go`, `tunnel_auth.go`, `internal/cmd/sentinel.go` |
 
 ## Flows
 
