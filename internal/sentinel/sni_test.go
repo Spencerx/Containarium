@@ -2,20 +2,14 @@ package sentinel
 
 import (
 	"bufio"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
-	"math/big"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	certsgen "github.com/footprintai/go-certs/pkg/certs/gen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -148,15 +142,40 @@ func dialThroughHandler(t *testing.T, handler func(net.Conn), clientCfg *tls.Con
 	return string(buf[:findFirst(buf[:n], '\n')])
 }
 
+// sharedTestCert returns a TLS cert generated once per test package run.
+// certsgen.NewTLSCredentials does a full RSA CA+server+client generation,
+// which is ~2s; sharing one cert across all listeners keeps the test fast.
+var (
+	sharedTestCertOnce sync.Once
+	sharedTestCertVal  tls.Certificate
+	sharedTestCertErr  error
+)
+
+func sharedTestCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	sharedTestCertOnce.Do(func() {
+		now := time.Now()
+		creds, err := certsgen.NewTLSCredentials(
+			now.Add(-time.Hour),
+			now.Add(time.Hour),
+			certsgen.WithOrganizations("Containarium-Test"),
+		)
+		if err != nil {
+			sharedTestCertErr = err
+			return
+		}
+		sharedTestCertVal, sharedTestCertErr = tls.X509KeyPair(creds.ServerCert.Bytes(), creds.ServerKey.Bytes())
+	})
+	require.NoError(t, sharedTestCertErr)
+	return sharedTestCertVal
+}
+
 // startEchoListener starts a TLS server that responds to any read with `tag`
 // followed by '\n', regardless of input.
 func startEchoListener(t *testing.T, tag string) (addr string, hits func() int) {
 	t.Helper()
 
-	cert, key := genSelfSigned(t, "any")
-	tlsCert, err := tls.X509KeyPair(cert, key)
-	require.NoError(t, err)
-	cfg := &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+	cfg := &tls.Config{Certificates: []tls.Certificate{sharedTestCert(t)}}
 
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	require.NoError(t, err)
@@ -187,30 +206,6 @@ func startEchoListener(t *testing.T, tag string) (addr string, hits func() int) 
 		defer mu.Unlock()
 		return hitsVal
 	}
-}
-
-func genSelfSigned(t *testing.T, cn string) (cert, key []byte) {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{cn, "*.example", "any"},
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	require.NoError(t, err)
-	cert = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-
-	keyDer, err := x509.MarshalECPrivateKey(priv)
-	require.NoError(t, err)
-	key = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDer})
-	return
 }
 
 func mustAtoi(t *testing.T, s string) int {
