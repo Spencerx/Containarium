@@ -102,8 +102,24 @@ func (r *PrimaryRegistry) UnregisterByBackendID(backendID string) int {
 	return removed
 }
 
+// isStale returns true if a primary's heartbeat is too old.
+//
+// Tunnel-backed primaries (BackendID != "") have explicit lifecycle hooks
+// — OnTunnelConnect adds them, OnTunnelDisconnect calls
+// UnregisterByBackendID. TTL is for HTTP-registered primaries that may
+// have died without DELETE'ing themselves. Skipping TTL for tunnel-backed
+// entries prevents the registry from forgetting them while their yamux
+// session is still alive (which would otherwise happen 90s after handshake
+// since nothing refreshes their heartbeat).
+func (r *PrimaryRegistry) isStale(p *Primary, now time.Time) bool {
+	if p.BackendID != "" {
+		return false
+	}
+	return now.Sub(p.LastHeartbeat) > PrimaryTTL
+}
+
 // LookupByPool returns the primary serving the given pool, or nil. Stale
-// entries (last heartbeat older than PrimaryTTL) are treated as absent.
+// entries are treated as absent.
 func (r *PrimaryRegistry) LookupByPool(pool Pool) *Primary {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -111,7 +127,7 @@ func (r *PrimaryRegistry) LookupByPool(pool Pool) *Primary {
 	if !ok {
 		return nil
 	}
-	if r.now().Sub(p.LastHeartbeat) > PrimaryTTL {
+	if r.isStale(p, r.now()) {
 		return nil
 	}
 	return p
@@ -123,9 +139,9 @@ func (r *PrimaryRegistry) LookupByPool(pool Pool) *Primary {
 func (r *PrimaryRegistry) LookupByHostname(hostname string) *Primary {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	cutoff := r.now().Add(-PrimaryTTL)
+	now := r.now()
 	for _, p := range r.primaries {
-		if p.LastHeartbeat.Before(cutoff) {
+		if r.isStale(p, now) {
 			continue
 		}
 		if p.Hostname == hostname {
@@ -145,10 +161,10 @@ func (r *PrimaryRegistry) LookupByHostname(hostname string) *Primary {
 func (r *PrimaryRegistry) All() []*Primary {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cutoff := r.now().Add(-PrimaryTTL)
+	now := r.now()
 	out := make([]*Primary, 0, len(r.primaries))
 	for pool, p := range r.primaries {
-		if p.LastHeartbeat.Before(cutoff) {
+		if r.isStale(p, now) {
 			delete(r.primaries, pool)
 			continue
 		}

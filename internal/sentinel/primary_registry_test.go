@@ -102,6 +102,60 @@ func TestPrimaryRegistry_LookupByHostnameMatchesAliases(t *testing.T) {
 	}
 }
 
+// TestPrimaryRegistry_TunnelBackedNoEviction is the regression test for
+// Bug B: a tunnel-promoted primary (BackendID set) must NOT be evicted by
+// the heartbeat TTL. Its lifetime is tied to the yamux session via
+// OnTunnelConnect/OnTunnelDisconnect, not to HTTP heartbeats.
+func TestPrimaryRegistry_TunnelBackedNoEviction(t *testing.T) {
+	r := NewPrimaryRegistry()
+	fakeNow := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return fakeNow }
+
+	// Tunnel-backed: BackendID set, no heartbeat ever refreshed.
+	r.Register(Primary{
+		Pool:      "lab",
+		Hostname:  "containarium-lab.example",
+		IP:        "127.0.0.6",
+		Port:      443,
+		BackendID: "tunnel-lab-primary-1",
+	})
+
+	// HTTP-registered: BackendID empty.
+	r.Register(Primary{
+		Pool:     "http-pool",
+		Hostname: "http-pool.example",
+		IP:       "10.0.0.42",
+		Port:     443,
+	})
+
+	// Fast-forward way past TTL with no heartbeats.
+	fakeNow = fakeNow.Add(10 * PrimaryTTL)
+
+	t.Run("tunnel-backed survives TTL", func(t *testing.T) {
+		if assert.NotNil(t, r.LookupByPool("lab")) {
+			assert.Equal(t, "tunnel-lab-primary-1", r.LookupByPool("lab").BackendID)
+		}
+		assert.NotNil(t, r.LookupByHostname("containarium-lab.example"))
+	})
+
+	t.Run("HTTP-registered evicts past TTL", func(t *testing.T) {
+		assert.Nil(t, r.LookupByPool("http-pool"))
+		assert.Nil(t, r.LookupByHostname("http-pool.example"))
+	})
+
+	t.Run("All() returns only tunnel-backed", func(t *testing.T) {
+		all := r.All()
+		assert.Len(t, all, 1)
+		assert.Equal(t, "tunnel-lab-primary-1", all[0].BackendID)
+	})
+
+	t.Run("UnregisterByBackendID still works", func(t *testing.T) {
+		removed := r.UnregisterByBackendID("tunnel-lab-primary-1")
+		assert.Equal(t, 1, removed)
+		assert.Nil(t, r.LookupByPool("lab"))
+	})
+}
+
 func TestPrimaryRegistry_StaleEviction(t *testing.T) {
 	r := NewPrimaryRegistry()
 
