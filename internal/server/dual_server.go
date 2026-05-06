@@ -458,6 +458,15 @@ skipAppHosting:
 						DefaultPostgresUser, DefaultPostgresPassword,
 						pgInfo.IPAddress, DefaultPostgresPort, DefaultPostgresDB)
 					log.Printf("Detected existing PostgreSQL at: %s", pgInfo.IPAddress)
+					// Re-apply the systemd Restart=on-failure override even
+					// for pre-existing containers. The non-app-hosting code
+					// path doesn't go through EnsurePostgres (which would
+					// normally apply this), so containers provisioned before
+					// the restart-policy code existed — or rebuilt from a
+					// template that pre-dates it — will silently lack
+					// auto-restart on OOM. Idempotent.
+					cs := NewCoreServices(incusClient, CoreServicesConfig{})
+					cs.ensurePostgresRestartPolicy()
 				} else {
 					// No postgres container found — provision one
 					log.Printf("Provisioning core-postgres for local security scanning...")

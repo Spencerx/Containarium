@@ -70,6 +70,14 @@ func (n NICDevice) ToMap() map[string]string {
 type GPUDevice struct {
 	// ID is the GPU device ID (e.g., "0" for first GPU).
 	// Leave empty to pass through all GPUs.
+	//
+	// Deprecated for new container creation: ID maps to Incus' DRM card
+	// minor index, which can shift across kernel upgrades (e.g., the
+	// 6.8.0-110 → 6.8.0-111 incident on fts-5900x where the RTX 4090
+	// moved from card0 to card1, breaking every container with id="0").
+	// Prefer PCI, which is stable across reboots and kernel changes.
+	// New code should call ResolveGPUInputToPCI() to convert a
+	// user-supplied ID into a PCI address before constructing this.
 	ID string
 	// PCI is the PCI address (e.g., "0000:0b:00.0") for a specific GPU.
 	// Takes precedence over ID if set.
@@ -87,6 +95,67 @@ func (g GPUDevice) ToMap() map[string]string {
 		m["id"] = g.ID
 	}
 	return m
+}
+
+// ResolveGPUInputToPCI converts a user-supplied GPU identifier (typically
+// "0", "1", or a PCI address like "0000:0b:00.0") into a PCI address by
+// looking up the system's GPU list. Returns the original input unchanged
+// when it's already PCI-shaped. Returns an error if the input is a
+// numeric index out of range, or if no GPUs are detected.
+//
+// Why we do this: Incus' "id" field for GPU devices is the DRM card
+// minor (the digit at the end of /dev/dri/cardN). That index can shift
+// across kernel upgrades when the kernel's DRM enumeration order
+// changes — the resulting "Failed to detect requested GPU device"
+// error is silent (no preflight) and only surfaces on the next
+// container start. PCI addresses are stable, so we resolve before
+// writing the device config.
+func (c *Client) ResolveGPUInputToPCI(input string) (string, error) {
+	// Pure-function part is testable without an Incus daemon.
+	// If the input is already PCI-shaped, no daemon call needed.
+	if pci, ok, err := classifyGPUInput(input); err != nil {
+		return "", err
+	} else if ok {
+		return pci, nil
+	}
+	// Numeric index path requires enumerating system GPUs.
+	idx, _ := strconv.Atoi(input) // already validated by classifyGPUInput
+	res, err := c.GetSystemResources()
+	if err != nil {
+		return "", fmt.Errorf("GPU input %q: failed to enumerate system GPUs: %w", input, err)
+	}
+	return resolveGPUByIndex(input, idx, res.GPUs)
+}
+
+// classifyGPUInput returns (pci, true, nil) if input is already a PCI
+// address; (empty, false, nil) if it's a valid numeric index needing
+// resolution; (empty, false, err) for invalid inputs (empty / bad format).
+func classifyGPUInput(input string) (string, bool, error) {
+	if input == "" {
+		return "", false, fmt.Errorf("empty GPU input")
+	}
+	if strings.Contains(input, ":") {
+		// "0000:0b:00.0" — pass through unchanged
+		return input, true, nil
+	}
+	idx, err := strconv.Atoi(input)
+	if err != nil || idx < 0 {
+		return "", false, fmt.Errorf("GPU input %q: not a PCI address or non-negative integer", input)
+	}
+	_ = idx
+	return "", false, nil
+}
+
+// resolveGPUByIndex picks the Nth GPU's PCI address from a list.
+func resolveGPUByIndex(input string, idx int, gpus []GPUInfo) (string, error) {
+	if idx >= len(gpus) {
+		return "", fmt.Errorf("GPU input %q: index %d out of range (system has %d GPU(s))", input, idx, len(gpus))
+	}
+	pci := gpus[idx].PCIAddress
+	if pci == "" {
+		return "", fmt.Errorf("GPU input %q: GPU at index %d has no PCI address (vendor=%q, model=%q)", input, idx, gpus[idx].Vendor, gpus[idx].Model)
+	}
+	return pci, nil
 }
 
 // ContainerConfig holds configuration for creating a container
