@@ -89,6 +89,13 @@ type DualServerConfig struct {
 	SentinelURL    string   // URL for auto-discovering tunnel peers (e.g., "http://10.128.0.5:8081")
 	Peers          []string // Static peer addresses (e.g., ["10.128.0.5:18001"])
 	LocalBackendID string   // This daemon's backend ID (defaults to hostname)
+	Pool           string   // Pool name to filter sentinel peer discovery (empty = no filter)
+
+	// Sentinel primary registration (multi-pool routing). Empty PublicHostname
+	// disables registration; the daemon still works as a single-pool primary.
+	PublicHostname string   // primary's own subdomain (e.g. containarium-prod.kafeido.app)
+	PublicAliases  []string // additional hostnames the primary's Caddy serves (e.g. api.kafeido.app, voice.kafeido.app)
+	PublicPort     int      // TLS port the sentinel forwards to (typically 443)
 
 	// Alerting settings
 	AlertWebhookURL    string // Webhook URL for alert notifications (optional)
@@ -279,6 +286,20 @@ func NewDualServer(config *DualServerConfig) (*DualServer, error) {
 						caddyAdminURL = adminURL
 						caddyIP := coreServices.GetCaddyIP()
 						log.Printf("Caddy ready: %s", caddyIP)
+
+						// Now that Caddy exists, set up host:80/443 → caddy port
+						// forwarding. The earlier auto-detect at daemon startup
+						// (see cmd/daemon.go:199) ran BEFORE Caddy was spawned
+						// on first install, so it skipped this step. Re-running
+						// it here makes first-install work without requiring a
+						// daemon restart.
+						if network.CheckIPTablesAvailable() {
+							pf := network.NewPortForwarderWithNetwork(caddyIP, networkCIDR)
+							if err := pf.SetupPortForwarding(); err != nil {
+								log.Printf("Warning: Failed to setup port forwarding after Caddy bring-up: %v", err)
+								log.Printf("  External HTTPS for %s may not work", config.BaseDomain)
+							}
+						}
 
 						// Add DNS override so containers resolve *.baseDomain to Caddy
 						// internally instead of going through the external IP (hairpin NAT).
@@ -895,7 +916,7 @@ skipAppHosting:
 		pentestStore:         pentestStore,
 		zapManager:           zapManager,
 		zapStore:             zapStore,
-		peerPool:             NewPeerPool(config.LocalBackendID, config.SentinelURL, config.Peers),
+		peerPool:             NewPeerPool(config.LocalBackendID, config.SentinelURL, config.Peers, config.Pool),
 		startTime:            time.Now(),
 	}, nil
 }
@@ -1079,6 +1100,16 @@ func (ds *DualServer) handleBackendSystemInfo(w http.ResponseWriter, r *http.Req
 }
 
 func (ds *DualServer) Start(ctx context.Context) error {
+	// Register this primary with the sentinel (no-op if --public-hostname is unset).
+	runPrimaryRegistration(ctx, PrimaryRegisterConfig{
+		SentinelURL:    ds.config.SentinelURL,
+		Pool:           ds.config.Pool,
+		PublicHostname: ds.config.PublicHostname,
+		PublicAliases:  ds.config.PublicAliases,
+		Port:           ds.config.PublicPort,
+		BackendID:      ds.config.LocalBackendID,
+	})
+
 	// Start peer discovery for multi-backend support
 	if ds.peerPool != nil {
 		ds.peerPool.StartDiscovery(ctx)

@@ -207,7 +207,7 @@ func TestIntegration_MultiBackendListContainers(t *testing.T) {
 	gpuSrv := httptest.NewServer(gpu.handler())
 	defer gpuSrv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["gcp-spot"] = &PeerClient{
 		ID: "gcp-spot", Addr: spotSrv.Listener.Addr().String(),
@@ -248,7 +248,7 @@ func TestIntegration_PeerForwardResize(t *testing.T) {
 	gpuSrv := httptest.NewServer(gpu.handler())
 	defer gpuSrv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID: "tunnel-gpu", Addr: gpuSrv.Listener.Addr().String(),
@@ -291,7 +291,7 @@ func TestIntegration_PeerForwardDelete(t *testing.T) {
 	gpuSrv := httptest.NewServer(gpu.handler())
 	defer gpuSrv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID: "tunnel-gpu", Addr: gpuSrv.Listener.Addr().String(),
@@ -329,7 +329,7 @@ func TestIntegration_PeerForwardCollaborators(t *testing.T) {
 	gpuSrv := httptest.NewServer(gpu.handler())
 	defer gpuSrv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID: "tunnel-gpu", Addr: gpuSrv.Listener.Addr().String(),
@@ -443,7 +443,7 @@ func TestIntegration_UnhealthyPeerSkipped(t *testing.T) {
 	gpuSrv := httptest.NewServer(gpu.handler())
 	defer gpuSrv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID: "tunnel-gpu", Addr: gpuSrv.Listener.Addr().String(),
@@ -481,7 +481,7 @@ func TestIntegration_AuthTokenForwarding(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["peer"] = &PeerClient{
 		ID: "peer", Addr: srv.Listener.Addr().String(),
@@ -511,7 +511,7 @@ func TestIntegration_PeerTerminalURLResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["gpu-node"] = &PeerClient{
 		ID: "gpu-node", Addr: srv.Listener.Addr().String(),

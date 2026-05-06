@@ -21,6 +21,7 @@ type Backend struct {
 	ExternalPort int           // externally reachable API port (for tunnel backends, e.g., 18001)
 	Provider     CloudProvider // for diagnose/recover (GCP can restart VMs; tunnel cannot)
 	Priority     int           // lower = higher priority for HTTP primary selection (GCP=0, tunnel=10)
+	Pool         Pool          // optional pool tag (tunnel backends only); empty = unpooled
 
 	// Per-backend health tracking
 	Healthy        bool

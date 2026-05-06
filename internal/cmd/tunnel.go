@@ -13,10 +13,14 @@ import (
 )
 
 var (
-	tunnelSentinelAddr string
-	tunnelToken        string
-	tunnelSpotID       string
-	tunnelPorts        string
+	tunnelSentinelAddr   string
+	tunnelToken          string
+	tunnelSpotID         string
+	tunnelPorts          string
+	tunnelPool           string
+	tunnelPublicHostname string
+	tunnelPublicAliases  []string
+	tunnelPublicPort     int
 )
 
 var tunnelCmd = &cobra.Command{
@@ -45,6 +49,10 @@ func init() {
 	tunnelCmd.Flags().StringVar(&tunnelToken, "token", "", "Pre-shared authentication token (or CONTAINARIUM_TUNNEL_TOKEN env)")
 	tunnelCmd.Flags().StringVar(&tunnelSpotID, "spot-id", "", "Unique identifier for this spot instance (required)")
 	tunnelCmd.Flags().StringVar(&tunnelPorts, "ports", "22,80,443,3389,8080", "Comma-separated local ports to expose through the tunnel")
+	tunnelCmd.Flags().StringVar(&tunnelPool, "pool", "", "Pool name to register this peer in (optional; empty = unpooled)")
+	tunnelCmd.Flags().StringVar(&tunnelPublicHostname, "public-hostname", "", "If set, sentinel registers this tunnel as the primary for its pool, serving the named hostname (requires --pool and --public-port)")
+	tunnelCmd.Flags().StringSliceVar(&tunnelPublicAliases, "public-aliases", nil, "Additional hostnames the primary's Caddy serves (e.g. api.kafeido.app,voice.kafeido.app)")
+	tunnelCmd.Flags().IntVar(&tunnelPublicPort, "public-port", 0, "Public TLS port the sentinel forwards to via this tunnel (typically 443; required with --public-hostname)")
 }
 
 func runTunnel(cmd *cobra.Command, args []string) error {
@@ -81,12 +89,16 @@ func runTunnel(cmd *cobra.Command, args []string) error {
 	}()
 
 	client := &sentinel.TunnelClient{
-		SentinelAddr: tunnelSentinelAddr,
-		Token:        token,
-		SpotID:       tunnelSpotID,
-		Ports:        ports,
+		SentinelAddr:   tunnelSentinelAddr,
+		Token:          token,
+		SpotID:         tunnelSpotID,
+		Ports:          ports,
+		Pool:           sentinel.Pool(tunnelPool),
+		PublicHostname: tunnelPublicHostname,
+		PublicAliases:  tunnelPublicAliases,
+		PublicPort:     tunnelPublicPort,
 	}
 
-	log.Printf("[tunnel] connecting to sentinel at %s as %q (ports: %v)", tunnelSentinelAddr, tunnelSpotID, ports)
+	log.Printf("[tunnel] connecting to sentinel at %s as %q (ports: %v, pool: %q, primary_host: %q)", tunnelSentinelAddr, tunnelSpotID, ports, tunnelPool, tunnelPublicHostname)
 	return client.Run(ctx)
 }

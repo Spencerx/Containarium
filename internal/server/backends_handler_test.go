@@ -8,7 +8,7 @@ import (
 )
 
 func TestBackendsHandler_ListBackends(t *testing.T) {
-	pool := NewPeerPool("local-spot", "", nil)
+	pool := NewPeerPool("local-spot", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID:      "tunnel-gpu",
@@ -102,7 +102,7 @@ func TestBackendsHandler_SystemInfoRouting(t *testing.T) {
 	}))
 	defer peerSrv.Close()
 
-	pool := NewPeerPool("local-spot", "", nil)
+	pool := NewPeerPool("local-spot", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["tunnel-gpu"] = &PeerClient{
 		ID:      "tunnel-gpu",

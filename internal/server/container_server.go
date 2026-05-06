@@ -16,6 +16,7 @@ import (
 	"github.com/footprintai/containarium/internal/guacamole"
 	"github.com/footprintai/containarium/internal/incus"
 	"github.com/footprintai/containarium/internal/ostype"
+	"github.com/footprintai/containarium/internal/stacks"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -116,6 +117,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		EnablePodmanPrivileged: req.EnablePodman, // Enable privileged mode for proper Podman-in-LXC support
 		AutoStart:              true,
 		Stack:                  req.Stack,
+		StackParameters:        req.StackParameters,
 		OSType:                 req.OsType,
 	}
 
@@ -679,6 +681,38 @@ func (s *ContainerServer) InstallStack(ctx context.Context, req *pb.InstallStack
 		Message:   fmt.Sprintf("Stack %q installed successfully on %s-container", req.StackId, req.Username),
 		Container: toProtoContainer(info),
 	}, nil
+}
+
+// ListStacks returns the catalog of available software stacks and their
+// parameter schemas. The web UI uses this to render the Create Container
+// dialog's stack dropdown and any dynamically-shown parameter inputs.
+func (s *ContainerServer) ListStacks(ctx context.Context, req *pb.ListStacksRequest) (*pb.ListStacksResponse, error) {
+	mgr := stacks.GetDefault()
+	all := mgr.GetAllStacks()
+
+	out := make([]*pb.StackInfo, 0, len(all))
+	for _, stk := range all {
+		params := make([]*pb.StackParameter, 0, len(stk.Parameters))
+		for _, p := range stk.Parameters {
+			params = append(params, &pb.StackParameter{
+				Name:        p.Name,
+				Label:       p.Label,
+				Description: p.Description,
+				Type:        p.Type,
+				Default:     p.Default,
+				Required:    p.Required,
+			})
+		}
+		out = append(out, &pb.StackInfo{
+			Id:          stk.ID,
+			Name:        stk.Name,
+			Description: stk.Description,
+			Icon:        stk.Icon,
+			Parameters:  params,
+		})
+	}
+
+	return &pb.ListStacksResponse{Stacks: out}, nil
 }
 
 // AddSSHKey adds an SSH key to a container

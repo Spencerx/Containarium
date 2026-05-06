@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewPeerPool(t *testing.T) {
-	pool := NewPeerPool("local-vm", "", nil)
+	pool := NewPeerPool("local-vm", "", nil, "")
 	if pool.LocalBackendID() != "local-vm" {
 		t.Errorf("expected local backend ID 'local-vm', got %q", pool.LocalBackendID())
 	}
@@ -18,7 +18,7 @@ func TestNewPeerPool(t *testing.T) {
 }
 
 func TestNewPeerPool_StaticPeers(t *testing.T) {
-	pool := NewPeerPool("local-vm", "", []string{"10.0.0.1:8080", "10.0.0.2:8080"})
+	pool := NewPeerPool("local-vm", "", []string{"10.0.0.1:8080", "10.0.0.2:8080"}, "")
 	if len(pool.Peers()) != 2 {
 		t.Errorf("expected 2 peers, got %d", len(pool.Peers()))
 	}
@@ -32,7 +32,7 @@ func TestNewPeerPool_StaticPeers(t *testing.T) {
 }
 
 func TestPeerPool_Get(t *testing.T) {
-	pool := NewPeerPool("local", "", []string{"peer-1"})
+	pool := NewPeerPool("local", "", []string{"peer-1"}, "")
 	if pool.Get("peer-1") == nil {
 		t.Error("expected to find peer-1")
 	}
@@ -120,7 +120,7 @@ func TestPeerPool_ListContainers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["test-peer"] = &PeerClient{
 		ID:      "test-peer",
@@ -143,7 +143,7 @@ func TestPeerPool_ListContainers(t *testing.T) {
 }
 
 func TestPeerPool_ListContainers_SkipsUnhealthy(t *testing.T) {
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["unhealthy"] = &PeerClient{
 		ID:      "unhealthy",
@@ -169,7 +169,7 @@ func TestPeerPool_FindContainerPeer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["gpu-node"] = &PeerClient{
 		ID:      "gpu-node",
@@ -197,7 +197,7 @@ func TestPeerPool_FindContainerPeer(t *testing.T) {
 
 func TestPeerPool_PeerTerminalURL_NotFound(t *testing.T) {
 	// Empty pool — no peers, should return empty URL
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	url, err := pool.PeerTerminalURL("nonexistent", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -219,7 +219,7 @@ func TestPeerPool_PeerTerminalURL_Found(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool := NewPeerPool("local", "", nil)
+	pool := NewPeerPool("local", "", nil, "")
 	pool.mu.Lock()
 	pool.peers["gpu-node"] = &PeerClient{
 		ID:      "gpu-node",

@@ -214,6 +214,11 @@ message CreateContainerRequest {
 
   // Operating system type (takes precedence over image when set)
   OSType os_type = 12;
+
+  // Stack parameters — passed to install scripts as env vars
+  // (CONTAINARIUM_STACK_<key>). Set by the web UI's Create Container form
+  // based on the selected stack's declared parameters. Optional.
+  map<string, string> stack_parameters = 13;
 }
 
 // CreateContainerResponse is the response from creating a container
@@ -521,6 +526,41 @@ message InstallStackResponse {
 
   // Updated container info after installation
   Container container = 2;
+}
+
+// StackParameter describes an input the stack accepts at install time.
+// Returned by ListStacks so the web UI can render appropriate form fields.
+message StackParameter {
+  // Parameter key. The env var seen by install scripts is
+  // CONTAINARIUM_STACK_<name>.
+  string name = 1;
+  // Human-readable label shown in the web UI.
+  string label = 2;
+  // Optional helper text shown below the field.
+  string description = 3;
+  // "string" | "password" | "number" | "boolean"
+  string type = 4;
+  // Default value if the user leaves the field blank.
+  string default = 5;
+  // Whether the field is required.
+  bool required = 6;
+}
+
+// StackInfo describes a single software stack.
+message StackInfo {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string icon = 4;
+  repeated StackParameter parameters = 5;
+}
+
+// ListStacksRequest requests the catalog of available stacks.
+message ListStacksRequest {}
+
+// ListStacksResponse returns all configured software stacks.
+message ListStacksResponse {
+  repeated StackInfo stacks = 1;
 }
 
 // GetMonitoringInfoRequest is the request to get monitoring info

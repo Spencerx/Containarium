@@ -242,6 +242,20 @@ service ContainerService {
     };
   }
 
+  // ListStacks returns all available software stacks and their parameter schemas.
+  // Used by the web UI to render the Create Container form's stack dropdown
+  // and dynamically-shown parameter inputs.
+  rpc ListStacks(ListStacksRequest) returns (ListStacksResponse) {
+    option (google.api.http) = {
+      get: "/v1/stacks"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List available software stacks";
+      description: "Returns all configured software stacks including their parameters (name, type, default, etc.) for rendering the Create Container form.";
+      tags: "Container Operations";
+    };
+  }
+
   // GetSystemInfo gets information about the Incus host
   rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse) {
     option (google.api.http) = {

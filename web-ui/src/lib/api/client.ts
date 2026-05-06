@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { Container, ContainerMetrics, CreateContainerRequest, CreateContainerResponse, ListContainersResponse, MetricsResponse, SystemInfo, Collaborator, AddCollaboratorRequest, BackendInfo } from '@/src/types/container';
+import { Container, ContainerMetrics, CreateContainerRequest, CreateContainerResponse, ListContainersResponse, MetricsResponse, SystemInfo, Collaborator, AddCollaboratorRequest, BackendInfo, Stack } from '@/src/types/container';
 import { Server } from '@/src/types/server';
 import { App, NetworkACL, ProxyRoute, NetworkTopology, ACLPresetInfo, DNSRecord, PassthroughRoute } from '@/src/types/app';
 import { Connection, ConnectionSummary, HistoricalConnection, TrafficAggregate, GetConnectionsResponse, GetConnectionSummaryResponse, QueryTrafficHistoryResponse, GetTrafficAggregatesResponse } from '@/src/types/traffic';
@@ -175,6 +175,16 @@ export class ContaineriumClient {
     const response = await this.client.get('/containers');
     const containers = response.data.containers || [];
     return containers.map((c: Record<string, unknown>) => transformContainer(c));
+  }
+
+  /**
+   * List available software stacks (with parameter schemas).
+   * The Create Container dialog uses this to render dynamic form fields
+   * for the selected stack's parameters.
+   */
+  async listStacks(): Promise<Stack[]> {
+    const response = await this.client.get('/stacks');
+    return (response.data.stacks || []) as Stack[];
   }
 
   /**

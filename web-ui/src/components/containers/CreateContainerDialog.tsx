@@ -21,9 +21,11 @@ import {
   Typography,
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
-import { CreateContainerRequest, AVAILABLE_STACKS, BackendInfo } from '@/src/types/container';
+import { CreateContainerRequest, AVAILABLE_STACKS, BackendInfo, Stack } from '@/src/types/container';
 import { generateSSHKeyPair, downloadPrivateKey, SSHKeyPair } from '@/src/lib/sshkey';
 import { CreateContainerProgress } from '@/src/lib/hooks/useContainers';
+import { getClient } from '@/src/lib/api/client';
+import { Server } from '@/src/types/server';
 
 interface CreateContainerDialogProps {
   open: boolean;
@@ -31,6 +33,7 @@ interface CreateContainerDialogProps {
   onSubmit: (request: CreateContainerRequest, onProgress?: (progress: CreateContainerProgress) => void) => Promise<unknown>;
   networkCidr?: string; // Network CIDR from server (e.g., "10.100.0.0/24")
   backends?: BackendInfo[]; // Available backends for backend selector
+  server?: Server | null; // Active server — used to fetch stacks/parameters from the API
 }
 
 const IMAGES = [
@@ -119,7 +122,7 @@ function validateStaticIP(ip: string, cidr: string): { valid: boolean; error?: s
   return { valid: true };
 }
 
-export default function CreateContainerDialog({ open, onClose, onSubmit, networkCidr, backends }: CreateContainerDialogProps) {
+export default function CreateContainerDialog({ open, onClose, onSubmit, networkCidr, backends, server }: CreateContainerDialogProps) {
   // Use provided network CIDR or default
   const effectiveCidr = networkCidr || DEFAULT_NETWORK_CIDR;
 
@@ -129,6 +132,11 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
   const [memory, setMemory] = useState('4GB');
   const [disk, setDisk] = useState('50GB');
   const [stack, setStack] = useState('');
+  // Dynamic stack catalog fetched from the API (includes parameter schemas).
+  // Falls back to the hardcoded AVAILABLE_STACKS on older daemons.
+  const [stackCatalog, setStackCatalog] = useState<Stack[]>(AVAILABLE_STACKS);
+  // Per-stack parameter values entered by the user, keyed by stack id + param name.
+  const [stackParamValues, setStackParamValues] = useState<Record<string, string>>({});
   const [gpu, setGpu] = useState('');
   const [backendId, setBackendId] = useState('');
   const [enablePodman, setEnablePodman] = useState(true);
@@ -160,6 +168,41 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
     return labels;
   };
 
+  // Fetch the stack catalog with parameter schemas when the dialog opens.
+  // Silently falls back to the hardcoded list if the API is unavailable.
+  useEffect(() => {
+    if (!open || !server) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const stacks = await getClient(server).listStacks();
+        if (!cancelled && stacks.length > 0) {
+          // Keep an empty "None" option at the top
+          setStackCatalog([{ id: '', name: 'None', description: 'No pre-configured stack', icon: 'none' }, ...stacks]);
+        }
+      } catch {
+        // Older daemons: use the hardcoded fallback (already set)
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, server]);
+
+  // When the selected stack changes, seed the parameter form with defaults
+  // from the stack's declared parameters.
+  useEffect(() => {
+    const selected = stackCatalog.find(s => s.id === stack);
+    if (selected?.parameters && selected.parameters.length > 0) {
+      const seeded: Record<string, string> = {};
+      for (const p of selected.parameters) {
+        seeded[p.name] = stackParamValues[p.name] ?? p.default ?? '';
+      }
+      setStackParamValues(seeded);
+    } else {
+      setStackParamValues({});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stack, stackCatalog]);
+
   const resetForm = () => {
     setUsername('');
     setImage('images:ubuntu/24.04');
@@ -167,6 +210,7 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
     setMemory('4GB');
     setDisk('50GB');
     setStack('');
+    setStackParamValues({});
     setGpu('');
     setBackendId('');
     setEnablePodman(true);
@@ -245,6 +289,9 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
         labels: Object.keys(labels).length > 0 ? labels : undefined,
         enablePodman: isWindows ? false : enablePodman,
         stack: isWindows ? undefined : (stack || undefined),
+        stackParameters: isWindows || !stack || Object.keys(stackParamValues).length === 0
+          ? undefined
+          : stackParamValues,
         staticIp: staticIp || undefined,
         gpu: gpu || undefined,
         backendId: backendId || undefined,
@@ -356,7 +403,7 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
               label="Software Stack (Optional)"
               onChange={(e) => setStack(e.target.value)}
             >
-              {AVAILABLE_STACKS.map((s) => (
+              {stackCatalog.map((s) => (
                 <MenuItem key={s.id} value={s.id}>
                   <Box>
                     <Typography variant="body1">{s.name}</Typography>
@@ -368,6 +415,33 @@ export default function CreateContainerDialog({ open, onClose, onSubmit, network
               ))}
             </Select>
           </FormControl>
+
+          {/* Dynamic parameter inputs for the selected stack */}
+          {(() => {
+            const selected = stackCatalog.find(s => s.id === stack);
+            if (!selected?.parameters || selected.parameters.length === 0) return null;
+            return (
+              <Box sx={{ pl: 2, borderLeft: 2, borderColor: 'primary.light', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Typography variant="caption" color="text.secondary">
+                  {selected.name} configuration
+                </Typography>
+                {selected.parameters.map((p) => (
+                  <TextField
+                    key={p.name}
+                    label={p.label}
+                    value={stackParamValues[p.name] ?? ''}
+                    onChange={(e) => setStackParamValues({ ...stackParamValues, [p.name]: e.target.value })}
+                    type={p.type === 'password' ? 'password' : p.type === 'number' ? 'number' : 'text'}
+                    required={p.required}
+                    helperText={p.description}
+                    disabled={success || submitting}
+                    fullWidth
+                    size="small"
+                  />
+                ))}
+              </Box>
+            );
+          })()}
 
           {backends && backends.length > 1 && (
             <FormControl fullWidth disabled={success || submitting}>

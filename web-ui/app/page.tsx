@@ -471,6 +471,7 @@ export default function Home() {
         onSubmit={handleCreateContainer}
         networkCidr={systemInfo?.networkCidr}
         backends={backends}
+        server={activeServer}
       />
 
       <DeleteConfirmDialog

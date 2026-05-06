@@ -181,6 +181,7 @@ Developer Laptop
 - **Bare-metal GPU nodes**: RTX 3090, RTX 4090, etc. connected via tunnel
 - **Windows Server VMs**: QEMU/KVM with RDP access
 - Containers from all backends appear in a single unified dashboard
+- **Multi-pool**: One sentinel can front multiple isolated clusters (e.g., `containarium-prod.example.com` and `containarium-lab.example.com`), each with its own primary VM and peers — see [docs/MULTI-POOL.md](docs/MULTI-POOL.md)
 - See [docs/WINDOWS-VM-SETUP.md](docs/WINDOWS-VM-SETUP.md) for Windows VMs
 
 🛡️ Sentinel HA (Spot Instance Recovery)
@@ -549,6 +550,7 @@ Features:
 | [SENTINEL-DESIGN.md](docs/SENTINEL-DESIGN.md) | Sentinel HA architecture |
 | [WINDOWS-VM-SETUP.md](docs/WINDOWS-VM-SETUP.md) | Windows Server VM with RDP access |
 | [ANDROID-DEV-SETUP.md](docs/ANDROID-DEV-SETUP.md) | Android development environment (headless + GUI) |
+| [KUBEFLOW-SETUP.md](docs/KUBEFLOW-SETUP.md) | Kind + Kubeflow Pipelines for ML workflows |
 | [CROSS-PEER-FILE-TRANSFER.md](docs/CROSS-PEER-FILE-TRANSFER.md) | Transfer large files between peer containers |
 | [ALERTING-SETUP.md](docs/ALERTING-SETUP.md) | Alert rules, webhooks (Zulip/Slack), troubleshooting |
 | [MCP-INTEGRATION.md](docs/MCP-INTEGRATION.md) | Claude Desktop MCP integration |

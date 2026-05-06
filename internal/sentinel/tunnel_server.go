@@ -18,7 +18,7 @@ import (
 // listeners that forward traffic through the yamux session to the spot.
 type TunnelServer struct {
 	listenAddr string
-	token      string
+	policy     *TokenPolicy
 	registry   *TunnelRegistry
 
 	// Callbacks for Manager integration
@@ -31,11 +31,17 @@ type TunnelServer struct {
 	cancelCtx context.CancelFunc
 }
 
-// NewTunnelServer creates a new tunnel server.
-func NewTunnelServer(listenAddr, token string, registry *TunnelRegistry) *TunnelServer {
+// NewTunnelServer creates a new tunnel server with a token-bound pool
+// authorization policy. To preserve the legacy single-token behavior
+// (any pool allowed), pass a policy with a single rule:
+//
+//	policy := NewTokenPolicy()
+//	policy.Allow(token, "*")
+//	srv := NewTunnelServer(addr, policy, registry)
+func NewTunnelServer(listenAddr string, policy *TokenPolicy, registry *TunnelRegistry) *TunnelServer {
 	return &TunnelServer{
 		listenAddr: listenAddr,
-		token:      token,
+		policy:     policy,
 		registry:   registry,
 		proxies:    make(map[string][]net.Listener),
 	}
@@ -100,7 +106,7 @@ func (ts *TunnelServer) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	// Validate
-	if err := validateHandshake(hs, ts.token); err != nil {
+	if err := validateHandshake(hs, ts.policy); err != nil {
 		log.Printf("[tunnel-server] handshake validation failed from %s: %v", remoteAddr, err)
 		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: err.Error()})
 		conn.Close()
@@ -127,7 +133,7 @@ func (ts *TunnelServer) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	// Register in the registry (assigns loopback alias)
-	localIP, err := ts.registry.Register(hs.SpotID, session, hs.Ports)
+	localIP, err := ts.registry.Register(hs, session)
 	if err != nil {
 		log.Printf("[tunnel-server] registration failed for %s: %v", hs.SpotID, err)
 		writeHandshakeResponse(conn, &TunnelHandshakeResponse{OK: false, Error: err.Error()})
@@ -145,12 +151,26 @@ func (ts *TunnelServer) handleConnection(ctx context.Context, conn net.Conn) {
 
 	log.Printf("[tunnel-server] spot %q authenticated, assigned %s, ports %v", hs.SpotID, localIP, hs.Ports)
 
-	// Start local TCP proxy listeners for each port
+	// Start local TCP proxy listeners for each port. Skip the public
+	// port for tunnel-promoted primaries — the sentinel's own ConnMux
+	// owns it, and the SNI router uses TunnelRegistry.DialTunnel() to
+	// stream bytes via yamux instead.
 	externalPort := 0
 	if spot := ts.registry.Get(hs.SpotID); spot != nil {
 		externalPort = spot.ExternalPort
 	}
-	ts.startProxies(ctx, hs.SpotID, localIP, externalPort, hs.Ports, session)
+	loopbackPorts := hs.Ports
+	if hs.PublicHostname != "" && hs.PublicPort != 0 {
+		filtered := make([]int, 0, len(hs.Ports))
+		for _, p := range hs.Ports {
+			if p == hs.PublicPort {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		loopbackPorts = filtered
+	}
+	ts.startProxies(ctx, hs.SpotID, localIP, externalPort, loopbackPorts, session)
 
 	// Notify manager
 	spot := ts.registry.Get(hs.SpotID)

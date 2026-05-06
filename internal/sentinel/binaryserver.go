@@ -69,6 +69,11 @@ func StartBinaryServer(port int, manager *Manager) (stop func(), err error) {
 	// Peers endpoint — for daemon multi-backend discovery
 	mux.HandleFunc("/sentinel/peers", manager.PeersHandler())
 
+	// Primaries endpoints — populated by daemon self-registration.
+	// One handler covers both /sentinel/primaries and /sentinel/primaries/{pool}.
+	mux.HandleFunc("/sentinel/primaries", manager.PrimariesHandler())
+	mux.HandleFunc("/sentinel/primaries/", manager.PrimariesHandler())
+
 	// Peer proxy — forwards /peer/<backend-id>/* to the tunnel backend's loopback
 	// This allows the primary daemon to reach tunnel backends through the sentinel
 	// without needing extra firewall rules for external ports.

@@ -38,6 +38,7 @@ type CreateOptions struct {
 	AutoStart              bool
 	Verbose                bool
 	Stack                  string    // Software stack to install (e.g., "nodejs", "python")
+	StackParameters        map[string]string // Stack parameters — passed to install scripts as CONTAINARIUM_STACK_<name> env vars
 	OSType                 pb.OSType // Operating system type for the container
 	OnProvisioning         func()    // Called when container is running but still provisioning (installing packages/stack)
 	RDPPassword            string    // Generated RDP password for Windows VMs (output, set by Create)
@@ -208,7 +209,7 @@ func (m *Manager) Create(opts CreateOptions) (*incus.ContainerInfo, error) {
 	}
 
 	family := ostype.FamilyForOSType(opts.OSType)
-	if err := m.installPackages(containerName, opts.EnablePodman, opts.Stack, opts.Username, family); err != nil {
+	if err := m.installPackages(containerName, opts.EnablePodman, opts.Stack, opts.StackParameters, opts.Username, family); err != nil {
 		_ = m.cleanup(containerName)
 		return nil, fmt.Errorf("failed to install packages: %w", err)
 	}
@@ -348,7 +349,28 @@ func (m *Manager) provisionWindowsVM(vmName string, opts *CreateOptions) (*incus
 }
 
 // installPackages installs required packages in the container
-func (m *Manager) installPackages(containerName string, enablePodman bool, stackID string, username string, family ostype.OSFamily) error {
+// stackEnvPrefix builds a shell fragment that exports stack parameters as
+// environment variables (CONTAINARIUM_STACK_<name>) for the install script.
+// Returns empty string if params is empty. Values are single-quoted with
+// embedded single-quotes escaped.
+func stackEnvPrefix(params map[string]string) string {
+	if len(params) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for k, v := range params {
+		// Single-quote escape: close, escape, reopen. 'foo'\''bar' => foo'bar
+		escaped := strings.ReplaceAll(v, "'", `'\''`)
+		b.WriteString("export CONTAINARIUM_STACK_")
+		b.WriteString(k)
+		b.WriteString("='")
+		b.WriteString(escaped)
+		b.WriteString("'; ")
+	}
+	return b.String()
+}
+
+func (m *Manager) installPackages(containerName string, enablePodman bool, stackID string, stackParams map[string]string, username string, family ostype.OSFamily) error {
 	pkgMgr := ospkg.ForFamily(family)
 	familyStr := string(family)
 
@@ -397,12 +419,14 @@ func (m *Manager) installPackages(containerName string, enablePodman bool, stack
 	}
 
 	// Add stack-specific packages and run pre-install commands
+	envPrefix := stackEnvPrefix(stackParams)
 	if stackID != "" {
 		stack, err := stackMgr.GetStack(stackID)
 		if err == nil {
-			// Run pre-install commands as root (e.g., adding repos)
+			// Run pre-install commands as root (e.g., adding repos). Stack
+			// parameters are exported as CONTAINARIUM_STACK_<name> env vars.
 			for _, cmd := range stack.GetPreInstallForFamily(familyStr) {
-				_ = m.incus.Exec(containerName, []string{"bash", "-c", cmd})
+				_ = m.incus.Exec(containerName, []string{"bash", "-c", envPrefix + cmd})
 			}
 			packages = append(packages, stack.GetPackagesForFamily(familyStr)...)
 		}
@@ -448,13 +472,15 @@ func (m *Manager) installPackages(containerName string, enablePodman bool, stack
 		}
 	}
 
-	// Run stack post-install commands as the user
+	// Run stack post-install commands as the user. Stack parameters are
+	// exported as CONTAINARIUM_STACK_<name> env vars (via su -c, which runs
+	// a shell that evaluates the export+command).
 	if stackID != "" {
 		stackMgr := stacks.GetDefault()
 		stack, err := stackMgr.GetStack(stackID)
 		if err == nil {
 			for _, cmd := range stack.GetPostInstallForFamily(familyStr) {
-				userCmd := []string{"su", "-", username, "-c", cmd}
+				userCmd := []string{"su", "-", username, "-c", envPrefix + cmd}
 				_ = m.incus.Exec(containerName, userCmd)
 			}
 		}

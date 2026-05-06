@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type PeerPool struct {
 
 	// Auto-discovery from sentinel
 	sentinelURL    string
+	pool           string // if non-empty, only peers tagged with this pool are discovered
 	discoveryStop  chan struct{}
 	localBackendID string // this daemon's backend ID
 }
@@ -48,10 +50,13 @@ type PeerPool struct {
 // NewPeerPool creates a new peer pool.
 // If sentinelURL is provided, it will auto-discover tunnel backends.
 // localBackendID is used to tag local containers.
-func NewPeerPool(localBackendID string, sentinelURL string, staticPeers []string) *PeerPool {
+// pool, when non-empty, scopes auto-discovery to peers tagged with that pool only;
+// pass "" to see all peers regardless of tag.
+func NewPeerPool(localBackendID string, sentinelURL string, staticPeers []string, pool string) *PeerPool {
 	p := &PeerPool{
 		peers:          make(map[string]*PeerClient),
 		sentinelURL:    sentinelURL,
+		pool:           pool,
 		localBackendID: localBackendID,
 	}
 
@@ -98,8 +103,13 @@ func (p *PeerPool) StartDiscovery(ctx context.Context) {
 }
 
 // discover fetches peer list from sentinel's /sentinel/peers endpoint.
+// When p.pool is non-empty, ?pool=<name> is appended so the sentinel returns
+// only peers tagged with that pool.
 func (p *PeerPool) discover() {
 	url := p.sentinelURL + "/sentinel/peers"
+	if p.pool != "" {
+		url += "?pool=" + neturl.QueryEscape(p.pool)
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	resp, err := client.Get(url)
@@ -336,14 +346,15 @@ func (pc *PeerClient) ForwardCreateContainer(authToken string, pbReq *pb.CreateC
 			"memory": pbReq.Resources.GetMemory(),
 			"disk":   pbReq.Resources.GetDisk(),
 		},
-		"sshKeys":      pbReq.SshKeys,
-		"enablePodman": pbReq.EnablePodman,
-		"stack":        pbReq.Stack,
-		"gpu":          pbReq.Gpu,
-		"staticIp":     pbReq.StaticIp,
-		"labels":       pbReq.Labels,
-		"async":        pbReq.Async,
-		"osType":       int32(pbReq.OsType),
+		"sshKeys":         pbReq.SshKeys,
+		"enablePodman":    pbReq.EnablePodman,
+		"stack":           pbReq.Stack,
+		"stackParameters": pbReq.StackParameters,
+		"gpu":             pbReq.Gpu,
+		"staticIp":        pbReq.StaticIp,
+		"labels":          pbReq.Labels,
+		"async":           pbReq.Async,
+		"osType":          int32(pbReq.OsType),
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

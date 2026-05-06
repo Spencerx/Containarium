@@ -48,6 +48,7 @@ export interface CreateContainerRequest {
   image?: string;
   enablePodman?: boolean;
   stack?: string; // Software stack to install (e.g., "nodejs", "python", "fullstack")
+  stackParameters?: Record<string, string>; // Stack parameter values from the UI form
   staticIp?: string; // Static IP address (e.g., "10.100.0.100") - empty for DHCP
   gpu?: string; // GPU device ID for passthrough (e.g., "0" for first GPU)
   backendId?: string; // Target backend for creation (empty = primary)
@@ -74,15 +75,26 @@ export interface BackendInfo {
 /**
  * Available software stacks for container provisioning
  */
+export interface StackParameter {
+  name: string;
+  label: string;
+  description?: string;
+  type: 'string' | 'password' | 'number' | 'boolean';
+  default?: string;
+  required?: boolean;
+}
+
 export interface Stack {
   id: string;
   name: string;
   description: string;
   icon: string;
+  parameters?: StackParameter[];
 }
 
 /**
- * Pre-defined software stacks (matching configs/stacks.yaml)
+ * Fallback list used when the API /v1/stacks call fails (older daemons).
+ * The real catalog (including parameters) comes from listStacks().
  */
 export const AVAILABLE_STACKS: Stack[] = [
   { id: '', name: 'None', description: 'No pre-configured stack', icon: 'none' },

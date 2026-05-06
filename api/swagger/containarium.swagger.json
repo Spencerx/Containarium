@@ -2500,6 +2500,30 @@
         ]
       }
     },
+    "/v1/stacks": {
+      "get": {
+        "summary": "List available software stacks",
+        "description": "Returns all configured software stacks including their parameters (name, type, default, etc.) for rendering the Create Container form.",
+        "operationId": "ContainerService_ListStacks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListStacksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "Container Operations"
+        ]
+      }
+    },
     "/v1/system/alerting": {
       "get": {
         "summary": "Get alerting information",
@@ -4093,6 +4117,13 @@
         "osType": {
           "$ref": "#/definitions/OSType",
           "title": "Operating system type (takes precedence over image when set)"
+        },
+        "stackParameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Stack parameters — passed to install scripts as env vars\n(CONTAINARIUM_STACK_\u003ckey\u003e). Set by the web UI's Create Container form\nbased on the selected stack's declared parameters. Optional."
         }
       },
       "title": "CreateContainerRequest is the request to create a new container"
@@ -5077,6 +5108,19 @@
         }
       }
     },
+    "ListStacksResponse": {
+      "type": "object",
+      "properties": {
+        "stacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/StackInfo"
+          }
+        }
+      },
+      "description": "ListStacksResponse returns all configured software stacks."
+    },
     "ListWebhookDeliveriesResponse": {
       "type": "object",
       "properties": {
@@ -5854,6 +5898,61 @@
         }
       },
       "title": "ScanJob represents a queued ClamAV scan job"
+    },
+    "StackInfo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/StackParameter"
+          }
+        }
+      },
+      "description": "StackInfo describes a single software stack."
+    },
+    "StackParameter": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Parameter key. The env var seen by install scripts is\nCONTAINARIUM_STACK_\u003cname\u003e."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label shown in the web UI."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional helper text shown below the field."
+        },
+        "type": {
+          "type": "string",
+          "title": "\"string\" | \"password\" | \"number\" | \"boolean\""
+        },
+        "default": {
+          "type": "string",
+          "description": "Default value if the user leaves the field blank."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the field is required."
+        }
+      },
+      "description": "StackParameter describes an input the stack accepts at install time.\nReturned by ListStacks so the web UI can render appropriate form fields."
     },
     "StartAppBody": {
       "type": "object",

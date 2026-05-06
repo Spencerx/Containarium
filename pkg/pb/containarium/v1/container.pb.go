@@ -676,9 +676,13 @@ type CreateContainerRequest struct {
 	// Target backend ID for creation (empty = primary backend)
 	BackendId string `protobuf:"bytes,11,opt,name=backend_id,json=backendId,proto3" json:"backend_id,omitempty"`
 	// Operating system type (takes precedence over image when set)
-	OsType        OSType `protobuf:"varint,12,opt,name=os_type,json=osType,proto3,enum=containarium.v1.OSType" json:"os_type,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OsType OSType `protobuf:"varint,12,opt,name=os_type,json=osType,proto3,enum=containarium.v1.OSType" json:"os_type,omitempty"`
+	// Stack parameters — passed to install scripts as env vars
+	// (CONTAINARIUM_STACK_<key>). Set by the web UI's Create Container form
+	// based on the selected stack's declared parameters. Optional.
+	StackParameters map[string]string `protobuf:"bytes,13,rep,name=stack_parameters,json=stackParameters,proto3" json:"stack_parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateContainerRequest) Reset() {
@@ -793,6 +797,13 @@ func (x *CreateContainerRequest) GetOsType() OSType {
 		return x.OsType
 	}
 	return OSType_OS_TYPE_UNSPECIFIED
+}
+
+func (x *CreateContainerRequest) GetStackParameters() map[string]string {
+	if x != nil {
+		return x.StackParameters
+	}
+	return nil
 }
 
 // CreateContainerResponse is the response from creating a container
@@ -2554,6 +2565,258 @@ func (x *InstallStackResponse) GetContainer() *Container {
 	return nil
 }
 
+// StackParameter describes an input the stack accepts at install time.
+// Returned by ListStacks so the web UI can render appropriate form fields.
+type StackParameter struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Parameter key. The env var seen by install scripts is
+	// CONTAINARIUM_STACK_<name>.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Human-readable label shown in the web UI.
+	Label string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	// Optional helper text shown below the field.
+	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	// "string" | "password" | "number" | "boolean"
+	Type string `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
+	// Default value if the user leaves the field blank.
+	Default string `protobuf:"bytes,5,opt,name=default,proto3" json:"default,omitempty"`
+	// Whether the field is required.
+	Required      bool `protobuf:"varint,6,opt,name=required,proto3" json:"required,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StackParameter) Reset() {
+	*x = StackParameter{}
+	mi := &file_containarium_v1_container_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StackParameter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StackParameter) ProtoMessage() {}
+
+func (x *StackParameter) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StackParameter.ProtoReflect.Descriptor instead.
+func (*StackParameter) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *StackParameter) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StackParameter) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *StackParameter) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *StackParameter) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *StackParameter) GetDefault() string {
+	if x != nil {
+		return x.Default
+	}
+	return ""
+}
+
+func (x *StackParameter) GetRequired() bool {
+	if x != nil {
+		return x.Required
+	}
+	return false
+}
+
+// StackInfo describes a single software stack.
+type StackInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Icon          string                 `protobuf:"bytes,4,opt,name=icon,proto3" json:"icon,omitempty"`
+	Parameters    []*StackParameter      `protobuf:"bytes,5,rep,name=parameters,proto3" json:"parameters,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StackInfo) Reset() {
+	*x = StackInfo{}
+	mi := &file_containarium_v1_container_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StackInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StackInfo) ProtoMessage() {}
+
+func (x *StackInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StackInfo.ProtoReflect.Descriptor instead.
+func (*StackInfo) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *StackInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *StackInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StackInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *StackInfo) GetIcon() string {
+	if x != nil {
+		return x.Icon
+	}
+	return ""
+}
+
+func (x *StackInfo) GetParameters() []*StackParameter {
+	if x != nil {
+		return x.Parameters
+	}
+	return nil
+}
+
+// ListStacksRequest requests the catalog of available stacks.
+type ListStacksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStacksRequest) Reset() {
+	*x = ListStacksRequest{}
+	mi := &file_containarium_v1_container_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStacksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStacksRequest) ProtoMessage() {}
+
+func (x *ListStacksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStacksRequest.ProtoReflect.Descriptor instead.
+func (*ListStacksRequest) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{37}
+}
+
+// ListStacksResponse returns all configured software stacks.
+type ListStacksResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stacks        []*StackInfo           `protobuf:"bytes,1,rep,name=stacks,proto3" json:"stacks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListStacksResponse) Reset() {
+	*x = ListStacksResponse{}
+	mi := &file_containarium_v1_container_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListStacksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListStacksResponse) ProtoMessage() {}
+
+func (x *ListStacksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_containarium_v1_container_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListStacksResponse.ProtoReflect.Descriptor instead.
+func (*ListStacksResponse) Descriptor() ([]byte, []int) {
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ListStacksResponse) GetStacks() []*StackInfo {
+	if x != nil {
+		return x.Stacks
+	}
+	return nil
+}
+
 // GetMonitoringInfoRequest is the request to get monitoring info
 type GetMonitoringInfoRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2563,7 +2826,7 @@ type GetMonitoringInfoRequest struct {
 
 func (x *GetMonitoringInfoRequest) Reset() {
 	*x = GetMonitoringInfoRequest{}
-	mi := &file_containarium_v1_container_proto_msgTypes[35]
+	mi := &file_containarium_v1_container_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2575,7 +2838,7 @@ func (x *GetMonitoringInfoRequest) String() string {
 func (*GetMonitoringInfoRequest) ProtoMessage() {}
 
 func (x *GetMonitoringInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_containarium_v1_container_proto_msgTypes[35]
+	mi := &file_containarium_v1_container_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2588,7 +2851,7 @@ func (x *GetMonitoringInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMonitoringInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetMonitoringInfoRequest) Descriptor() ([]byte, []int) {
-	return file_containarium_v1_container_proto_rawDescGZIP(), []int{35}
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{39}
 }
 
 // GetMonitoringInfoResponse is the response with monitoring configuration
@@ -2606,7 +2869,7 @@ type GetMonitoringInfoResponse struct {
 
 func (x *GetMonitoringInfoResponse) Reset() {
 	*x = GetMonitoringInfoResponse{}
-	mi := &file_containarium_v1_container_proto_msgTypes[36]
+	mi := &file_containarium_v1_container_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2618,7 +2881,7 @@ func (x *GetMonitoringInfoResponse) String() string {
 func (*GetMonitoringInfoResponse) ProtoMessage() {}
 
 func (x *GetMonitoringInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_containarium_v1_container_proto_msgTypes[36]
+	mi := &file_containarium_v1_container_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2631,7 +2894,7 @@ func (x *GetMonitoringInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMonitoringInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetMonitoringInfoResponse) Descriptor() ([]byte, []int) {
-	return file_containarium_v1_container_proto_rawDescGZIP(), []int{36}
+	return file_containarium_v1_container_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetMonitoringInfoResponse) GetEnabled() bool {
@@ -2725,7 +2988,7 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"\x10disk_usage_bytes\x18\x05 \x01(\x03R\x0ediskUsageBytes\x12(\n" +
 	"\x10network_rx_bytes\x18\x06 \x01(\x03R\x0enetworkRxBytes\x12(\n" +
 	"\x10network_tx_bytes\x18\a \x01(\x03R\x0enetworkTxBytes\x12#\n" +
-	"\rprocess_count\x18\b \x01(\x05R\fprocessCount\"\xfd\x03\n" +
+	"\rprocess_count\x18\b \x01(\x05R\fprocessCount\"\xaa\x05\n" +
 	"\x16CreateContainerRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12=\n" +
 	"\tresources\x18\x02 \x01(\v2\x1f.containarium.v1.ResourceLimitsR\tresources\x12\x19\n" +
@@ -2740,8 +3003,12 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	" \x01(\tR\x03gpu\x12\x1d\n" +
 	"\n" +
 	"backend_id\x18\v \x01(\tR\tbackendId\x120\n" +
-	"\aos_type\x18\f \x01(\x0e2\x17.containarium.v1.OSTypeR\x06osType\x1a9\n" +
+	"\aos_type\x18\f \x01(\x0e2\x17.containarium.v1.OSTypeR\x06osType\x12g\n" +
+	"\x10stack_parameters\x18\r \x03(\v2<.containarium.v1.CreateContainerRequest.StackParametersEntryR\x0fstackParameters\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aB\n" +
+	"\x14StackParametersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaf\x01\n" +
 	"\x17CreateContainerResponse\x128\n" +
@@ -2861,7 +3128,25 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"\bstack_id\x18\x02 \x01(\tR\astackId\"j\n" +
 	"\x14InstallStackResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x128\n" +
-	"\tcontainer\x18\x02 \x01(\v2\x1a.containarium.v1.ContainerR\tcontainer\"\x1a\n" +
+	"\tcontainer\x18\x02 \x01(\v2\x1a.containarium.v1.ContainerR\tcontainer\"\xa6\x01\n" +
+	"\x0eStackParameter\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
+	"\x04type\x18\x04 \x01(\tR\x04type\x12\x18\n" +
+	"\adefault\x18\x05 \x01(\tR\adefault\x12\x1a\n" +
+	"\brequired\x18\x06 \x01(\bR\brequired\"\xa6\x01\n" +
+	"\tStackInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
+	"\x04icon\x18\x04 \x01(\tR\x04icon\x12?\n" +
+	"\n" +
+	"parameters\x18\x05 \x03(\v2\x1f.containarium.v1.StackParameterR\n" +
+	"parameters\"\x13\n" +
+	"\x11ListStacksRequest\"H\n" +
+	"\x12ListStacksResponse\x122\n" +
+	"\x06stacks\x18\x01 \x03(\v2\x1a.containarium.v1.StackInfoR\x06stacks\"\x1a\n" +
 	"\x18GetMonitoringInfoRequest\"\x88\x01\n" +
 	"\x19GetMonitoringInfoResponse\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
@@ -2903,7 +3188,7 @@ func file_containarium_v1_container_proto_rawDescGZIP() []byte {
 }
 
 var file_containarium_v1_container_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_containarium_v1_container_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_containarium_v1_container_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_containarium_v1_container_proto_goTypes = []any{
 	(OSType)(0),                           // 0: containarium.v1.OSType
 	(AccessType)(0),                       // 1: containarium.v1.AccessType
@@ -2943,43 +3228,51 @@ var file_containarium_v1_container_proto_goTypes = []any{
 	(*CleanupDiskResponse)(nil),           // 35: containarium.v1.CleanupDiskResponse
 	(*InstallStackRequest)(nil),           // 36: containarium.v1.InstallStackRequest
 	(*InstallStackResponse)(nil),          // 37: containarium.v1.InstallStackResponse
-	(*GetMonitoringInfoRequest)(nil),      // 38: containarium.v1.GetMonitoringInfoRequest
-	(*GetMonitoringInfoResponse)(nil),     // 39: containarium.v1.GetMonitoringInfoResponse
-	nil,                                   // 40: containarium.v1.Container.LabelsEntry
-	nil,                                   // 41: containarium.v1.CreateContainerRequest.LabelsEntry
-	nil,                                   // 42: containarium.v1.ListContainersRequest.LabelFilterEntry
-	(*descriptorpb.EnumValueOptions)(nil), // 43: google.protobuf.EnumValueOptions
+	(*StackParameter)(nil),                // 38: containarium.v1.StackParameter
+	(*StackInfo)(nil),                     // 39: containarium.v1.StackInfo
+	(*ListStacksRequest)(nil),             // 40: containarium.v1.ListStacksRequest
+	(*ListStacksResponse)(nil),            // 41: containarium.v1.ListStacksResponse
+	(*GetMonitoringInfoRequest)(nil),      // 42: containarium.v1.GetMonitoringInfoRequest
+	(*GetMonitoringInfoResponse)(nil),     // 43: containarium.v1.GetMonitoringInfoResponse
+	nil,                                   // 44: containarium.v1.Container.LabelsEntry
+	nil,                                   // 45: containarium.v1.CreateContainerRequest.LabelsEntry
+	nil,                                   // 46: containarium.v1.CreateContainerRequest.StackParametersEntry
+	nil,                                   // 47: containarium.v1.ListContainersRequest.LabelFilterEntry
+	(*descriptorpb.EnumValueOptions)(nil), // 48: google.protobuf.EnumValueOptions
 }
 var file_containarium_v1_container_proto_depIdxs = []int32{
 	2,  // 0: containarium.v1.Container.state:type_name -> containarium.v1.ContainerState
 	3,  // 1: containarium.v1.Container.resources:type_name -> containarium.v1.ResourceLimits
 	4,  // 2: containarium.v1.Container.network:type_name -> containarium.v1.NetworkInfo
-	40, // 3: containarium.v1.Container.labels:type_name -> containarium.v1.Container.LabelsEntry
+	44, // 3: containarium.v1.Container.labels:type_name -> containarium.v1.Container.LabelsEntry
 	0,  // 4: containarium.v1.Container.os_type:type_name -> containarium.v1.OSType
 	1,  // 5: containarium.v1.Container.access_type:type_name -> containarium.v1.AccessType
 	3,  // 6: containarium.v1.CreateContainerRequest.resources:type_name -> containarium.v1.ResourceLimits
-	41, // 7: containarium.v1.CreateContainerRequest.labels:type_name -> containarium.v1.CreateContainerRequest.LabelsEntry
+	45, // 7: containarium.v1.CreateContainerRequest.labels:type_name -> containarium.v1.CreateContainerRequest.LabelsEntry
 	0,  // 8: containarium.v1.CreateContainerRequest.os_type:type_name -> containarium.v1.OSType
-	5,  // 9: containarium.v1.CreateContainerResponse.container:type_name -> containarium.v1.Container
-	2,  // 10: containarium.v1.ListContainersRequest.state:type_name -> containarium.v1.ContainerState
-	42, // 11: containarium.v1.ListContainersRequest.label_filter:type_name -> containarium.v1.ListContainersRequest.LabelFilterEntry
-	5,  // 12: containarium.v1.ListContainersResponse.containers:type_name -> containarium.v1.Container
-	5,  // 13: containarium.v1.GetContainerResponse.container:type_name -> containarium.v1.Container
-	6,  // 14: containarium.v1.GetContainerResponse.metrics:type_name -> containarium.v1.ContainerMetrics
-	5,  // 15: containarium.v1.StartContainerResponse.container:type_name -> containarium.v1.Container
-	5,  // 16: containarium.v1.StopContainerResponse.container:type_name -> containarium.v1.Container
-	6,  // 17: containarium.v1.GetMetricsResponse.metrics:type_name -> containarium.v1.ContainerMetrics
-	5,  // 18: containarium.v1.ResizeContainerResponse.container:type_name -> containarium.v1.Container
-	27, // 19: containarium.v1.AddCollaboratorResponse.collaborator:type_name -> containarium.v1.Collaborator
-	27, // 20: containarium.v1.ListCollaboratorsResponse.collaborators:type_name -> containarium.v1.Collaborator
-	5,  // 21: containarium.v1.CleanupDiskResponse.container:type_name -> containarium.v1.Container
-	5,  // 22: containarium.v1.InstallStackResponse.container:type_name -> containarium.v1.Container
-	43, // 23: containarium.v1.state_name:extendee -> google.protobuf.EnumValueOptions
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	23, // [23:24] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	46, // 9: containarium.v1.CreateContainerRequest.stack_parameters:type_name -> containarium.v1.CreateContainerRequest.StackParametersEntry
+	5,  // 10: containarium.v1.CreateContainerResponse.container:type_name -> containarium.v1.Container
+	2,  // 11: containarium.v1.ListContainersRequest.state:type_name -> containarium.v1.ContainerState
+	47, // 12: containarium.v1.ListContainersRequest.label_filter:type_name -> containarium.v1.ListContainersRequest.LabelFilterEntry
+	5,  // 13: containarium.v1.ListContainersResponse.containers:type_name -> containarium.v1.Container
+	5,  // 14: containarium.v1.GetContainerResponse.container:type_name -> containarium.v1.Container
+	6,  // 15: containarium.v1.GetContainerResponse.metrics:type_name -> containarium.v1.ContainerMetrics
+	5,  // 16: containarium.v1.StartContainerResponse.container:type_name -> containarium.v1.Container
+	5,  // 17: containarium.v1.StopContainerResponse.container:type_name -> containarium.v1.Container
+	6,  // 18: containarium.v1.GetMetricsResponse.metrics:type_name -> containarium.v1.ContainerMetrics
+	5,  // 19: containarium.v1.ResizeContainerResponse.container:type_name -> containarium.v1.Container
+	27, // 20: containarium.v1.AddCollaboratorResponse.collaborator:type_name -> containarium.v1.Collaborator
+	27, // 21: containarium.v1.ListCollaboratorsResponse.collaborators:type_name -> containarium.v1.Collaborator
+	5,  // 22: containarium.v1.CleanupDiskResponse.container:type_name -> containarium.v1.Container
+	5,  // 23: containarium.v1.InstallStackResponse.container:type_name -> containarium.v1.Container
+	38, // 24: containarium.v1.StackInfo.parameters:type_name -> containarium.v1.StackParameter
+	39, // 25: containarium.v1.ListStacksResponse.stacks:type_name -> containarium.v1.StackInfo
+	48, // 26: containarium.v1.state_name:extendee -> google.protobuf.EnumValueOptions
+	27, // [27:27] is the sub-list for method output_type
+	27, // [27:27] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	26, // [26:27] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_containarium_v1_container_proto_init() }
@@ -2993,7 +3286,7 @@ func file_containarium_v1_container_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_containarium_v1_container_proto_rawDesc), len(file_containarium_v1_container_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   40,
+			NumMessages:   45,
 			NumExtensions: 1,
 			NumServices:   0,
 		},

@@ -23,6 +23,10 @@ NETWORK_SUBNET="10.0.3.1/24"
 TUNNEL_TOKEN="82ae3301b4650ab2d0026cf0f6a5b5b78dfcc9e022922ac23858d1609913aa7f"
 SENTINEL_ADDR="containarium.kafeido.app:443"
 SENTINEL_URL=""  # Internal URL for auto-update (auto-detected from primary)
+POOL=""
+PUBLIC_HOSTNAME=""
+PUBLIC_ALIASES=""
+PUBLIC_PORT=""
 BINARY_SRC="/tmp/containarium"
 BINARY_DST="/usr/local/bin/containarium"
 
@@ -33,8 +37,25 @@ while [[ $# -gt 0 ]]; do
         --tunnel-token) TUNNEL_TOKEN="$2"; shift 2 ;;
         --sentinel-addr) SENTINEL_ADDR="$2"; shift 2 ;;
         --sentinel-url) SENTINEL_URL="$2"; shift 2 ;;
+        --pool) POOL="$2"; shift 2 ;;
+        --public-hostname) PUBLIC_HOSTNAME="$2"; shift 2 ;;
+        --public-aliases) PUBLIC_ALIASES="$2"; shift 2 ;;
+        --public-port) PUBLIC_PORT="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: sudo $0 --spot-id <ID> [--network-subnet CIDR] [--tunnel-token TOKEN]"
+            cat <<HELP
+Usage: sudo $0 --spot-id <ID> [options]
+
+Common options:
+  --network-subnet CIDR   Container network subnet (default: 10.0.3.1/24)
+  --tunnel-token TOKEN    Tunnel auth token
+  --sentinel-addr ADDR    Sentinel address (default: containarium.kafeido.app:443)
+  --pool NAME             Pool to register this node in
+
+Primary-via-tunnel (slice 6) — promote this tunnel to a pool primary:
+  --public-hostname HOST  Pool's public hostname (e.g. containarium-lab.kafeido.app)
+  --public-aliases LIST   Comma-separated app domains the primary's Caddy serves
+  --public-port PORT      Public TLS port (default: 443 when --public-hostname is set)
+HELP
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -93,6 +114,20 @@ echo "  Override written: /etc/systemd/system/containarium.service.d/override.co
 
 # 4. Install tunnel service
 echo "==> Installing tunnel service..."
+EXTRA_FLAGS=""
+if [[ -n "$POOL" ]]; then
+    EXTRA_FLAGS="${EXTRA_FLAGS} --pool ${POOL}"
+fi
+TUNNEL_PORTS="22,8080"
+if [[ -n "$PUBLIC_HOSTNAME" ]]; then
+    : "${PUBLIC_PORT:=443}"
+    EXTRA_FLAGS="${EXTRA_FLAGS} --public-hostname ${PUBLIC_HOSTNAME} --public-port ${PUBLIC_PORT}"
+    if [[ -n "$PUBLIC_ALIASES" ]]; then
+        EXTRA_FLAGS="${EXTRA_FLAGS} --public-aliases ${PUBLIC_ALIASES}"
+    fi
+    # Tunnel must forward the public TLS port too so the sentinel can route SNI traffic into this primary.
+    TUNNEL_PORTS="${TUNNEL_PORTS},${PUBLIC_PORT}"
+fi
 cat > /etc/systemd/system/containarium-tunnel.service <<TUNNEL
 [Unit]
 Description=Containarium Tunnel Client (GPU Spot)
@@ -106,7 +141,7 @@ ExecStart=/usr/local/bin/containarium tunnel \\
   --sentinel-addr ${SENTINEL_ADDR} \\
   --token ${TUNNEL_TOKEN} \\
   --spot-id ${SPOT_ID} \\
-  --ports 22,8080
+  --ports ${TUNNEL_PORTS} ${EXTRA_FLAGS}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=10s
