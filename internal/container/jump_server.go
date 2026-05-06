@@ -60,8 +60,18 @@ func CreateJumpServerAccount(username string, sshPublicKey string, verbose bool)
 		return err
 	}
 
+	// Sudoers entry for incus access. Required when the user's login shell is
+	// containarium-shell (proxies into the container via `sudo incus exec`).
+	// Harmless when the shell is nologin (no login = no sudo).
+	sudoersEntry := fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/bin/incus\n", username)
+	sudoersPath := fmt.Sprintf("/etc/sudoers.d/containarium-%s", username)
+	if err := os.WriteFile(sudoersPath, []byte(sudoersEntry), 0440); err != nil { // #nosec G306 -- sudoers requires 0440
+		_ = exec.Command("userdel", "-r", username).Run()
+		return fmt.Errorf("failed to write sudoers: %w", err)
+	}
+
 	if verbose {
-		fmt.Printf("  ✓ Jump server account created: %s (no shell access, proxy-only)\n", username)
+		fmt.Printf("  ✓ Jump server account created: %s\n", username)
 	}
 
 	return nil
