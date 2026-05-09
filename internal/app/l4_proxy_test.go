@@ -14,7 +14,7 @@ func TestL4ProxyManager_EnableL4ProxyProtocol_NotActive(t *testing.T) {
 	srv := newFakeCaddy(map[string]interface{}{"apps": map[string]interface{}{}})
 	defer srv.Close()
 	m := NewL4ProxyManager(srv.URL)
-	if err := m.EnableL4ProxyProtocol([]string{"10.130.0.13/32"}); err != nil {
+	if err := m.EnableL4ProxyProtocol([]string{"192.0.2.13/32"}); err != nil {
 		t.Fatalf("expected no-op when L4 inactive, got %v", err)
 	}
 	if !m.proxyProtocolEnabled() {
@@ -62,7 +62,7 @@ func TestL4ProxyManager_ActivateL4_WrappedWhenEnabled(t *testing.T) {
 	defer srv.Close()
 
 	m := NewL4ProxyManager(srv.URL)
-	if err := m.SetProxyProtocolTrusted([]string{"10.130.0.13/32"}); err != nil {
+	if err := m.SetProxyProtocolTrusted([]string{"192.0.2.13/32"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ActivateL4(); err != nil {
@@ -111,7 +111,7 @@ func TestL4ProxyManager_Lifecycle_WrappingSurvivesRouteSyncJob(t *testing.T) {
 	defer srv.Close()
 
 	m := NewL4ProxyManager(srv.URL)
-	mustEnable(t, m, []string{"10.130.0.13/32"})
+	mustEnable(t, m, []string{"192.0.2.13/32"})
 	mustActivate(t, m)
 
 	// Three RouteSyncJob-style sync cycles, each adding then removing routes.
@@ -120,17 +120,17 @@ func TestL4ProxyManager_Lifecycle_WrappingSurvivesRouteSyncJob(t *testing.T) {
 	// not the inner subroute). After this test runs, the wrapping must still
 	// be intact and the SNI routes must be inside the subroute.
 	for i := 0; i < 3; i++ {
-		if err := m.AddL4Route("grpc.kafeido.app", "10.0.3.248", 50051); err != nil {
+		if err := m.AddL4Route("passthrough-a.example", "203.0.113.1", 50051); err != nil {
 			t.Fatalf("cycle %d AddL4Route grpc: %v", i, err)
 		}
-		if err := m.AddL4Route("grpc-dev.kafeido.app", "10.0.3.250", 50052); err != nil {
+		if err := m.AddL4Route("passthrough-b.example", "203.0.113.2", 50052); err != nil {
 			t.Fatalf("cycle %d AddL4Route grpc-dev: %v", i, err)
 		}
 		assertWrappedAndCatchallV2(t, srv.URL, i)
 	}
 
 	// Now remove one — wrapping must still hold.
-	if err := m.RemoveL4Route("grpc-dev.kafeido.app"); err != nil {
+	if err := m.RemoveL4Route("passthrough-b.example"); err != nil {
 		t.Fatalf("RemoveL4Route: %v", err)
 	}
 	assertWrappedAndCatchallV2(t, srv.URL, 99)
@@ -140,8 +140,8 @@ func TestL4ProxyManager_Lifecycle_WrappingSurvivesRouteSyncJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListL4Routes: %v", err)
 	}
-	if len(listed) != 1 || listed[0].SNI != "grpc.kafeido.app" {
-		t.Errorf("ListL4Routes after Remove = %v, want 1 entry for grpc.kafeido.app", listed)
+	if len(listed) != 1 || listed[0].SNI != "passthrough-a.example" {
+		t.Errorf("ListL4Routes after Remove = %v, want 1 entry for passthrough-a.example", listed)
 	}
 }
 
@@ -153,11 +153,11 @@ func TestL4ProxyManager_EnableL4ProxyProtocol_ReshapesActiveFlatServer(t *testin
 	flatRoutes := []interface{}{
 		map[string]interface{}{
 			"match": []interface{}{
-				map[string]interface{}{"tls": map[string]interface{}{"sni": []interface{}{"grpc.kafeido.app"}}},
+				map[string]interface{}{"tls": map[string]interface{}{"sni": []interface{}{"passthrough-a.example"}}},
 			},
 			"handle": []interface{}{
 				map[string]interface{}{"handler": "proxy", "upstreams": []interface{}{
-					map[string]interface{}{"dial": []interface{}{"10.0.3.248:50051"}},
+					map[string]interface{}{"dial": []interface{}{"203.0.113.1:50051"}},
 				}},
 			},
 		},
@@ -186,7 +186,7 @@ func TestL4ProxyManager_EnableL4ProxyProtocol_ReshapesActiveFlatServer(t *testin
 	defer srv.Close()
 
 	m := NewL4ProxyManager(srv.URL)
-	if err := m.EnableL4ProxyProtocol([]string{"10.130.0.13/32"}); err != nil {
+	if err := m.EnableL4ProxyProtocol([]string{"192.0.2.13/32"}); err != nil {
 		t.Fatalf("EnableL4ProxyProtocol: %v", err)
 	}
 

@@ -41,10 +41,10 @@ func main() {
 
 	log.Println("step 3: simulate 3 RouteSyncJob cycles of AddL4Route")
 	for cycle := 0; cycle < 3; cycle++ {
-		if err := m.AddL4Route("grpc.kafeido.app", "10.0.3.248", 50051); err != nil {
+		if err := m.AddL4Route("passthrough-a.example", "203.0.113.1", 50051); err != nil {
 			log.Fatalf("cycle %d AddL4Route grpc: %v", cycle, err)
 		}
-		if err := m.AddL4Route("grpc-dev.kafeido.app", "10.0.3.250", 50052); err != nil {
+		if err := m.AddL4Route("passthrough-b.example", "203.0.113.2", 50052); err != nil {
 			log.Fatalf("cycle %d AddL4Route grpc-dev: %v", cycle, err)
 		}
 		if err := assertWrappedAndCatchallV2(*adminURL, fmt.Sprintf("after-add-cycle-%d", cycle)); err != nil {
@@ -53,7 +53,7 @@ func main() {
 	}
 
 	log.Println("step 4: RemoveL4Route (must keep wrapping)")
-	if err := m.RemoveL4Route("grpc-dev.kafeido.app"); err != nil {
+	if err := m.RemoveL4Route("passthrough-b.example"); err != nil {
 		log.Fatalf("RemoveL4Route: %v", err)
 	}
 	if err := assertWrappedAndCatchallV2(*adminURL, "after-remove"); err != nil {
@@ -65,8 +65,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("ListL4Routes: %v", err)
 	}
-	if len(routes) != 1 || routes[0].SNI != "grpc.kafeido.app" {
-		log.Fatalf("FAIL: ListL4Routes = %v, want 1 entry for grpc.kafeido.app", routes)
+	if len(routes) != 1 || routes[0].SNI != "passthrough-a.example" {
+		log.Fatalf("FAIL: ListL4Routes = %v, want 1 entry for passthrough-a.example", routes)
 	}
 
 	log.Println("step 6: print full L4 server config")
