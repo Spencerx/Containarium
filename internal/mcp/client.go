@@ -297,14 +297,18 @@ type ProxyRoute struct {
 }
 
 type Container struct {
-	Name          string            `json:"name"`
-	Username      string            `json:"username"`
-	State         string            `json:"state"`
-	Resources     *ResourceLimits   `json:"resources,omitempty"`
-	SSHKeys       []string          `json:"sshKeys,omitempty"`
-	Network       *NetworkInfo      `json:"network,omitempty"`
-	CreatedAt     int64             `json:"createdAt"`
-	UpdatedAt     int64             `json:"updatedAt,omitempty"`
+	Name      string          `json:"name"`
+	Username  string          `json:"username"`
+	State     string          `json:"state"`
+	Resources *ResourceLimits `json:"resources,omitempty"`
+	SSHKeys   []string        `json:"sshKeys,omitempty"`
+	Network   *NetworkInfo    `json:"network,omitempty"`
+	// CreatedAt / UpdatedAt come back as JSON strings from the platform's
+	// grpc-gateway HTTP layer — int64 protobuf scalars are emitted as
+	// strings to avoid JavaScript number-precision loss. The `,string`
+	// tag makes encoding/json round-trip them correctly on both sides.
+	CreatedAt     int64             `json:"createdAt,string"`
+	UpdatedAt     int64             `json:"updatedAt,string,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Image         string            `json:"image,omitempty"`
 	PodmanEnabled bool              `json:"podmanEnabled"`
@@ -318,14 +322,17 @@ type NetworkInfo struct {
 }
 
 type ContainerMetrics struct {
-	Name             string `json:"name"`
-	CPUUsageSeconds  int64  `json:"cpuUsageSeconds"`
-	MemoryUsageBytes int64  `json:"memoryUsageBytes"`
-	MemoryPeakBytes  int64  `json:"memoryPeakBytes"`
-	DiskUsageBytes   int64  `json:"diskUsageBytes"`
-	NetworkRxBytes   int64  `json:"networkRxBytes"`
-	NetworkTxBytes   int64  `json:"networkTxBytes"`
-	ProcessCount     int32  `json:"processCount"`
+	Name string `json:"name"`
+	// All int64 fields below come back as JSON strings from grpc-gateway
+	// (see Container.CreatedAt for rationale). int32 fields like
+	// ProcessCount stay numeric.
+	CPUUsageSeconds  int64 `json:"cpuUsageSeconds,string"`
+	MemoryUsageBytes int64 `json:"memoryUsageBytes,string"`
+	MemoryPeakBytes  int64 `json:"memoryPeakBytes,string"`
+	DiskUsageBytes   int64 `json:"diskUsageBytes,string"`
+	NetworkRxBytes   int64 `json:"networkRxBytes,string"`
+	NetworkTxBytes   int64 `json:"networkTxBytes,string"`
+	ProcessCount     int32 `json:"processCount"`
 }
 
 type SystemInfo struct {
