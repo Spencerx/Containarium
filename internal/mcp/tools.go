@@ -1,8 +1,11 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/footprintai/containarium/internal/expose"
 )
 
 // Tool represents an MCP tool (function)
@@ -167,6 +170,37 @@ func (s *Server) registerTools() {
 				"properties": map[string]interface{}{},
 			},
 			Handler: handleGetSystemInfo,
+		},
+		{
+			Name: "expose_port",
+			Description: "Expose a container's port on a public hostname. Resolves the " +
+				"container's IP, then registers a domain → container:port route in the " +
+				"sentinel reverse proxy. After this completes, https://<domain>/ " +
+				"reaches the container's port. Use for the 'make it online' demo step " +
+				"after the agent has installed something listening inside the box.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Container identifier (same value used by create_container / get_container).",
+					},
+					"container_port": map[string]interface{}{
+						"type":        "integer",
+						"description": "Port the app listens on inside the container, e.g. 8080.",
+					},
+					"domain": map[string]interface{}{
+						"type":        "string",
+						"description": "Public hostname to route from, e.g. 'blog.example.com'. The sentinel must already be DNS-pointed at this hostname or a wildcard parent.",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional human-readable note for the route (shown in route_list).",
+					},
+				},
+				"required": []string{"username", "container_port", "domain"},
+			},
+			Handler: handleExposePort,
 		},
 	}
 }
@@ -363,6 +397,80 @@ func handleGetSystemInfo(client *Client, args map[string]interface{}) (string, e
 	return result, nil
 }
 
+func handleExposePort(client *Client, args map[string]interface{}) (string, error) {
+	port, _ := getIntArg(args, "container_port")
+	res, err := expose.Run(context.Background(), &mcpExposeAdapter{c: client}, expose.Options{
+		Username:      getStringArg(args, "username", ""),
+		ContainerPort: port,
+		Domain:        getStringArg(args, "domain", ""),
+		Description:   getStringArg(args, "description", ""),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	out := fmt.Sprintf("✅ Exposed %s:%d → %s\n\n",
+		getStringArg(args, "username", ""), port, res.Domain)
+	out += fmt.Sprintf("Domain:    %s\n", res.Domain)
+	out += fmt.Sprintf("Target:    %s:%d\n", res.ContainerIP, res.Port)
+	if res.ContainerName != "" {
+		out += fmt.Sprintf("Container: %s\n", res.ContainerName)
+	}
+	if res.Message != "" {
+		out += fmt.Sprintf("\n%s", res.Message)
+	}
+	out += "\n\nNext: confirm DNS for this hostname points at the sentinel, then\n"
+	out += fmt.Sprintf("`curl https://%s/` should reach the app inside %s.",
+		res.Domain, getStringArg(args, "username", ""))
+	return out, nil
+}
+
+// mcpExposeAdapter implements expose.APIClient against this package's
+// HTTP Client. Identical responsibilities to the CLI's grpcExposeAdapter
+// in internal/cmd/expose_port.go — both transports speak through the
+// same expose.Run() so behavior can never drift.
+type mcpExposeAdapter struct{ c *Client }
+
+func (a *mcpExposeAdapter) LookupContainer(_ context.Context, username string) (string, string, string, error) {
+	got, err := a.c.GetContainer(username)
+	if err != nil {
+		return "", "", "", err
+	}
+	ip := ""
+	if got.Container.Network != nil {
+		ip = got.Container.Network.IPAddress
+	}
+	return got.Container.Name, ip, got.Container.State, nil
+}
+
+func (a *mcpExposeAdapter) CreateRoute(_ context.Context, p expose.AddRouteParams) (*expose.RouteResult, error) {
+	resp, err := a.c.AddRoute(AddRouteRequest{
+		Domain:        p.Domain,
+		TargetIP:      p.TargetIP,
+		TargetPort:    p.TargetPort,
+		ContainerName: p.ContainerName,
+		Description:   p.Description,
+	})
+	if err != nil {
+		return nil, err
+	}
+	domain := resp.Route.Domain
+	if domain == "" {
+		domain = p.Domain
+	}
+	containerName := resp.Route.ContainerName
+	if containerName == "" {
+		containerName = p.ContainerName
+	}
+	return &expose.RouteResult{
+		Domain:        domain,
+		ContainerName: containerName,
+		ContainerIP:   resp.Route.ContainerIP,
+		Port:          resp.Route.Port,
+		Message:       resp.Message,
+	}, nil
+}
+
 // Helper functions
 
 func getStringArg(args map[string]interface{}, key, defaultValue string) string {
@@ -377,4 +485,23 @@ func getBoolArg(args map[string]interface{}, key string, defaultValue bool) bool
 		return val
 	}
 	return defaultValue
+}
+
+// getIntArg pulls an integer-shaped argument. JSON unmarshaling presents
+// integers as float64 by default, so we accept both. Returns ok=false when
+// the key is absent or the value is non-numeric — callers distinguish
+// "missing" from "set to zero" by inspecting ok.
+func getIntArg(args map[string]interface{}, key string) (int, bool) {
+	switch v := args[key].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
