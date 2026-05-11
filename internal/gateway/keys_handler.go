@@ -108,7 +108,7 @@ func ServeSentinelKey() http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{
+		_ = json.NewEncoder(w).Encode(map[string]int{
 			"updated": updated,
 			"rotated": rotated,
 		})
@@ -142,6 +142,11 @@ func applySentinelKey(homeRoot, pubKey string) (updated, rotated int, err error)
 		}
 
 		akPath := filepath.Join(sshDir, "authorized_keys")
+		// akPath is built from os.ReadDir output ("entry.Name()" is a
+		// directory base name with no path separators) joined with a
+		// fixed ".ssh/authorized_keys" suffix. Caller cannot inject a
+		// traversal here; akPath always lands inside homeRoot.
+		// #nosec G304 -- safe path construction (see above)
 		existing, _ := os.ReadFile(akPath)
 
 		newContent, hadPriorKey, priorKeyDiffers := rewriteSentinelBlock(string(existing), pubKey)
