@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/footprintai/containarium/internal/incus"
+	"github.com/lxc/incus/v6/shared/api"
 )
 
 // mockIncusClient is a mock implementation of the incus.Client for testing
@@ -103,6 +104,50 @@ func (m *mockIncusClient) WriteFile(containerName, path string, content []byte, 
 }
 
 func (m *mockIncusClient) ReadFile(containerName, path string) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *mockIncusClient) ListContainers() ([]incus.ContainerInfo, error) {
+	return nil, nil
+}
+
+func (m *mockIncusClient) SetConfig(containerName, key, value string) error {
+	return nil
+}
+
+func (m *mockIncusClient) SetDeviceSize(containerName, deviceName, size string) error {
+	return nil
+}
+
+func (m *mockIncusClient) ResolveGPUInputToPCI(input string) (string, error) {
+	return "", nil
+}
+
+func (m *mockIncusClient) CleanupDisk(containerName string) (string, int64, error) {
+	return "", 0, nil
+}
+
+func (m *mockIncusClient) AddLabel(containerName, key, value string) error {
+	return nil
+}
+
+func (m *mockIncusClient) RemoveLabel(containerName, key string) error {
+	return nil
+}
+
+func (m *mockIncusClient) GetLabels(containerName string) (map[string]string, error) {
+	return nil, nil
+}
+
+func (m *mockIncusClient) SetLabels(containerName string, labels map[string]string) error {
+	return nil
+}
+
+func (m *mockIncusClient) GetServerInfo() (*api.Server, error) {
+	return nil, nil
+}
+
+func (m *mockIncusClient) GetContainerMetrics(name string) (*incus.ContainerMetrics, error) {
 	return nil, nil
 }
 
