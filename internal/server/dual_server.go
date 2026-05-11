@@ -23,14 +23,14 @@ import (
 	"github.com/footprintai/containarium/internal/audit"
 	"github.com/footprintai/containarium/internal/auth"
 	"github.com/footprintai/containarium/internal/collaborator"
-	"github.com/footprintai/containarium/internal/container"
+	"github.com/footprintai/containarium/pkg/core/container"
 	"github.com/footprintai/containarium/internal/events"
 	"github.com/footprintai/containarium/internal/gateway"
 	"github.com/footprintai/containarium/internal/guacamole"
-	"github.com/footprintai/containarium/internal/incus"
+	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/internal/metrics"
 	"github.com/footprintai/containarium/internal/mtls"
-	"github.com/footprintai/containarium/internal/network"
+	"github.com/footprintai/containarium/pkg/core/network"
 	"github.com/footprintai/containarium/internal/pentest"
 	"github.com/footprintai/containarium/internal/security"
 	zapscanner "github.com/footprintai/containarium/internal/zap"
@@ -123,7 +123,7 @@ type DualServer struct {
 	authMiddleware        *auth.AuthMiddleware
 	routeStore            *app.RouteStore
 	routeSyncJob          *app.RouteSyncJob
-	passthroughStore      *network.PassthroughStore
+	passthroughStore      network.PassthroughStore
 	passthroughSyncJob    *network.PassthroughSyncJob
 	collaboratorStore     *collaborator.Store
 	daemonConfigStore     *app.DaemonConfigStore
@@ -598,7 +598,7 @@ skipAppHosting:
 
 	// Setup passthrough route persistence and iptables sync.
 	// This mirrors the route store pattern but for TCP/UDP passthrough routes.
-	var passthroughStore *network.PassthroughStore
+	var passthroughStore network.PassthroughStore
 	var passthroughSyncJob *network.PassthroughSyncJob
 	if postgresConnString != "" && networkServer != nil {
 		pool, poolErr := connectToPostgres(postgresConnString, 5, 3*time.Second)

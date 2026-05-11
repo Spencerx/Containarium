@@ -7,8 +7,8 @@ import (
 
 	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/internal/events"
-	"github.com/footprintai/containarium/internal/incus"
-	"github.com/footprintai/containarium/internal/network"
+	"github.com/footprintai/containarium/pkg/core/incus"
+	"github.com/footprintai/containarium/pkg/core/network"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
 
@@ -20,7 +20,7 @@ type NetworkServer struct {
 	passthroughManager *network.PassthroughManager
 	appStore           app.AppStore
 	routeStore         *app.RouteStore            // Source of truth for routes (PostgreSQL)
-	passthroughStore   *network.PassthroughStore   // Source of truth for passthrough routes (PostgreSQL)
+	passthroughStore   network.PassthroughStore   // Source of truth for passthrough routes (PostgreSQL)
 	containerNetwork   string                      // e.g., "10.100.0.0/24"
 	proxyIP            string                      // e.g., "10.100.0.1"
 	baseDomain         string                      // e.g., "kafeido.app"

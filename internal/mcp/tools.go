@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/footprintai/containarium/internal/expose"
+	"github.com/footprintai/containarium/pkg/core/expose"
 )
 
 // Tool represents an MCP tool (function)

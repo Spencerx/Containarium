@@ -30,14 +30,29 @@ type PassthroughRecord struct {
 	UpdatedAt     time.Time
 }
 
-// PassthroughStore handles persistent storage of passthrough routes using PostgreSQL
-type PassthroughStore struct {
+// PassthroughStore abstracts persistence of passthrough routes. The production
+// implementation is *PostgresPassthroughStore (PostgreSQL via pgxpool); tests
+// or non-PG daemons can supply their own implementation.
+type PassthroughStore interface {
+	Save(ctx context.Context, route *PassthroughRecord) error
+	GetByPortProtocol(ctx context.Context, externalPort int, protocol string) (*PassthroughRecord, error)
+	List(ctx context.Context, activeOnly bool) ([]*PassthroughRecord, error)
+	Delete(ctx context.Context, externalPort int, protocol string) error
+	SetActive(ctx context.Context, externalPort int, protocol string, active bool) error
+	Count(ctx context.Context, activeOnly bool) (int32, error)
+}
+
+// PostgresPassthroughStore is the PostgreSQL-backed implementation of
+// PassthroughStore.
+type PostgresPassthroughStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPassthroughStore creates a new passthrough store using an existing connection pool
-func NewPassthroughStore(ctx context.Context, pool *pgxpool.Pool) (*PassthroughStore, error) {
-	store := &PassthroughStore{pool: pool}
+// NewPassthroughStore creates a new PostgreSQL-backed passthrough store and
+// initializes its schema. Returns the PassthroughStore interface so callers
+// can swap implementations.
+func NewPassthroughStore(ctx context.Context, pool *pgxpool.Pool) (PassthroughStore, error) {
+	store := &PostgresPassthroughStore{pool: pool}
 
 	if err := store.initSchema(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize passthrough schema: %w", err)
@@ -47,7 +62,7 @@ func NewPassthroughStore(ctx context.Context, pool *pgxpool.Pool) (*PassthroughS
 }
 
 // initSchema creates the passthrough_routes table if it doesn't exist
-func (s *PassthroughStore) initSchema(ctx context.Context) error {
+func (s *PostgresPassthroughStore) initSchema(ctx context.Context) error {
 	schema := `
 		CREATE TABLE IF NOT EXISTS passthrough_routes (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -73,7 +88,7 @@ func (s *PassthroughStore) initSchema(ctx context.Context) error {
 }
 
 // Save saves or updates a passthrough route (upsert by external_port + protocol)
-func (s *PassthroughStore) Save(ctx context.Context, route *PassthroughRecord) error {
+func (s *PostgresPassthroughStore) Save(ctx context.Context, route *PassthroughRecord) error {
 	query := `
 		INSERT INTO passthrough_routes (external_port, target_ip, target_port, protocol,
 			container_name, description, active, created_by, created_at, updated_at)
@@ -119,7 +134,7 @@ func (s *PassthroughStore) Save(ctx context.Context, route *PassthroughRecord) e
 }
 
 // GetByPortProtocol retrieves a passthrough route by external port and protocol
-func (s *PassthroughStore) GetByPortProtocol(ctx context.Context, externalPort int, protocol string) (*PassthroughRecord, error) {
+func (s *PostgresPassthroughStore) GetByPortProtocol(ctx context.Context, externalPort int, protocol string) (*PassthroughRecord, error) {
 	query := `
 		SELECT id, external_port, target_ip, target_port, protocol,
 			COALESCE(container_name, ''), COALESCE(description, ''), active,
@@ -154,7 +169,7 @@ func (s *PassthroughStore) GetByPortProtocol(ctx context.Context, externalPort i
 }
 
 // List retrieves all passthrough routes, optionally filtering by active status
-func (s *PassthroughStore) List(ctx context.Context, activeOnly bool) ([]*PassthroughRecord, error) {
+func (s *PostgresPassthroughStore) List(ctx context.Context, activeOnly bool) ([]*PassthroughRecord, error) {
 	var query string
 
 	if activeOnly {
@@ -211,7 +226,7 @@ func (s *PassthroughStore) List(ctx context.Context, activeOnly bool) ([]*Passth
 }
 
 // Delete removes a passthrough route by external port and protocol
-func (s *PassthroughStore) Delete(ctx context.Context, externalPort int, protocol string) error {
+func (s *PostgresPassthroughStore) Delete(ctx context.Context, externalPort int, protocol string) error {
 	query := "DELETE FROM passthrough_routes WHERE external_port = $1 AND protocol = $2"
 	result, err := s.pool.Exec(ctx, query, externalPort, protocol)
 
@@ -227,7 +242,7 @@ func (s *PassthroughStore) Delete(ctx context.Context, externalPort int, protoco
 }
 
 // SetActive sets the active status of a passthrough route
-func (s *PassthroughStore) SetActive(ctx context.Context, externalPort int, protocol string, active bool) error {
+func (s *PostgresPassthroughStore) SetActive(ctx context.Context, externalPort int, protocol string, active bool) error {
 	query := "UPDATE passthrough_routes SET active = $1, updated_at = $2 WHERE external_port = $3 AND protocol = $4"
 	result, err := s.pool.Exec(ctx, query, active, time.Now(), externalPort, protocol)
 
@@ -243,7 +258,7 @@ func (s *PassthroughStore) SetActive(ctx context.Context, externalPort int, prot
 }
 
 // Count returns the total number of passthrough routes
-func (s *PassthroughStore) Count(ctx context.Context, activeOnly bool) (int32, error) {
+func (s *PostgresPassthroughStore) Count(ctx context.Context, activeOnly bool) (int32, error) {
 	var query string
 	if activeOnly {
 		query = "SELECT COUNT(*) FROM passthrough_routes WHERE active = true"
@@ -259,3 +274,6 @@ func (s *PassthroughStore) Count(ctx context.Context, activeOnly bool) (int32, e
 
 	return count, nil
 }
+
+// Compile-time assertion that *PostgresPassthroughStore satisfies PassthroughStore.
+var _ PassthroughStore = (*PostgresPassthroughStore)(nil)

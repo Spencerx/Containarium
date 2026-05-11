@@ -10,7 +10,7 @@ import (
 
 // PassthroughSyncJob synchronizes passthrough routes from PostgreSQL (source of truth) to iptables (runtime)
 type PassthroughSyncJob struct {
-	store   *PassthroughStore
+	store   PassthroughStore
 	manager *PassthroughManager
 	interval time.Duration
 
@@ -21,7 +21,7 @@ type PassthroughSyncJob struct {
 }
 
 // NewPassthroughSyncJob creates a new passthrough sync job
-func NewPassthroughSyncJob(store *PassthroughStore, manager *PassthroughManager, interval time.Duration) *PassthroughSyncJob {
+func NewPassthroughSyncJob(store PassthroughStore, manager *PassthroughManager, interval time.Duration) *PassthroughSyncJob {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}

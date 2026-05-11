@@ -9,33 +9,22 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/footprintai/containarium/internal/app/buildpack"
-	"github.com/footprintai/containarium/internal/container"
-	"github.com/footprintai/containarium/internal/incus"
+	"github.com/footprintai/containarium/pkg/core/container"
+	"github.com/footprintai/containarium/pkg/core/incus"
 	v1 "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
-
-// IncusClient defines the interface for interacting with Incus
-type IncusClient interface {
-	GetContainer(name string) (*incus.ContainerInfo, error)
-	Exec(containerName string, command []string) error
-	ExecWithOutput(containerName string, command []string) (string, string, error)
-	WriteFile(containerName, path string, content []byte, mode string) error
-	ReadFile(containerName, path string) ([]byte, error)
-	WaitForNetwork(name string, timeout time.Duration) (string, error)
-}
 
 // Manager orchestrates app deployment workflow
 type Manager struct {
 	store       AppStore
 	builder     *Builder
 	proxy       *ProxyManager
-	incusClient IncusClient
+	incusClient incus.Backend
 	baseDomain  string
 }
 
@@ -49,7 +38,7 @@ type ManagerConfig struct {
 }
 
 // NewManager creates a new app manager
-func NewManager(store AppStore, incusClient IncusClient, config ManagerConfig) *Manager {
+func NewManager(store AppStore, incusClient incus.Backend, config ManagerConfig) *Manager {
 	detector := buildpack.NewDetector()
 	builder := NewBuilder(incusClient, detector)
 	proxy := NewProxyManager(config.CaddyAdminURL, config.BaseDomain)

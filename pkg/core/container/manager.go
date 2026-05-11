@@ -9,17 +9,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/footprintai/containarium/internal/incus"
-	"github.com/footprintai/containarium/internal/ospkg"
-	"github.com/footprintai/containarium/internal/ostype"
-	"github.com/footprintai/containarium/internal/stacks"
+	"github.com/footprintai/containarium/pkg/core/incus"
+	"github.com/footprintai/containarium/pkg/core/ospkg"
+	"github.com/footprintai/containarium/pkg/core/ostype"
+	"github.com/footprintai/containarium/pkg/core/stacks"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	incusapi "github.com/lxc/incus/v6/shared/api"
 )
 
 // Manager handles container lifecycle operations
 type Manager struct {
-	incus *incus.Client
+	incus incus.Backend
 }
 
 // CreateOptions holds options for creating a container
@@ -44,7 +44,7 @@ type CreateOptions struct {
 	RDPPassword            string    // Generated RDP password for Windows VMs (output, set by Create)
 }
 
-// New creates a new container manager
+// New creates a new container manager backed by a real Incus client.
 func New() (*Manager, error) {
 	client, err := incus.New()
 	if err != nil {
@@ -52,6 +52,12 @@ func New() (*Manager, error) {
 	}
 
 	return &Manager{incus: client}, nil
+}
+
+// NewWithBackend creates a new container manager backed by the given Incus
+// implementation. Used by tests to inject a mock; production code uses New.
+func NewWithBackend(backend incus.Backend) *Manager {
+	return &Manager{incus: backend}
 }
 
 // Create creates a new container with full setup
