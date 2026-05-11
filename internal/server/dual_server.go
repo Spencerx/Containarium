@@ -123,7 +123,7 @@ type DualServer struct {
 	authMiddleware        *auth.AuthMiddleware
 	routeStore            *app.RouteStore
 	routeSyncJob          *app.RouteSyncJob
-	passthroughStore      *network.PassthroughStore
+	passthroughStore      network.PassthroughStore
 	passthroughSyncJob    *network.PassthroughSyncJob
 	collaboratorStore     *collaborator.Store
 	daemonConfigStore     *app.DaemonConfigStore
@@ -598,7 +598,7 @@ skipAppHosting:
 
 	// Setup passthrough route persistence and iptables sync.
 	// This mirrors the route store pattern but for TCP/UDP passthrough routes.
-	var passthroughStore *network.PassthroughStore
+	var passthroughStore network.PassthroughStore
 	var passthroughSyncJob *network.PassthroughSyncJob
 	if postgresConnString != "" && networkServer != nil {
 		pool, poolErr := connectToPostgres(postgresConnString, 5, 3*time.Second)

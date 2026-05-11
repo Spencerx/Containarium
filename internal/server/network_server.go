@@ -20,7 +20,7 @@ type NetworkServer struct {
 	passthroughManager *network.PassthroughManager
 	appStore           app.AppStore
 	routeStore         *app.RouteStore            // Source of truth for routes (PostgreSQL)
-	passthroughStore   *network.PassthroughStore   // Source of truth for passthrough routes (PostgreSQL)
+	passthroughStore   network.PassthroughStore   // Source of truth for passthrough routes (PostgreSQL)
 	containerNetwork   string                      // e.g., "10.100.0.0/24"
 	proxyIP            string                      // e.g., "10.100.0.1"
 	baseDomain         string                      // e.g., "kafeido.app"
