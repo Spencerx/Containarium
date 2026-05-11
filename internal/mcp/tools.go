@@ -24,8 +24,19 @@ type ToolHandler func(client *Client, args map[string]interface{}) (string, erro
 func (s *Server) registerTools() {
 	s.tools = []Tool{
 		{
-			Name:        "create_container",
-			Description: "Create a new LXC container for a user with specified resources and SSH keys",
+			Name: "create_container",
+			Description: "Create a new LXC container under a username. Returns the container's " +
+				"name, IP address, and resources.\n\n" +
+				"IMPORTANT — pass `ssh_keys` containing the operator's public SSH key (read " +
+				"from `~/.ssh/id_ed25519.pub` or similar). Without it the new container has " +
+				"no SSH access and you won't be able to install software inside.\n\n" +
+				"AFTER creation, to operate inside the container:\n" +
+				"  1. Use the Bash tool to wire SSH (one-time per session):\n" +
+				"     containarium ssh-config sync --server $CONTAINARIUM_SERVER_URL --token $CONTAINARIUM_JWT_TOKEN\n" +
+				"  2. Add `Include ~/.containarium/ssh_config` to `~/.ssh/config` if not present.\n" +
+				"  3. `ssh <username>` reaches the container via the sentinel's sshpiper.\n" +
+				"     Use it via Bash to apt install, write files, start services.\n" +
+				"  4. Call expose_port to make a container port reachable on a public hostname.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -73,8 +84,10 @@ func (s *Server) registerTools() {
 			Handler: handleCreateContainer,
 		},
 		{
-			Name:        "list_containers",
-			Description: "List all containers with their status and resource usage",
+			Name: "list_containers",
+			Description: "List all containers with name, username, state, IP, and resources. " +
+				"Useful as a first step (\"what's already running?\") and after create_container " +
+				"to confirm the new container's IP. Read-only — no side effects.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -208,9 +221,14 @@ func (s *Server) registerTools() {
 			Name: "expose_port",
 			Description: "Expose a container's port on a public hostname. Resolves the " +
 				"container's IP, then registers a domain → container:port route in the " +
-				"sentinel reverse proxy. After this completes, https://<domain>/ " +
-				"reaches the container's port. Use for the 'make it online' demo step " +
-				"after the agent has installed something listening inside the box.",
+				"sentinel reverse proxy. After this completes, https://<domain>/ reaches " +
+				"the container's port (the sentinel handles TLS via automatic ACME).\n\n" +
+				"This is typically the LAST step of a deploy flow:\n" +
+				"  create_container → ssh in via Bash → install/configure service → expose_port → curl the URL.\n\n" +
+				"Make sure DNS for <domain> already points at the sentinel (a wildcard A " +
+				"record for `*.<your-subdomain>.<your-zone>` covers all the apps you'll " +
+				"expose during a session). The agent doesn't have to wait for DNS; that's " +
+				"a one-time operator setup.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -370,9 +370,13 @@ func TestToolDescriptionQuality(t *testing.T) {
 			// Description should be non-empty
 			assert.NotEmpty(t, desc)
 
-			// Description should be reasonable length
+			// Lower bound catches "TODO"-style placeholders; upper bound
+			// catches runaway formatting. Rich descriptions with multi-step
+			// workflows (see create_container, expose_port) are valuable
+			// for agents to learn affordances from the tool list itself —
+			// so the upper bound is generous.
 			assert.GreaterOrEqual(t, len(desc), 20, "Description too short")
-			assert.LessOrEqual(t, len(desc), 500, "Description too long")
+			assert.LessOrEqual(t, len(desc), 1500, "Description too long")
 
 			// Description should not contain TODO or placeholders
 			assert.NotContains(t, desc, "TODO")

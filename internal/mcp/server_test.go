@@ -310,9 +310,12 @@ func TestToolDescriptions(t *testing.T) {
 			assert.NotEmpty(t, tool.Description, "Tool description should not be empty")
 			assert.NotNil(t, tool.Handler, "Tool handler should not be nil")
 
-			// Description should be reasonable length
+			// Description should be reasonable length. Generous upper
+			// bound — multi-step workflow descriptions (see
+			// create_container, expose_port) are valuable for agents
+			// and run >500 chars by design.
 			assert.Greater(t, len(tool.Description), 10, "Description should be descriptive")
-			assert.Less(t, len(tool.Description), 500, "Description should be concise")
+			assert.Less(t, len(tool.Description), 1500, "Description should be concise")
 		})
 	}
 }
