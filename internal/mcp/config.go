@@ -14,6 +14,14 @@ type Config struct {
 	// JWTToken is the JWT token for authentication
 	JWTToken string
 
+	// SentinelHost is the public SSH endpoint for the deployment.
+	// When set, create_container's response includes a ready-to-paste
+	// `ssh -i <key> <user>@<sentinel-host>` command — agents don't have
+	// to figure out hostnames or modify ~/.ssh/config. Empty means
+	// the response falls back to a placeholder.
+	// Example: sentinel.example.com or 34.42.156.100
+	SentinelHost string
+
 	// Debug enables debug logging
 	Debug bool
 }
@@ -26,8 +34,9 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		ServerURL: os.Getenv("CONTAINARIUM_SERVER_URL"),
-		JWTToken:  os.Getenv("CONTAINARIUM_JWT_TOKEN"),
-		Debug:     debug,
+		ServerURL:    os.Getenv("CONTAINARIUM_SERVER_URL"),
+		JWTToken:     os.Getenv("CONTAINARIUM_JWT_TOKEN"),
+		SentinelHost: os.Getenv("CONTAINARIUM_SENTINEL_HOST"),
+		Debug:        debug,
 	}
 }

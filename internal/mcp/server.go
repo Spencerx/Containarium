@@ -20,6 +20,7 @@ type Server struct {
 // NewServer creates a new MCP server
 func NewServer(config *Config) (*Server, error) {
 	client := NewClient(config.ServerURL, config.JWTToken)
+	client.SentinelHost = config.SentinelHost
 
 	server := &Server{
 		config: config,

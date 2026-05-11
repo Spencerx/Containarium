@@ -24,8 +24,27 @@ type ToolHandler func(client *Client, args map[string]interface{}) (string, erro
 func (s *Server) registerTools() {
 	s.tools = []Tool{
 		{
-			Name:        "create_container",
-			Description: "Create a new LXC container for a user with specified resources and SSH keys",
+			Name: "create_container",
+			Description: "Create a new LXC container under a username. Returns the container's " +
+				"name, IP address, and resources.\n\n" +
+				"SSH key handling: if you OMIT `ssh_keys`, an ephemeral ed25519 keypair is " +
+				"generated client-side. The public half is installed on the container; the " +
+				"private half comes back in this tool's response. Save it to " +
+				"`~/.containarium/keys/<username>` with mode 0600 — that's the standard " +
+				"path expected by the rest of the workflow. If you pass `ssh_keys`, those " +
+				"are used as-is and no ephemeral key is generated (useful when reusing an " +
+				"operator's existing key for SSH alias convenience).\n\n" +
+				"AFTER creation, to operate inside the container (simplest path):\n" +
+				"  1. Save the ephemeral private key (if generated) via Bash to\n" +
+				"     ~/.containarium/keys/<name> with mode 0600.\n" +
+				"  2. The tool response includes a ready-to-paste ssh command:\n" +
+				"       ssh -i ~/.containarium/keys/<name> <name>@<sentinel-host>\n" +
+				"     Use Bash to run it. No edits to ~/.ssh/config required.\n" +
+				"  3. Inside the container, apt install / write files / start services.\n" +
+				"  4. Call `expose_port` to make a container port reachable on a public hostname.\n\n" +
+				"Optional convenience (skip if you don't want to touch ~/.ssh/config):\n" +
+				"  Call the `sync_ssh_config` MCP tool to generate a self-contained\n" +
+				"  ssh_config file and Include line. After that, `ssh <name>` works directly.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -73,8 +92,10 @@ func (s *Server) registerTools() {
 			Handler: handleCreateContainer,
 		},
 		{
-			Name:        "list_containers",
-			Description: "List all containers with their status and resource usage",
+			Name: "list_containers",
+			Description: "List all containers with name, username, state, IP, and resources. " +
+				"Useful as a first step (\"what's already running?\") and after create_container " +
+				"to confirm the new container's IP. Read-only — no side effects.",
 			InputSchema: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -205,12 +226,55 @@ func (s *Server) registerTools() {
 			Handler: handleGetBackend,
 		},
 		{
+			Name: "sync_ssh_config",
+			Description: "Generate a self-contained ssh_config covering every reachable container " +
+				"and write it to ~/.containarium/ssh_config. After this call, `ssh <username>` " +
+				"works from any shell — no CLI install required.\n\n" +
+				"Call this right after create_container so the new container's SSH alias is " +
+				"available immediately. The first time you use it, you also need to add a single " +
+				"line to your ~/.ssh/config to wire it in:\n" +
+				"  Include ~/.containarium/ssh_config\n" +
+				"That's a one-time setup; subsequent sync calls just refresh the file.\n\n" +
+				"Two modes:\n" +
+				"  - Direct (default): each container's IP is the SSH HostName. Works when the " +
+				"    container's LAN IP is reachable from where you're running ssh.\n" +
+				"  - Via sentinel (set `sentinel`): all containers route through the sentinel " +
+				"    via sshpiper. Use this when containers don't have public IPs.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"sentinel": map[string]interface{}{
+						"type":        "string",
+						"description": "Sentinel SSH endpoint (e.g. sentinel.example.com or sentinel.example.com:2222). Empty = direct mode.",
+					},
+					"identity_file": map[string]interface{}{
+						"type":        "string",
+						"description": "IdentityFile path to render in every Host block. For ephemeral-keypair containers, agents typically pass ~/.containarium/keys/<username>.",
+					},
+					"include_stopped": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include stopped containers in the config. Default false (only running containers).",
+					},
+					"out": map[string]interface{}{
+						"type":        "string",
+						"description": "Output path override. Default: ~/.containarium/ssh_config.",
+					},
+				},
+			},
+			Handler: handleSyncSSHConfig,
+		},
+		{
 			Name: "expose_port",
 			Description: "Expose a container's port on a public hostname. Resolves the " +
 				"container's IP, then registers a domain → container:port route in the " +
-				"sentinel reverse proxy. After this completes, https://<domain>/ " +
-				"reaches the container's port. Use for the 'make it online' demo step " +
-				"after the agent has installed something listening inside the box.",
+				"sentinel reverse proxy. After this completes, https://<domain>/ reaches " +
+				"the container's port (the sentinel handles TLS via automatic ACME).\n\n" +
+				"This is typically the LAST step of a deploy flow:\n" +
+				"  create_container → ssh in via Bash → install/configure service → expose_port → curl the URL.\n\n" +
+				"Make sure DNS for <domain> already points at the sentinel (a wildcard A " +
+				"record for `*.<your-subdomain>.<your-zone>` covers all the apps you'll " +
+				"expose during a session). The agent doesn't have to wait for DNS; that's " +
+				"a one-time operator setup.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -258,13 +322,28 @@ func handleCreateContainer(client *Client, args map[string]interface{}) (string,
 		GPU:          getStringArg(args, "gpu", ""),
 	}
 
-	// Handle SSH keys
-	if sshKeys, ok := args["ssh_keys"].([]interface{}); ok {
+	// Handle SSH keys. If the caller passes ssh_keys explicitly we use
+	// them as-is. If they don't, we generate an ephemeral ed25519
+	// keypair CLIENT-SIDE (the private key never travels the network)
+	// and return it in the response. This is the common case for
+	// agent-driven workflows: the agent doesn't have to know about
+	// local file paths or the operator's existing keys.
+	var ephemeralPrivKey []byte
+	if sshKeys, ok := args["ssh_keys"].([]interface{}); ok && len(sshKeys) > 0 {
 		for _, key := range sshKeys {
 			if keyStr, ok := key.(string); ok {
 				req.SSHKeys = append(req.SSHKeys, keyStr)
 			}
 		}
+	} else {
+		pubKey, privKey, err := generateEphemeralSSHKey(
+			fmt.Sprintf("containarium-%s ephemeral key", username),
+		)
+		if err != nil {
+			return "", fmt.Errorf("generate ephemeral ssh key: %w", err)
+		}
+		req.SSHKeys = []string{pubKey}
+		ephemeralPrivKey = privKey
 	}
 
 	resp, err := client.CreateContainer(req)
@@ -285,6 +364,28 @@ func handleCreateContainer(client *Client, args map[string]interface{}) (string,
 		result += fmt.Sprintf("Disk: %s\n", resp.Container.Resources.Disk)
 	}
 	result += fmt.Sprintf("\n%s", resp.Message)
+
+	if ephemeralPrivKey != nil {
+		result += "\n\n--- EPHEMERAL SSH PRIVATE KEY ---\n"
+		result += "Caller did not provide ssh_keys, so an ed25519 keypair was\n"
+		result += "generated locally. The public half is already on the container;\n"
+		result += "save the private half below to a file with mode 0600 and use it\n"
+		result += "to SSH in.\n\n"
+		result += "Suggested save path:\n"
+		result += fmt.Sprintf("  ~/.containarium/keys/%s\n\n", resp.Container.Username)
+		result += "Then to SSH in:\n"
+		sentinelHost := client.SentinelHost
+		if sentinelHost == "" {
+			sentinelHost = "<sentinel-host>"
+		}
+		result += fmt.Sprintf("  ssh -i ~/.containarium/keys/%s %s@%s\n\n",
+			resp.Container.Username, resp.Container.Username, sentinelHost)
+		if client.SentinelHost == "" {
+			result += "(Sentinel host not configured — set CONTAINARIUM_SENTINEL_HOST in the\n"
+			result += "MCP server's env, or call sync_ssh_config for an alias-based setup.)\n\n"
+		}
+		result += string(ephemeralPrivKey)
+	}
 
 	return result, nil
 }
