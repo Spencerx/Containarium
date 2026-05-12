@@ -279,22 +279,27 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name: "push",
-			Description: "Push committed git history from a local repository into a container, " +
-				"via the same SSH path you'd use to ssh in directly.\n\n" +
-				"Ships only the delta since the last push to this user (tracked in " +
-				"`.git/containarium-state.json` in the local repo). Uses `git bundle` as " +
-				"the wire format — git's pack-protocol-level delta compression, atomic " +
-				"per-call.\n\n" +
-				"This is the *commit-only* mode. Working-tree changes that aren't committed " +
-				"DO NOT ship by default — if the working tree has uncommitted or untracked " +
-				"files, the tool refuses with a clear error. Pass `include_wip=true` to " +
-				"auto-create a WIP commit, push, and rewind the local repo afterwards.\n\n" +
-				"If you want to mirror the entire local state (uncommitted changes + " +
-				"untracked files + stash refs) without commit ceremony, use the `sync` " +
-				"tool instead.\n\n" +
-				"On first push to a given `<username>`, the tool initializes a fresh git " +
-				"repo at the remote path; subsequent pushes fast-forward (or force) the " +
-				"branch and check it out.",
+			Description: "Push committed git history into a container via real `git push` over " +
+				"SSH (laptop -> sentinel -> sshpiper -> container). On first call, sets up a " +
+				"bare git repo at ~/work.git inside the container plus a post-receive hook " +
+				"that checks out the working tree to ~/work and optionally runs the configured " +
+				"deploy_cmd. On subsequent calls, just runs `git push` — the hook fires " +
+				"server-side.\n\n" +
+				"This is the *commit-only* + *release* mode. Working-tree changes that aren't " +
+				"committed DO NOT ship by default — if the working tree has uncommitted or " +
+				"untracked files, the tool refuses with a clear error. Pass `include_wip=true` " +
+				"to auto-create a WIP commit, push, and rewind the local repo afterwards.\n\n" +
+				"If you want to mirror the entire local state (uncommitted changes + untracked " +
+				"files + stash refs) without commit ceremony, use the `sync` tool instead.\n\n" +
+				"deploy_cmd: when set, the post-receive hook runs the given shell command " +
+				"inside the container's work-tree directory after each successful push. Use " +
+				"it for `systemctl restart`, `make build && systemctl restart`, etc. The hook " +
+				"is rewritten on every push, so changing deploy_cmd between calls just " +
+				"updates the hook.\n\n" +
+				"After the first push, a local git remote (default 'containarium-<username>') " +
+				"is configured on the local repo. From any clone with that remote, " +
+				"`git push containarium-<username> <branch>` works directly without invoking " +
+				"this tool — same plumbing.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -312,11 +317,19 @@ func (s *Server) registerTools() {
 					},
 					"remote_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Destination directory inside the container (default: ~/work).",
+						"description": "Working-tree directory inside the container (default: ~/work). The bare repo lives at <remote_path>.git.",
 					},
 					"include_wip": map[string]interface{}{
 						"type":        "boolean",
 						"description": "If true and the working tree is dirty, auto-create a WIP commit, push, then rewind the local repo. Default false (refuse on dirty tree).",
+					},
+					"deploy_cmd": map[string]interface{}{
+						"type":        "string",
+						"description": "Shell command to run on the container after each successful push (inside the work-tree directory). Empty = no deploy hook command, but the working tree is still checked out.",
+					},
+					"remote_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Local git remote name to configure. Default 'containarium-<username>'.",
 					},
 					"sentinel": map[string]interface{}{
 						"type":        "string",

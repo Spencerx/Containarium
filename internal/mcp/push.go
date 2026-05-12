@@ -26,19 +26,24 @@ func handlePush(client *Client, args map[string]interface{}) (string, error) {
 		},
 		Branch:     getStringArg(args, "branch", ""),
 		IncludeWIP: getBoolArg(args, "include_wip", false),
+		DeployCmd:  getStringArg(args, "deploy_cmd", ""),
+		RemoteName: getStringArg(args, "remote_name", ""),
 	})
 	if err != nil {
 		return "", fmt.Errorf("push failed: %w", err)
 	}
 
-	previousNote := "first push"
-	if res.PreviousHead != "" {
-		previousNote = fmt.Sprintf("%s..%s", shortShaMCP(res.PreviousHead), shortShaMCP(res.NewHead))
+	var out string
+	if res.PreviousHead == "" {
+		out = fmt.Sprintf("pushed branch %s to %s (first push, head=%s)",
+			res.Branch, res.RemoteURL, shortShaMCP(res.NewHead))
+	} else {
+		out = fmt.Sprintf("pushed branch %s: %s..%s -> %s",
+			res.Branch, shortShaMCP(res.PreviousHead), shortShaMCP(res.NewHead), res.RemoteURL)
 	}
-	out := fmt.Sprintf(
-		"pushed %d commit(s) on branch %s (%s), bundle=%d bytes",
-		res.Commits, res.Branch, previousNote, res.BundleBytes,
-	)
+	if res.DeployCmd != "" {
+		out += fmt.Sprintf("\ndeploy hook configured: %s", res.DeployCmd)
+	}
 	if res.WIPCommitMade {
 		out += "\nWIP commit was shipped and the local repo was rewound to its pre-WIP state."
 	}
