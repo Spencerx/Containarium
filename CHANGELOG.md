@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-05-12
+
+This release lands the **MCP-first agent dev loop**: an agent (Claude Code, Cursor, Cline, …) can now create a container, ship code into it via real `git push`, expose it on a public hostname, run security scans, and diagnose failures — all through tools that share Go entry points with their CLI counterparts. Plus the `pkg/core` extraction that makes the cloud-daemon (separate repo) possible.
+
+(v0.16.4 was tagged but its CHANGELOG entry was skipped; this release covers all changes since v0.16.3.)
+
+### Added
+
+#### MCP tool surface (the headline)
+
+- **`debug_container`** ([#139](https://github.com/FootprintAI/Containarium/pull/139)) — one-call diagnostic for SSH failures. Inspects host-side state the agent can't see (Linux user account presence, shell wrapper existence, recent sshd journal lines matching the user), returns a structured `{containerState, hostUserExists, hostUserShell, hostUserShellExists, recentSshdRejections, likelyCause, nextActions, sourceRepo, daemonVersion}`. The pre-PR session's SSH spiral was the motivating case: every "Connection closed" had a real explanation in the daemon, just nowhere visible to the caller.
+- **`push` + `sync`** ([#150](https://github.com/FootprintAI/Containarium/pull/150), [#152](https://github.com/FootprintAI/Containarium/pull/152)) — two ways to ship code into a container.
+  - `push`: real `git push` over SSH against a container-hosted bare repo at `~/work.git`, with a post-receive hook that checks out the working tree and runs an optional `deploy_cmd` (Heroku-style release flow). First call auto-bootstraps the bare repo + hook + local git remote `containarium-<user>`; subsequent calls just `git push`. Vanilla `git push containarium-<user> main` from any local clone works too.
+  - `sync`: rsync-style mirror — ships content-hash delta of the working dir, including `.git/` so committed history + uncommitted modifications + untracked files + stash refs all carry over. `--delete` opt-in, sensible exclude defaults (`node_modules/`, `.terraform/`, `__pycache__`, `.env*`, ...).
+- **`security_scan` + `security_findings` + `security_remediate`** ([#151](https://github.com/FootprintAI/Containarium/pull/151)) — agent-driven security workflow over the daemon's existing ClamAV / pentest / ZAP subsystems. Normalized cross-scanner finding shape with `kind`, `severity`, `title`, `target`, `fixAvailable`. `security_remediate` calls the daemon's existing `RemediatePentestFinding` (one-shot package upgrade); ClamAV/ZAP findings surface as `fixAvailable: false` until quarantine/sanitizer flows ship. Tool descriptions emphasize **operator-invoked one-shot use** — the hosted continuous variant is a cloud-only feature ([cloud PRD](https://github.com/FootprintAI/Containarium-cloud), `prd/cloud/security-patch-agent.md`).
+- **`sync_ssh_config`** ([#130](https://github.com/FootprintAI/Containarium/pull/130)) — generate a self-contained `~/.containarium/ssh_config` for every reachable container; one-time `Include ~/.containarium/ssh_config` line in `~/.ssh/config` and then `ssh <name>` works directly.
+- **`list_routes`** ([#156](https://github.com/FootprintAI/Containarium/pull/156)) — read-side counterpart to `expose_port`. Lists the proxy routes currently registered on the sentinel with their target container IP+port, active state, and app metadata. Optional `username` + `active_only` filters. Closes the audit gap so agents can answer "is this hostname already taken?" without ssh-ing in.
+- **`get_backend`** ([#124](https://github.com/FootprintAI/Containarium/pull/124)) — fetch a single backend by ID with the same fields as `list_backends`.
+- **`create_container` ephemeral keypair generation** ([#130](https://github.com/FootprintAI/Containarium/pull/130)) — when `ssh_keys` is omitted, generate an ed25519 keypair client-side, install the public half, return the private half in the response with a ready-to-paste `ssh -i …` command using `$CONTAINARIUM_SENTINEL_HOST`.
+- **MCP tool descriptions are now agent-discovery affordances** ([#130](https://github.com/FootprintAI/Containarium/pull/130), [#147 conventions](https://github.com/FootprintAI/Containarium/pull/147)) — `create_container`'s description points at `push` / `sync` / `debug_container` / `expose_port` / `sync_ssh_config` so agents discover the full workflow from a single tool listing.
+
+#### agent-box (in-the-box MCP)
+
+- **`process_start` / `process_list` / `process_kill`** ([#126](https://github.com/FootprintAI/Containarium/pull/126)) — Manage background processes inside a Containarium box (dev servers, long-running tests, etc.) without spawning shells.
+- **`tail_log`** ([#123](https://github.com/FootprintAI/Containarium/pull/123)) — Watch a log file as it grows; tool emits new content with metadata so the agent can decide when to stop.
+- **MCP Roots support** — agent-box's filesystem operations align with the MCP client's workspace roots, matching the upstream `modelcontextprotocol/servers` reference behavior.
+
+#### Demo cluster as a shipped artifact
+
+- **`terraform/gce-demo/`** ([#127](https://github.com/FootprintAI/Containarium/pull/127)) — reproducible demo cluster (sentinel + spot backend) any operator can stand up in ~7 minutes. Consumes the shared `terraform/modules/containarium/` module; defaults are sized for the recorded-demo flow.
+
+#### Cloud encryption posture
+
+- **CMEK opt-in in the terraform module** ([#142](https://github.com/FootprintAI/Containarium/pull/142)) — new `kms_key_self_link` variable wires customer-managed encryption keys to backend boot disk, persistent data PD, and sentinel boot disk. Empty (default) = Google-managed-keys, no behavior change.
+- **At-rest encryption posture doc** ([#143](https://github.com/FootprintAI/Containarium/pull/143)) — `docs/SECURITY-ENCRYPTION-AT-REST.md` documents what we encrypt today, what we don't, who holds the keys, and a vendor-questionnaire cheatsheet. Pairs with the cloud-side per-tenant encryption PRD (drafted in the Containarium-cloud repo).
+
+#### Architecture / refactor
+
+- **`pkg/core/` extraction** ([#138](https://github.com/FootprintAI/Containarium/pull/138) consolidating #133–#137) — `internal/container`, `internal/incus`, `internal/network`, `internal/ostype`, `internal/stacks`, `internal/coresys`, `internal/expose`, `internal/ospkg` all moved to `pkg/core/`, with `Backend` / `Store` interfaces extracted so the cloud-daemon (separate repo) can consume the same core via Go module import. ~9,350 LOC moved; no behavior change. Backend interface extends to 21+ methods covering lifecycle, exec, files, config, devices, labels, server info, metrics; consumers depend on the interface (or narrower subsets declared at the call site) for mockability. Package-level `doc.go` files added per `pkg/core` package ([#148](https://github.com/FootprintAI/Containarium/pull/148)).
+
+#### Conventions
+
+- **CLAUDE.md: proto-first + strong-typing** ([#147](https://github.com/FootprintAI/Containarium/pull/147)) — codifies the contract-first convention (`.proto` → buf generate → gRPC stubs + grpc-gateway REST shim + OpenAPI doc + typed client) and bans hand-rolled `net/http` handlers for customer-facing endpoints. Companion strong-typing rule rejects bare strings where proto enums fit and `map[string]interface{}` where structs do.
+
+### Fixed
+
+- **MCP error messages now reach the operator** ([#153](https://github.com/FootprintAI/Containarium/pull/153)) — `handleToolsCall` previously returned a constant `"Tool execution failed"` in JSON-RPC's `message` field and the actual `err.Error()` in `data`. Most MCP clients (including Claude Code) only render `message`, so every tool failure looked identical. Now the err string lands in both.
+- **Sentinel upstream key rotation no longer strands existing containers** ([#140](https://github.com/FootprintAI/Containarium/pull/140)) — when the sentinel VM was replaced (terraform `apply -replace`) it generated a new upstream keypair and pushed the new pubkey to backend via `POST /authorized-keys/sentinel`. The previous handler appended-if-missing, which left every existing container's `authorized_keys` with the OLD sentinel pubkey alongside (or, in the live failure, INSTEAD of) the new one. Handler now replaces the `# sshpiper sentinel upstream key` marker block instead of appending; idempotent on no-op; atomic via temp file + rename. Response gains a `rotated` counter for operator observability.
+- **Demo cluster SSH path now works first-shot** ([#132](https://github.com/FootprintAI/Containarium/pull/132)) — three independent root causes were stacking and preventing the agent-driven demo flow from ever completing:
+  - `IdentitiesOnly=yes` + `PreferredAuthentications=publickey` now baked into MCP `create_container`'s response ssh hint. Without them, OpenSSH offered every key in `~/.ssh/`; sshpiper's failtoban counted each rejected offer toward the ban budget.
+  - sshpiperd failtoban tuned from `--max-failures 20` / `--ban-duration 1h` to `100` / `5m` — appropriate for an agent's pace, not an attacker's.
+  - `terraform/modules/containarium/scripts/startup-spot.sh` now installs `/usr/local/bin/containarium-shell` + sudoers + `/etc/shells` entry + sshd Match block at deploy time. The daemon creates user accounts with `shell=containarium-shell`; the wrapper had never been installed, so sshd refused every login with "User X not allowed because shell /usr/local/bin/containarium-shell does not exist." This had been silently broken since the demo cluster's first deploy.
+- **JWT-authenticate `/v1/backends`** ([#122](https://github.com/FootprintAI/Containarium/pull/122)) — endpoint was unauthenticated.
+- **`postgresPassthroughStore` unexported + dead helpers removed** ([#144](https://github.com/FootprintAI/Containarium/pull/144), [#146](https://github.com/FootprintAI/Containarium/pull/146)) — `PassthroughStore` is the public interface; the postgres implementation is now lowercase + internal. `FindCoreContainers`, `HasRole` removed.
+- **DI cleanup for `incus.Backend`** ([#141](https://github.com/FootprintAI/Containarium/pull/141)) — post-extraction follow-ups: `container.Manager` takes `incus.Backend` (interface) instead of `*incus.Client`; `Backend` interface extends to cover `UpdateContainerConfig` and `GetRawInstance`.
+- **Transfer tools UX** ([#154](https://github.com/FootprintAI/Containarium/pull/154)) — `~/` in `remote_path` is now expanded to `/home/<user>/` (previously created a literal `~` directory); `sync` excludes `.env*` by default to prevent silently clobbering per-environment config.
+- **`gce-demo` first-deploy fixes** ([#128](https://github.com/FootprintAI/Containarium/pull/128), [#129](https://github.com/FootprintAI/Containarium/pull/129)) — Zabbly incus package renames (`incus-tools` → `incus`), stale ZFS pool cleanup on the fresh-install branch, binary URL derived from `containarium_version`, `spot_vm_external_ip=true` so apt-install works pre-Cloud-NAT, smoke-test script fixes.
+- **`gateway/keys_handler` gosec hardening** — `#nosec G304` annotations with rationale on legitimate path-construction sites; `#nosec G204` on `exec.Command` calls whose args are argv-only (not shell-evaluated); unhandled-error fix on `json.NewEncoder().Encode()` (intentional discard now explicit). Cleared all gosec findings.
+
+### Internal
+
+- 14 staging branches deleted post-merge (`extraction/phase-1` through `extraction/phase-5`, `merge/extraction-into-main`, plus per-feature branches once their PRs landed). Main is now the only long-running branch.
+
 ## [0.16.3] - 2026-05-09
 
 ### Added
