@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -233,6 +234,50 @@ func TestHandleToolsCallToolNotFound(t *testing.T) {
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, -32602, resp.Error.Code)
 	assert.Contains(t, resp.Error.Data, "not found")
+}
+
+// TestHandleToolsCallSurfacesHandlerError verifies that when a tool's
+// handler returns an error, the error string lands in JSON-RPC `message`
+// (not only in `data`). MCP clients vary on which field they render;
+// putting the diagnostic in `message` ensures every client sees it.
+func TestHandleToolsCallSurfacesHandlerError(t *testing.T) {
+	config := &Config{
+		ServerURL: "http://localhost:8080",
+		JWTToken:  "test-token",
+	}
+	server, err := NewServer(config)
+	require.NoError(t, err)
+
+	// Replace one tool's handler with a deterministic failure so we can
+	// assert on the surfaced message.
+	const sentinel = "ssh key not readable at ~/.containarium/keys/voice-dev"
+	for i := range server.tools {
+		if server.tools[i].Name == "push" {
+			server.tools[i].Handler = func(_ *Client, _ map[string]interface{}) (string, error) {
+				return "", fmt.Errorf(sentinel)
+			}
+			break
+		}
+	}
+
+	req := &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      7,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name":      "push",
+			"arguments": map[string]interface{}{"username": "voice-dev"},
+		},
+	}
+	resp := server.handleRequest(req)
+
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, -32603, resp.Error.Code)
+	// The real diagnostic must appear in `message`, not only `data`.
+	assert.Contains(t, resp.Error.Message, sentinel,
+		"error message must include the underlying error for clients that only render `message`")
+	// `data` should still carry it too (for clients that render both).
+	assert.Contains(t, resp.Error.Data, sentinel)
 }
 
 // TestErrorResponse tests error response creation

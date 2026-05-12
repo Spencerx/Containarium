@@ -156,7 +156,15 @@ func (s *Server) handleToolsCall(req *MCPRequest) *MCPResponse {
 	// Execute tool
 	result, err := tool.Handler(s.client, params.Arguments)
 	if err != nil {
-		return s.createErrorResponse(req.ID, -32603, "Tool execution failed", err.Error())
+		// Surface the actual error message in `message` so it reaches MCP
+		// clients that only render the top-level `message` field (most do,
+		// including Claude Code). The full err string also lands in `data`
+		// for clients that show both. Constant "Tool execution failed"
+		// alone was a UX deadend — every failure looked identical from
+		// the agent's POV.
+		return s.createErrorResponse(req.ID, -32603,
+			fmt.Sprintf("Tool execution failed: %v", err),
+			err.Error())
 	}
 
 	return &MCPResponse{
