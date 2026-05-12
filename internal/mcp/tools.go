@@ -531,6 +531,37 @@ func (s *Server) registerTools() {
 			Handler: handleSyncSSHConfig,
 		},
 		{
+			Name: "list_routes",
+			Description: "List the proxy routes currently registered on the sentinel — the " +
+				"domain → container:port mappings that `expose_port` creates. Returns each " +
+				"route's domain (`fullDomain`), target container IP + port, active state, " +
+				"and any associated app metadata.\n\n" +
+				"Use this to:\n" +
+				"  - Audit what's currently exposed (e.g. before adding a new route, check " +
+				"    that the intended hostname isn't already claimed).\n" +
+				"  - Recover after a session loses track of which containers have which " +
+				"    public URLs.\n" +
+				"  - Filter by `username` to see only one container's routes, or " +
+				"    `active_only=true` to skip disabled ones.\n\n" +
+				"Read-only — no side effects. For TCP passthrough routes (raw L4, not HTTPS), " +
+				"those live on a different daemon endpoint and aren't included here yet — " +
+				"file a request if you need them surfaced.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"username": map[string]interface{}{
+						"type":        "string",
+						"description": "Restrict to routes whose target container belongs to this username. Empty = no filter.",
+					},
+					"active_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "If true, omit disabled routes. Default false (include all).",
+					},
+				},
+			},
+			Handler: handleListRoutes,
+		},
+		{
 			Name: "expose_port",
 			Description: "Expose a container's port on a public hostname. Resolves the " +
 				"container's IP, then registers a domain → container:port route in the " +
@@ -921,6 +952,22 @@ func humanBytes(n int64) string {
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
+}
+
+func handleListRoutes(client *Client, args map[string]interface{}) (string, error) {
+	username := getStringArg(args, "username", "")
+	activeOnly := getBoolArg(args, "active_only", false)
+
+	resp, err := client.ListRoutes(username, activeOnly)
+	if err != nil {
+		return "", fmt.Errorf("failed to list routes: %w", err)
+	}
+
+	out, err := json.MarshalIndent(resp, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+	return string(out), nil
 }
 
 func handleExposePort(client *Client, args map[string]interface{}) (string, error) {

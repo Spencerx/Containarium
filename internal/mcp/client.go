@@ -240,6 +240,35 @@ func (c *Client) AddRoute(req AddRouteRequest) (*AddRouteResponse, error) {
 	return &resp, nil
 }
 
+// ListRoutes returns all proxy routes the sentinel currently serves. Both
+// filter params are optional — empty `username` or `activeOnly=false`
+// means "no filter on that dimension". Mirrors GET /v1/network/routes.
+func (c *Client) ListRoutes(username string, activeOnly bool) (*ListRoutesResponse, error) {
+	path := "/v1/network/routes"
+	q := ""
+	if username != "" {
+		q = "username=" + username
+	}
+	if activeOnly {
+		if q != "" {
+			q += "&"
+		}
+		q += "activeOnly=true"
+	}
+	if q != "" {
+		path += "?" + q
+	}
+	respBody, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp ListRoutesResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &resp, nil
+}
+
 // ListBackends returns the cluster topology — the local daemon plus any
 // tunnel-connected peers. Used by the list_backends MCP tool so an
 // agent can reason about peer health, container counts, and GPU
@@ -624,11 +653,25 @@ type AddRouteResponse struct {
 }
 
 type ProxyRoute struct {
-	Domain        string `json:"domain"`
+	// Domain (the one expose_port sets) and the proto's richer fields
+	// (subdomain, fullDomain, active, appId, appName) — accept both shapes
+	// because AddRoute echoes one set and GetRoutes returns the other.
+	Domain        string `json:"domain,omitempty"`
+	Subdomain     string `json:"subdomain,omitempty"`
+	FullDomain    string `json:"fullDomain,omitempty"`
 	ContainerIP   string `json:"containerIp"`
 	Port          int32  `json:"port"`
+	Active        bool   `json:"active,omitempty"`
 	ContainerName string `json:"containerName,omitempty"`
 	Description   string `json:"description,omitempty"`
+	AppID         string `json:"appId,omitempty"`
+	AppName       string `json:"appName,omitempty"`
+}
+
+// ListRoutesResponse mirrors the daemon's GetRoutesResponse.
+type ListRoutesResponse struct {
+	Routes     []ProxyRoute `json:"routes"`
+	TotalCount int          `json:"totalCount"`
 }
 
 type Container struct {
