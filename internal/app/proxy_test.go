@@ -654,6 +654,44 @@ func TestProxyManager_EnableProxyProtocol_PreservesOtherFields(t *testing.T) {
 	}
 }
 
+// Regression: ensureHTTPApp used to strictly decode the response into
+// CaddyHTTPApp, whose Routes field transitively contains []CaddyHandler — an
+// interface slice — which encoding/json cannot unmarshal into. Any non-trivial
+// existing http app made the decode fail, the code path fell through to
+// createHTTPApp, the PUT 409'd because the http app already existed, and the
+// daemon silently lost every Caddy update that depended on EnsureServerConfig
+// having succeeded (e.g. registering a tunnel-promoted pool primary).
+func TestProxyManager_EnsureHTTPApp_AcceptsExistingConfigWithHandlers(t *testing.T) {
+	var putToHTTPApp int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/apps/http":
+			// Realistic Caddy response: a server with a route whose handle is a
+			// concrete reverse_proxy handler. The old decode failed here.
+			_, _ = w.Write([]byte(`{"servers":{"srv0":{"listen":[":80",":443"],"routes":[{"@id":"wordpress.kafeido.app","match":[{"host":["wordpress.kafeido.app"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.3.53:8888"}]}]}]}}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/config/apps/http":
+			putToHTTPApp++
+			http.Error(w, `{"error":"[/config/apps/http] key already exists: http"}`, http.StatusConflict)
+		case r.Method == http.MethodGet && r.URL.Path == "/config/apps/tls":
+			_, _ = w.Write([]byte(`{"automation":{"policies":[]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/config/apps/http/servers/srv0":
+			_, _ = w.Write([]byte(`{"listen":[":80",":443"]}`))
+		default:
+			t.Logf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	pm := NewProxyManager(srv.URL, "kafeido.app")
+	if err := pm.EnsureServerConfig(); err != nil {
+		t.Fatalf("EnsureServerConfig err = %v", err)
+	}
+	if putToHTTPApp != 0 {
+		t.Errorf("ensureHTTPApp made %d spurious PUT(s) to /config/apps/http — the interface-decode bug is back", putToHTTPApp)
+	}
+}
+
 func TestProxyManager_EnableProxyProtocol_RefusesEmpty(t *testing.T) {
 	pm := NewProxyManager("http://unreachable", "kafeido.app")
 	if err := pm.EnableProxyProtocol(nil); err == nil {

@@ -553,9 +553,18 @@ func (p *ProxyManager) createTLSApp() error {
 	return nil
 }
 
-// ensureHTTPApp ensures the HTTP app and server exist in Caddy config
+// ensureHTTPApp ensures the HTTP app and server exist in Caddy config.
+//
+// We probe with a loose schema (map[string]json.RawMessage on servers) rather
+// than the typed CaddyHTTPApp. The full type transitively contains
+// []CaddyHandler — an interface slice — which encoding/json cannot decode
+// into, so a strict decode would always fail on any non-empty config and
+// fall through to createHTTPApp's PUT, which 409s because the http app
+// already exists. The result before this fix was that every daemon startup
+// logged "key already exists: http" and silently lost any subsequent route
+// updates the daemon tried to apply (e.g. registering a newly-connected
+// tunnel-promoted pool primary).
 func (p *ProxyManager) ensureHTTPApp() error {
-	// Check if HTTP app exists
 	url := fmt.Sprintf("%s/config/apps/http", p.caddyAdminURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -564,7 +573,6 @@ func (p *ProxyManager) ensureHTTPApp() error {
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		// HTTP app doesn't exist, create it with server
 		return p.createHTTPApp()
 	}
 	defer resp.Body.Close()
@@ -573,21 +581,24 @@ func (p *ProxyManager) ensureHTTPApp() error {
 		return p.createHTTPApp()
 	}
 
-	// HTTP app exists, check if it has the server configured
-	var httpApp CaddyHTTPApp
-	if err := json.NewDecoder(resp.Body).Decode(&httpApp); err != nil {
-		// Invalid config, recreate
+	body, _ := io.ReadAll(resp.Body)
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" || trimmed == "null" {
 		return p.createHTTPApp()
 	}
 
-	// Check if servers map exists and has our server
-	if httpApp.Servers == nil {
-		// No servers map, recreate
+	var probe struct {
+		Servers map[string]json.RawMessage `json:"servers,omitempty"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
 		return p.createHTTPApp()
 	}
 
-	if _, exists := httpApp.Servers[p.serverName]; !exists {
-		// Server doesn't exist, add it
+	if probe.Servers == nil {
+		return p.createHTTPApp()
+	}
+
+	if _, exists := probe.Servers[p.serverName]; !exists {
 		return p.createServerConfig()
 	}
 
