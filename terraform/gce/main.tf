@@ -51,10 +51,10 @@ module "containarium" {
   dns_zone_domain = var.dns_zone_domain
 
   # Spot instance & persistent disk
-  use_spot_instance    = var.use_spot_instance
-  use_persistent_disk  = var.use_persistent_disk
-  data_disk_size       = var.data_disk_size
-  data_disk_type       = var.data_disk_type
+  use_spot_instance     = var.use_spot_instance
+  use_persistent_disk   = var.use_persistent_disk
+  data_disk_size        = var.data_disk_size
+  data_disk_type        = var.data_disk_type
   enable_disk_snapshots = var.enable_disk_snapshots
 
   # Containarium daemon

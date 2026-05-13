@@ -32,9 +32,15 @@ variable "machine_type" {
 // Versioning ----------------------------------------------------------
 
 variable "containarium_version" {
-  description = "Containarium version to install on the demo VM. Should match a tagged release at https://github.com/footprintai/Containarium/releases."
+  description = "Containarium version to install on the demo VM. Should match a tagged release at https://github.com/footprintai/Containarium/releases. Note: --proxy-protocol on the sentinel requires v0.16.7+ — older versions silently no-op'd the flag in simple-proxy mode."
   type        = string
-  default     = "0.16.4"
+  default     = "0.16.7"
+}
+
+variable "base_domain" {
+  description = "Public hostname the demo daemon serves at. Containers exposed via `expose_port` get subdomains of this (e.g. blog.<base_domain>). The cluster must have wildcard DNS for *.<base_domain> pointing at the sentinel's IP — Cloudflare-managed for the production demo deployment. Empty disables app-hosting."
+  type        = string
+  default     = "demo.containarium.dev"
 }
 
 variable "containarium_binary_url" {

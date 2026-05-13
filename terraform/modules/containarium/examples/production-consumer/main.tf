@@ -47,13 +47,13 @@ module "containarium" {
   # VPC networking
   network_self_link    = data.google_compute_network.vpc.self_link
   subnetwork_self_link = data.google_compute_subnetwork.subnet.self_link
-  spot_vm_external_ip  = false  # Cloud NAT only
+  spot_vm_external_ip  = false # Cloud NAT only
 
   # Production features
-  enable_iap_firewall          = true
-  jwt_secret                   = var.jwt_secret
-  fail2ban_whitelist_cidr      = "10.0.0.0/8"
-  instance_tags                = ["containarium-jump-server-usw1", "containarium-sentinel"]
+  enable_iap_firewall     = true
+  jwt_secret              = var.jwt_secret
+  fail2ban_whitelist_cidr = "10.0.0.0/8"
+  instance_tags           = ["containarium-jump-server-usw1", "containarium-sentinel"]
 
   # Standard config
   admin_ssh_keys          = var.admin_ssh_keys

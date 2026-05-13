@@ -72,6 +72,23 @@ module "containarium" {
   containarium_version       = var.containarium_version
   containarium_binary_url    = local.containarium_binary_url
 
+  // App-hosting: the demo serves customer apps at subdomains of
+  // base_domain (e.g. blog.demo.containarium.dev). Caddy ACMEs each
+  // hostname on demand. Wildcard DNS for *.<base_domain> must point
+  // at the sentinel's IP — Cloudflare-managed today.
+  enable_app_hosting = true
+  base_domain        = var.base_domain
+
+  // PROXY v2: have the sentinel emit a PROXY v2 header on each
+  // forwarded connection so the backend's Caddy sees the real client
+  // IP. Without this, the simple-proxy sentinel mode passes traffic
+  // through kernel iptables DNAT + MASQUERADE — the backend sees
+  // 10.0.3.1 (LXC bridge) as the source for every request. Trusted
+  // CIDR covers the GCP internal VPC + loopback; tighten to the
+  // sentinel's exact IP for prod-style deployments.
+  enable_proxy_protocol        = true
+  proxy_protocol_trusted_cidrs = ["10.0.0.0/8", "127.0.0.0/8"]
+
   // Access
   admin_ssh_keys      = var.admin_ssh_keys
   allowed_ssh_sources = var.allowed_ssh_sources

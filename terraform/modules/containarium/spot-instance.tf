@@ -139,15 +139,19 @@ resource "google_compute_instance" "jump_server_spot" {
       "${user}:${key}"
     ])
     startup-script = templatefile("${path.module}/scripts/startup-spot.sh", {
-      incus_version           = var.incus_version
-      admin_users             = keys(var.admin_ssh_keys)
-      enable_monitoring       = var.enable_monitoring
-      use_persistent_disk     = var.use_persistent_disk
-      containarium_version    = var.containarium_version
-      containarium_binary_url = var.containarium_binary_url
-      sentinel_binary_url     = local.use_sentinel ? "http://${google_compute_instance.sentinel[0].network_interface[0].network_ip}:8888/containarium" : ""
-      jwt_secret              = var.jwt_secret
-      fail2ban_whitelist_cidr = var.fail2ban_whitelist_cidr
+      incus_version                = var.incus_version
+      admin_users                  = keys(var.admin_ssh_keys)
+      enable_monitoring            = var.enable_monitoring
+      use_persistent_disk          = var.use_persistent_disk
+      containarium_version         = var.containarium_version
+      containarium_binary_url      = var.containarium_binary_url
+      sentinel_binary_url          = local.use_sentinel ? "http://${google_compute_instance.sentinel[0].network_interface[0].network_ip}:8888/containarium" : ""
+      jwt_secret                   = var.jwt_secret
+      fail2ban_whitelist_cidr      = var.fail2ban_whitelist_cidr
+      enable_app_hosting           = var.enable_app_hosting
+      base_domain                  = var.base_domain
+      enable_proxy_protocol        = var.enable_proxy_protocol
+      proxy_protocol_trusted_cidrs = var.proxy_protocol_trusted_cidrs
     })
   }
 

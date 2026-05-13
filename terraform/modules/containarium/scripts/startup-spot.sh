@@ -740,6 +740,34 @@ SVCEOF
         echo "✓ Containarium daemon service created and started"
     fi
 
+    # ---------------------------------------------------------------
+    # Optional override.conf for --app-hosting and/or --proxy-protocol.
+    #
+    # We can't put these flags in the primary ExecStart written above,
+    # because `containarium service install` (the preferred install
+    # path, called at the top of this block) generates its own
+    # ExecStart and we shouldn't second-guess it. The systemd
+    # drop-in pattern (override.conf with `ExecStart=` to clear the
+    # parent, then a fresh `ExecStart=...`) is the supported way to
+    # extend it without forking the unit file.
+    #
+    # PROXY v2 trusted CIDRs: rejected by the daemon if any entry is
+    # 0.0.0.0/0 (anti-spoofing). Wildcards must be filtered out
+    # upstream — the module-level var.proxy_protocol_trusted_cidrs
+    # gets validated at apply time too via the daemon's startup logs.
+    # ---------------------------------------------------------------
+%{ if enable_app_hosting || enable_proxy_protocol ~}
+    mkdir -p /etc/systemd/system/containarium.service.d
+    cat > /etc/systemd/system/containarium.service.d/override.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/containarium daemon --address 0.0.0.0 --rest --http-port 8080 --jwt-secret-file /etc/containarium/jwt.secret%{ if enable_app_hosting } --app-hosting%{ if base_domain != "" } --base-domain ${base_domain}%{ endif }%{ endif }%{ if enable_proxy_protocol } --proxy-protocol --proxy-protocol-trusted=${join(",", proxy_protocol_trusted_cidrs)}%{ endif }
+EOF
+    echo "✓ wrote override.conf for app-hosting / proxy-protocol"
+    systemctl daemon-reload
+    systemctl restart containarium.service
+%{ endif ~}
+
     # Check status
     sleep 2
     if systemctl is-active --quiet containarium; then

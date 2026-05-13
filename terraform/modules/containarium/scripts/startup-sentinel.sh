@@ -137,6 +137,27 @@ if [ -f /usr/local/bin/containarium ]; then
         --zone "$ZONE" \
         --project "$PROJECT_ID"
     echo "Sentinel service installed and running"
+
+    # Optional override.conf for --proxy-protocol on the sentinel.
+    #
+    # `sentinel service install` generates a fixed ExecStart without
+    # this flag. With --proxy-protocol the sentinel runs a userspace
+    # TCP forwarder on :80/:443 (Containarium v0.16.7+) that prepends
+    # a PROXY v2 frame to each connection, so the downstream Caddy
+    # sees the real client IP. Without the flag, the sentinel
+    # forwards via kernel iptables DNAT and the real source is lost
+    # to MASQUERADE — apps then see the bridge gateway IP.
+%{ if enable_proxy_protocol ~}
+    mkdir -p /etc/systemd/system/containarium-sentinel.service.d
+    cat > /etc/systemd/system/containarium-sentinel.service.d/proxyproto.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/containarium sentinel --spot-vm $SPOT_VM_NAME --zone $ZONE --project $PROJECT_ID --proxy-protocol
+EOF
+    echo "wrote proxyproto.conf for sentinel"
+    systemctl daemon-reload
+    systemctl restart containarium-sentinel.service
+%{ endif ~}
 else
     echo "WARNING: containarium binary not found, sentinel not started"
 fi

@@ -310,3 +310,38 @@ variable "spot_vm_name_suffix" {
   type        = string
   default     = ""
 }
+
+# -----------------------------------------------------------------------------
+# App hosting + PROXY v2 (real-client-IP preservation)
+#
+# These four variables form one logical feature: serving customer apps on
+# sentinel-fronted hostnames AND making sure the apps see real client IPs
+# instead of the sentinel/bridge gateway. They're independent (you can
+# enable app-hosting without PROXY v2 if you don't care about visitor IPs,
+# or PROXY v2 alone if you have your own routing on top) but in practice
+# the demo and prod clusters want both.
+# -----------------------------------------------------------------------------
+
+variable "enable_app_hosting" {
+  description = "Enable Containarium's app-hosting subsystem (Caddy reverse proxy, ACME, route store). Required for `expose_port` to provision public hostnames automatically."
+  type        = bool
+  default     = false
+}
+
+variable "base_domain" {
+  description = "Base domain for app-hosting. When set with enable_app_hosting=true, the daemon registers the management route at this hostname and Caddy ACMEs a cert for it; containers exposed via expose_port get subdomains of this base (e.g. blog.<base_domain>). Empty disables hostname-aware routing."
+  type        = string
+  default     = ""
+}
+
+variable "enable_proxy_protocol" {
+  description = "Have the sentinel emit PROXY v2 headers to the backend and have the backend's Caddy parse them so the real client IP propagates as X-Forwarded-For. In simple-proxy mode (single-spot-VM deployments) this also switches the sentinel from kernel iptables DNAT to a userspace TCP forwarder — iptables can't inject the header. Requires Containarium v0.16.7+ on both sentinel and backend."
+  type        = bool
+  default     = false
+}
+
+variable "proxy_protocol_trusted_cidrs" {
+  description = "CIDR blocks the backend's Caddy will trust as sources of PROXY v2 frames. Typically the sentinel's internal IP plus loopback. Required when enable_proxy_protocol=true. Wildcard 0.0.0.0/0 is rejected at startup to prevent IP spoofing."
+  type        = list(string)
+  default     = []
+}

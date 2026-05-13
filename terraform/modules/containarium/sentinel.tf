@@ -26,10 +26,10 @@ resource "google_compute_instance" "sentinel" {
 
   # Always-on: standard provisioning, live-migrate on maintenance
   scheduling {
-    preemptible                 = false
-    automatic_restart           = true
-    on_host_maintenance         = "MIGRATE"
-    provisioning_model          = "STANDARD"
+    preemptible         = false
+    automatic_restart   = true
+    on_host_maintenance = "MIGRATE"
+    provisioning_model  = "STANDARD"
   }
 
   boot_disk {
@@ -63,6 +63,7 @@ resource "google_compute_instance" "sentinel" {
       spot_vm_name            = local.spot_vm_name
       zone                    = var.zone
       project_id              = var.project_id
+      enable_proxy_protocol   = var.enable_proxy_protocol
     })
   }
 

@@ -7,21 +7,21 @@ region     = "us-central1"
 zone       = "us-central1-a"
 
 # Single Server Configuration
-enable_horizontal_scaling = false    # Single jump server
-instance_name = "containarium-jump"
-machine_type  = "n2-standard-8"      # 8 vCPU, 32GB RAM
+enable_horizontal_scaling = false # Single jump server
+instance_name             = "containarium-jump"
+machine_type              = "n2-standard-8" # 8 vCPU, 32GB RAM
 
 # Cost Optimization - Maximum Savings!
-use_spot_instance   = true           # 76% cheaper than regular VM
-use_persistent_disk = true           # Containers survive spot termination
+use_spot_instance   = true # 76% cheaper than regular VM
+use_persistent_disk = true # Containers survive spot termination
 
 # Storage
-boot_disk_size = 100                 # GB
-data_disk_size = 500                 # GB - all container data here
+boot_disk_size = 100 # GB
+data_disk_size = 500 # GB - all container data here
 data_disk_type = "pd-balanced"
 
 # Backup
-enable_disk_snapshots = true         # Daily snapshots
+enable_disk_snapshots = true # Daily snapshots
 
 # SSH Access
 admin_ssh_keys = {
@@ -30,7 +30,7 @@ admin_ssh_keys = {
 
 # Security
 allowed_ssh_sources = [
-  "0.0.0.0/0"  # WARNING: Restrict in production!
+  "0.0.0.0/0" # WARNING: Restrict in production!
 ]
 
 # Labels
