@@ -16,8 +16,9 @@ curl https://blog.example.com → hello world
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 
-🎬 **Watch (55s):** [Prompt → live HTTPS Python app](https://youtu.be/IBDDD_tb8FY)
-🌐 **Live demo:** [containarium.kafeido.app/webui/demo](https://containarium.kafeido.app/webui/demo)
+[![Containarium demo: prompt → live HTTPS Python app](docs/images/demo-preview.gif)](https://youtu.be/IBDDD_tb8FY)
+
+🎬 **Watch the full 55s demo:** [youtu.be/IBDDD_tb8FY](https://youtu.be/IBDDD_tb8FY) · 🌐 **Live demo:** [helloworld.demo.containarium.dev](https://helloworld.demo.containarium.dev)
 
 ---
 
@@ -625,5 +626,5 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 - **Documentation**: [docs/](docs/) directory.
 - **Issues**: [GitHub Issues](https://github.com/footprintai/Containarium/issues).
 - **Demo video**: [55s walkthrough on YouTube](https://youtu.be/IBDDD_tb8FY).
-- **Live demo**: [containarium.kafeido.app/webui/demo](https://containarium.kafeido.app/webui/demo).
+- **Live demo**: [helloworld.demo.containarium.dev](https://helloworld.demo.containarium.dev).
 - **Organization**: [FootprintAI](https://github.com/footprintai).
