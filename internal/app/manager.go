@@ -449,12 +449,27 @@ func (m *Manager) uploadSource(ctx context.Context, containerName, appDir string
 func (m *Manager) runContainer(ctx context.Context, containerName string, app *v1.App, envVars map[string]string) error {
 	podmanContainerName := m.podmanContainerName(app)
 
-	// Build podman run command
+	// Build podman run command.
+	//
+	// Networking note: --network=host, not -p <port>:<port>. The LXC
+	// container we run inside uses unprivileged user namespaces, which
+	// means rootless podman's port publishing (-p) only exposes the port
+	// inside the user's slirp4netns network namespace — it's invisible
+	// from the LXC's main netns. Caddy reverse-proxies via the LXC's eth0
+	// IP, so a -p-published port is unreachable and returns 502.
+	//
+	// --network=host makes the podman container share the LXC's main
+	// network namespace directly, so any bind to 0.0.0.0:<port> is
+	// reachable on the LXC's eth0 with no port-mapping layer in between.
+	// Trade-off: only one process can bind any given port inside the
+	// LXC. That's fine for Containarium's model (one app per LXC) — if
+	// we ever want multi-app-per-LXC we'd need a userspace port
+	// forwarder instead, which is a much bigger change.
 	args := []string{
 		"podman", "run", "-d",
 		"--name", podmanContainerName,
 		"--restart", "unless-stopped",
-		"-p", fmt.Sprintf("%d:%d", app.Port, app.Port),
+		"--network=host",
 	}
 
 	// Add environment variables
