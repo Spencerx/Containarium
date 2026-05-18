@@ -125,6 +125,46 @@ The pool tag stays `lab` — `demo.example.org` is just the routing surface, not
 
 SNI `notebook.sub.example.com` matches both lab's `example.com` (length 11) and lab2's `sub.example.com` (length 15). Lab2 wins — more-specific suffix is the user's intent.
 
+### Example D — serving the *apex* of an additional domain (one cluster, multiple parent domains)
+
+The Phase 3b `--public-base-domain` flag makes a primary catch `<anything>.<base>` via suffix match. But the **apex itself** (`<base>` with no leading subdomain) is *not* a proper suffix of itself, so it falls through to the legacy fallback — that's by design (keeps the apex usable as a separate `Hostname` or `Alias` somewhere else if needed).
+
+If you want one backend to also serve the apex of an additional domain — e.g., a lab backend that handles both `*.lab.example.com` (its own pool space) *and* `*.demo.example.org` *plus* the apex `demo.example.org` itself — there are two gaps to fill:
+
+1. **Sentinel routing**: add the apex as an alias.
+2. **Caddy on the backend**: the daemon's `--base-domain` is single-valued and only auto-manages one hostname's TLS subject + reverse-proxy route. The second apex needs a manual Caddy-admin patch.
+
+#### Recipe
+
+Assume the lab primary already has `--public-base-domain demo.example.org` so suffix routing works for subdomains. To additionally serve the apex:
+
+**Step 1 — sentinel routing**: add `--public-aliases demo.example.org` to the lab's `containarium-tunnel.service` ExecStart. After `systemctl daemon-reload && systemctl restart containarium-tunnel.service`, the sentinel's primary registry shows the alias and exact-matches the apex SNI to lab.
+
+**Step 2 — Caddy on lab**: patch the local Caddy via its admin API to add the apex to TLS automation subjects (so it ACMEs the cert) and to the existing reverse-proxy route's host array (so requests get forwarded to the daemon):
+
+```sh
+# add to TLS automation subjects
+sudo incus exec containarium-core-caddy -- curl -sX POST \
+  http://localhost:2019/config/apps/tls/automation/policies/0/subjects \
+  -H 'Content-Type: application/json' \
+  -d '"demo.example.org"'
+
+# add to the route's host matchers
+sudo incus exec containarium-core-caddy -- curl -sX POST \
+  http://localhost:2019/config/apps/http/servers/srv0/routes/0/match/0/host \
+  -H 'Content-Type: application/json' \
+  -d '"demo.example.org"'
+```
+
+After this, `https://demo.example.org/` ACMEs on first hit and serves from the lab daemon. Subdomains under `*.demo.example.org` still flow through the suffix-match path — no change there.
+
+#### Caveat
+
+This is operational glue, not a clean abstraction. Two known follow-ups:
+
+- The daemon's `--base-domain` should accept multiple values (or a separate `--caddy-aliases` flag) so step 2 doesn't need a manual Caddy patch. Tracked at #213. Until that lands, re-apply the Caddy patch after any daemon restart that fully rebuilds Caddy config (route-sync only updates per-route; the apex patch usually survives).
+- A backend serving multiple **apex** hostnames is a one-cluster-multiple-customers pattern. If that's the long-term shape, prefer giving each customer their own `--public-aliases` entry + Caddy subject — don't paper it over by adding everything to one base-domain.
+
 ## Edge cases & failure modes
 
 - **Identical base domains across pools.** Two primaries advertise `BaseDomains` containing the same string. `LookupByBaseDomainSuffix` returns nil. Fail closed; surfaces the misconfig instead of silently picking the wrong backend.
