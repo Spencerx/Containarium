@@ -57,9 +57,29 @@ on the internal network. Land them first.
       — `internal/server/peer.go:69-72, 295, 305`.
       — Sentinel-issued peer certs with short TTL, pinned CA.
       — Tracks finding **C-CRIT-1**.
-- [ ] **0.6** TLS + response signing for `/sentinel/peers` poll
+      — **Deferred to a dedicated PR.** Needs PKI bootstrap design
+        (CA location, peer enrollment flow, cert rotation cadence)
+        and Terraform changes to provision the CA. The HMAC layer in
+        0.4/0.6 closes the request/response *integrity* gap but does
+        NOT close the JWT *confidentiality* gap on peer-to-peer
+        calls — Bearer tokens still travel in cleartext between
+        daemons. TLS (Phase 0.5) is the only fix for that.
+- [x] **0.6** Response signing for `/sentinel/peers` poll
       — `internal/server/peer.go:109-199`.
       — Tracks finding **C-CRIT-2**.
+      — HMAC-SHA256 over `body\ntimestamp` using
+        `CONTAINARIUM_SENTINEL_AUTH_SECRET` (the same secret as 0.4).
+        Sentinel `PeersHandler` writes `X-Containarium-Sentinel-{Ts,Sig}`
+        headers; daemon `discover()` verifies before updating the peer
+        map. **Rollout-friendly fail mode:** with the secret unset the
+        daemon logs a loud warning and accepts unsigned responses
+        (audit-grade flagged); once 100% of fleets carry the secret,
+        the rollout branch should be removed so the daemon is
+        unconditionally fail-closed. New helpers
+        `auth.SignSentinelResponse` / `auth.VerifySentinelResponse`;
+        tests in `internal/auth/sentinel_hmac_test.go` and
+        `internal/sentinel/peers_signed_test.go`. TLS confidentiality
+        for the discovery channel itself rolls in with Phase 0.5.
 
 ---
 

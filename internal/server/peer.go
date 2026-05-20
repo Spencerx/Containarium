@@ -9,12 +9,14 @@ import (
 	"log"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/footprintai/containarium/pkg/core/incus"
+	"github.com/footprintai/containarium/internal/auth"
 	metricsPackage "github.com/footprintai/containarium/internal/metrics"
+	"github.com/footprintai/containarium/pkg/core/incus"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
 
@@ -103,9 +105,35 @@ func (p *PeerPool) StartDiscovery(ctx context.Context) {
 	log.Printf("[peers] auto-discovery started (sentinel: %s)", p.sentinelURL)
 }
 
+// loadSentinelHMACSecret returns the sentinel-shared HMAC secret
+// (CONTAINARIUM_SENTINEL_AUTH_SECRET) used to verify the signed
+// /sentinel/peers response. Cached on first call so we don't read
+// the env var on every discovery tick. An empty return means the
+// secret is unset.
+var (
+	sentinelHMACSecretOnce sync.Once
+	sentinelHMACSecret     []byte
+)
+
+func loadSentinelHMACSecret() []byte {
+	sentinelHMACSecretOnce.Do(func() {
+		if raw := os.Getenv("CONTAINARIUM_SENTINEL_AUTH_SECRET"); raw != "" {
+			sentinelHMACSecret = []byte(raw)
+		}
+	})
+	return sentinelHMACSecret
+}
+
 // discover fetches peer list from sentinel's /sentinel/peers endpoint.
 // When p.pool is non-empty, ?pool=<name> is appended so the sentinel returns
 // only peers tagged with that pool.
+//
+// The response body is HMAC-signed by the sentinel (see
+// auth.SignSentinelResponse + sentinel.PeersHandler). Without a
+// valid signature the daemon refuses to update its peer map — a
+// compromised sentinel or active MITM cannot inject attacker peer
+// URLs that this daemon would proxy container traffic through.
+// Fixes finding C-CRIT-2.
 func (p *PeerPool) discover() {
 	url := p.sentinelURL + "/sentinel/peers"
 	if p.pool != "" {
@@ -123,6 +151,21 @@ func (p *PeerPool) discover() {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return
+	}
+
+	// Verify the sentinel signed the response. Fail-closed: an
+	// unsigned or tampered response leaves the peer map unchanged
+	// rather than silently trusting unauthenticated discovery data.
+	if secret := loadSentinelHMACSecret(); len(secret) >= auth.SentinelMinSecretLen {
+		if err := auth.VerifySentinelResponse(resp, secret, body, time.Now()); err != nil {
+			log.Printf("[peers] discovery signature verify failed; refusing to update peer map (set CONTAINARIUM_SENTINEL_AUTH_SECRET on the sentinel to match the daemon's): %v", err)
+			return
+		}
+	} else {
+		// Loud warning, but stay backwards-compatible while operators
+		// roll out the env var on both ends. Once 100% of fleets carry
+		// the secret this branch should become an unconditional return.
+		log.Printf("[peers] CONTAINARIUM_SENTINEL_AUTH_SECRET is unset on this daemon — accepting unsigned discovery response (vulnerable to C-CRIT-2 until configured)")
 	}
 
 	var result struct {

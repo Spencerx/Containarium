@@ -9,10 +9,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/footprintai/containarium/internal/auth"
 )
 
 // State represents the current sentinel mode.
@@ -83,9 +86,31 @@ type Manager struct {
 	outageStart    time.Time // when the current outage began
 	lastPreemption time.Time // when the last preemption event was detected
 	preemptCount   int       // total preemption events observed
+
+	// hmacSecret is the shared HMAC secret used to sign
+	// /sentinel/peers responses (and reused for keysync/certsync
+	// request auth via loadSentinelSecret). Held per-Manager so
+	// tests can inject it without poking the package-global cache.
+	// Production wiring calls SetHMACSecret() with the env var
+	// CONTAINARIUM_SENTINEL_AUTH_SECRET at startup.
+	hmacSecret []byte
 }
 
-// NewManager creates a new sentinel manager.
+// SetHMACSecret wires the sentinel↔daemon shared HMAC secret. Used
+// by PeersHandler to sign the discovery response so a compromised
+// network path can't inject attacker peer URLs. Passing a value
+// shorter than auth.SentinelMinSecretLen disables signing — the
+// daemon's verifier will then fail-closed or log a rollout warning,
+// depending on its own configuration. See finding C-CRIT-2.
+func (m *Manager) SetHMACSecret(secret []byte) {
+	m.hmacSecret = secret
+}
+
+// NewManager creates a new sentinel manager. Reads
+// CONTAINARIUM_SENTINEL_AUTH_SECRET once at construction time and
+// stores it on the Manager so PeersHandler can sign the discovery
+// response. Tests can override with SetHMACSecret without touching
+// the environment.
 func NewManager(config Config, provider CloudProvider) *Manager {
 	m := &Manager{
 		config:    config,
@@ -94,6 +119,15 @@ func NewManager(config Config, provider CloudProvider) *Manager {
 		primaries: NewPrimaryRegistry(),
 		certStore: NewCertStore(),
 		keyStore:  NewKeyStore(),
+	}
+	if raw := os.Getenv("CONTAINARIUM_SENTINEL_AUTH_SECRET"); raw != "" {
+		if len(raw) < auth.SentinelMinSecretLen {
+			log.Printf("[sentinel] WARNING: CONTAINARIUM_SENTINEL_AUTH_SECRET is %d bytes, want >=%d — /sentinel/peers responses will be unsigned and daemons will reject them",
+				len(raw), auth.SentinelMinSecretLen)
+		}
+		m.hmacSecret = []byte(raw)
+	} else {
+		log.Printf("[sentinel] WARNING: CONTAINARIUM_SENTINEL_AUTH_SECRET is unset — /sentinel/peers responses will be unsigned (daemons in rollout mode accept them with a warning; once fully rolled out they will reject)")
 	}
 	m.state.Store(StateMaintenance)
 	return m
@@ -152,10 +186,28 @@ func (m *Manager) PeersHandler() http.HandlerFunc {
 			})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		// Marshal first so we can sign the exact bytes the daemon will
+		// see. Using a streaming Encoder here would race the signing
+		// header against the body write.
+		body, err := json.Marshal(map[string]interface{}{
 			"peers": peers,
 		})
+		if err != nil {
+			http.Error(w, `{"error":"marshal"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// HMAC-sign the response so a compromised network path (or
+		// future sentinel-impersonator) can't inject attacker peer
+		// URLs. The daemon verifies before trusting any peer entry.
+		// When the secret is unset, no headers are written and the
+		// daemon's verifier will fail-closed — operators see the
+		// peer-discovery failure rather than silently trusting an
+		// unsigned list. See finding C-CRIT-2.
+		auth.SignSentinelResponse(w, m.hmacSecret, body)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	}
 }
 

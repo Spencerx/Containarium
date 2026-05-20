@@ -56,6 +56,27 @@ const (
 	SentinelMinSecretLen = 32
 )
 
+// Response signing. Counterpart of the request-signing helpers
+// above, used when the sentinel returns data the daemon needs to
+// trust — currently /sentinel/peers (the peer-discovery response).
+//
+// Without this, a compromised sentinel (or active MITM on the path)
+// can inject attacker-controlled peer URLs and the daemon will
+// proxy container management traffic to them. See finding
+// C-CRIT-2.
+//
+// Wire format reuses the same headers as request signing — same
+// secret, same timestamp window, same algorithm — but the canonical
+// string is built from the response body bytes plus the timestamp:
+//
+//	signature = HMAC-SHA256(secret, body "\n" ts)
+//
+// Method and path are not mixed in (the response carries no method
+// of its own), so callers must ensure the response shape itself
+// commits to whatever context matters. For /sentinel/peers the
+// body is a JSON object containing the peer ID + proxy_path, which
+// is sufficient for the daemon to tell which peers to trust.
+
 // SignSentinelRequest stamps the timestamp + signature headers onto
 // `req`. Used by the sentinel-side HTTP client before sending. The
 // secret must satisfy SentinelMinSecretLen (caller responsibility).
@@ -121,6 +142,63 @@ func computeSentinelSignature(secret []byte, method, path, ts string) string {
 	mac.Write([]byte(method))
 	mac.Write([]byte{'\n'})
 	mac.Write([]byte(path))
+	mac.Write([]byte{'\n'})
+	mac.Write([]byte(ts))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// SignSentinelResponse stamps the timestamp + signature headers on
+// `w` for an HTTP response body of `body`. Call BEFORE writing the
+// body so headers go out first. The signature commits to (body, ts)
+// — a tampered body or replayed signature fails verification.
+//
+// When the secret is unconfigured (nil or shorter than the
+// minimum), the headers are NOT written and the body is sent
+// unsigned. The verifier on the daemon side will fail-closed and
+// log it, so misconfiguration surfaces loudly rather than silently
+// shipping unauthenticated peer lists.
+func SignSentinelResponse(w http.ResponseWriter, secret, body []byte) {
+	if len(secret) < SentinelMinSecretLen {
+		return
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	w.Header().Set(SentinelHeaderTimestamp, ts)
+	w.Header().Set(SentinelHeaderSignature, computeBodySignature(secret, body, ts))
+}
+
+// VerifySentinelResponse returns nil if the headers carried on
+// `resp` form a valid signature for `body` under `secret`. As with
+// request verification the error is intentionally generic — callers
+// surface it as a "trust failure" without echoing the reason.
+//
+// `body` is the raw response bytes the caller has already read off
+// resp.Body. The header lookup is on resp.Header.
+func VerifySentinelResponse(resp *http.Response, secret, body []byte, now time.Time) error {
+	if len(secret) < SentinelMinSecretLen {
+		return errSentinelAuth
+	}
+	tsStr := resp.Header.Get(SentinelHeaderTimestamp)
+	sig := resp.Header.Get(SentinelHeaderSignature)
+	if tsStr == "" || sig == "" {
+		return errSentinelAuth
+	}
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return errSentinelAuth
+	}
+	if delta := now.Unix() - ts; delta > int64(SentinelMaxClockSkew/time.Second) || -delta > int64(SentinelMaxClockSkew/time.Second) {
+		return errSentinelAuth
+	}
+	want := computeBodySignature(secret, body, tsStr)
+	if !hmac.Equal([]byte(want), []byte(sig)) {
+		return errSentinelAuth
+	}
+	return nil
+}
+
+func computeBodySignature(secret, body []byte, ts string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
 	mac.Write([]byte{'\n'})
 	mac.Write([]byte(ts))
 	return hex.EncodeToString(mac.Sum(nil))
