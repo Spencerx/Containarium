@@ -20,6 +20,9 @@
 //   - containarium://ci-context — JSON metadata about the current CI run
 //     (PR, commit, failing test), populated by the containarium-run GitHub
 //     Action. Empty stub when the box isn't being used for CI.
+//   - containarium://ci-prompt  — static markdown playbook telling agents
+//     how to debug a failing CI run inside this box. Paired with
+//     ci-context: ci-context is the data, ci-prompt is the behavior.
 //
 // File-ops tools enforce a sandbox in this order:
 //   1. AGENTBOX_ROOT env var (strict floor when set).
@@ -56,4 +59,5 @@ func RegisterTools(s *server.MCPServer) {
 // Called once at startup by cmd/agent-box, parallel to RegisterTools.
 func RegisterResources(s *server.MCPServer) {
 	registerCIContextResource(s)
+	registerCIPromptResource(s)
 }

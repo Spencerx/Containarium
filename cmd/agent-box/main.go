@@ -19,10 +19,14 @@
 // move_file, delete_file, tail_log, process_start, process_list,
 // process_kill. See internal/agentbox/server.go for the canonical list.
 //
-// Resources (read-only data): containarium://ci-context — JSON metadata
-// about the current CI run when the box is kept alive after a failed CI
-// run by the FootprintAI/containarium-run GitHub Action. Returns a stub
-// `{"available": false}` object when the box isn't a CI box.
+// Resources (read-only data):
+//   - containarium://ci-context — JSON metadata about the current CI run
+//     when the box is kept alive after a failed CI run by the
+//     FootprintAI/containarium-run GitHub Action. Returns a stub
+//     `{"available": false}` object when the box isn't a CI box.
+//   - containarium://ci-prompt  — static markdown playbook that tells an
+//     agent how to behave when debugging that failing CI run. Same
+//     content on every box; pair with ci-context for the per-run data.
 //
 // Distinct from cmd/mcp-server/, which is the *platform* MCP for outside-the-
 // box admin operations (create_container, list_containers, etc.). agent-box

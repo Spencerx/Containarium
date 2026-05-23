@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // callCIContextResource invokes the resource handler and returns the
@@ -114,4 +116,105 @@ func TestCIContext_DefaultPathWhenEnvUnset(t *testing.T) {
 	if got := ciContextPath(); got != defaultCIContextPath {
 		t.Errorf("ciContextPath() with empty env = %q, want %q", got, defaultCIContextPath)
 	}
+}
+
+// callCIPromptResource is the ci-prompt counterpart to
+// callCIContextResource — invokes the handler and returns the single
+// text body it produced.
+func callCIPromptResource(t *testing.T) mcp.TextResourceContents {
+	t.Helper()
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = ciPromptResourceURI
+	out, err := handleCIPromptRead(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handleCIPromptRead: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 resource content, got %d", len(out))
+	}
+	trc, ok := out[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("expected TextResourceContents, got %T", out[0])
+	}
+	return trc
+}
+
+func TestCIPrompt_HandlerReturnsMarkdownPlaybook(t *testing.T) {
+	trc := callCIPromptResource(t)
+
+	if trc.URI != ciPromptResourceURI {
+		t.Errorf("URI = %q, want %q", trc.URI, ciPromptResourceURI)
+	}
+	if trc.MIMEType != "text/markdown" {
+		t.Errorf("MIMEType = %q, want text/markdown", trc.MIMEType)
+	}
+	if trc.Text == "" {
+		t.Fatal("Text is empty; prompt body must be non-empty")
+	}
+
+	// Lock in the headings that agents will actually look for. If a
+	// future edit drops these, the prompt has either been gutted or
+	// renamed and the test wants to know.
+	wantSubstrings := []string{
+		"# Debugging a failing CI run in Containarium",
+		"## What to read first",
+		"## How to work",
+		"## How to report",
+		"## What NOT to do",
+		"containarium://ci-context",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(trc.Text, want) {
+			t.Errorf("prompt body missing expected substring %q", want)
+		}
+	}
+}
+
+func TestCIPrompt_RegisteredOnServer(t *testing.T) {
+	// Smoke test: a freshly-created server with RegisterResources called
+	// must end up advertising the ci-prompt URI. Catches the kind of
+	// regression where someone adds the handler but forgets to wire it
+	// into RegisterResources.
+	s := server.NewMCPServer("test", "0.0.0",
+		server.WithResourceCapabilities(false, false),
+	)
+	RegisterResources(s)
+
+	req := mcp.ListResourcesRequest{}
+	resp := s.HandleMessage(context.Background(), mustMarshalListResources(t, req))
+	body := jsonString(t, resp)
+	if !strings.Contains(body, ciPromptResourceURI) {
+		t.Errorf("ListResources response missing %q\nbody: %s", ciPromptResourceURI, body)
+	}
+	if !strings.Contains(body, ciContextResourceURI) {
+		t.Errorf("ListResources response missing %q (regression in ci-context registration?)\nbody: %s",
+			ciContextResourceURI, body)
+	}
+}
+
+// mustMarshalListResources builds a minimal JSON-RPC envelope for the
+// resources/list method so we can drive the MCP server in-process.
+func mustMarshalListResources(t *testing.T, _ mcp.ListResourcesRequest) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "resources/list",
+		"params":  map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal list-resources envelope: %v", err)
+	}
+	return b
+}
+
+// jsonString renders any value as compact JSON for substring assertions
+// on the ListResources response shape.
+func jsonString(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	return string(b)
 }

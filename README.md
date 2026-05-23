@@ -133,6 +133,7 @@ Resources (read-only data the agent fetches via MCP `resources/read`):
 | URI | What it returns |
 |---|---|
 | `containarium://ci-context` | JSON metadata about the current CI run (PR number, commit SHA, failing test, etc.) when the box was kept alive by the FootprintAI/containarium-run GitHub Action after a failed CI run. Returns `{"available": false}` on non-CI boxes so callers never have to special-case errors. |
+| `containarium://ci-prompt` | Static markdown playbook telling agents how to debug a failing CI run inside this box (what to read first, how to iterate, what not to do). Same body on every box; pair with `ci-context` for the per-run data. |
 
 Optional sandbox: when `AGENTBOX_ROOT` is set, every file-ops path is
 resolved against that root with a boundary-aware prefix check. Default
