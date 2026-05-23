@@ -950,6 +950,47 @@
         ]
       }
     },
+    "/v1/containers/{name}/ttl": {
+      "post": {
+        "summary": "Schedule or clear a container's auto-delete TTL",
+        "description": "Stamps the container with a wall-clock auto-delete time consumed by the daemon's TTL sweeper. duration_seconds=0 clears any existing TTL; \u003e 0 sets it to now()+duration. Capped at 604800 (7 days). Used by the containarium-run GitHub Action to auto-clean failed-CI debug boxes.",
+        "operationId": "ContainerService_SetContainerTTL",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SetContainerTTLResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "description": "Container name (e.g. \"alice-container\"). Matches the URL path\nsegment used by other per-container RPCs.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SetContainerTTLBody"
+            }
+          }
+        ],
+        "tags": [
+          "Container Operations"
+        ]
+      }
+    },
     "/v1/containers/{ownerUsername}/collaborators": {
       "get": {
         "summary": "List collaborators",
@@ -4496,6 +4537,11 @@
           "type": "integer",
           "format": "int32",
           "description": "Idle minutes before the Phase 2 auto-sleep daemon would stop\nthe container. Defaults to 15 when unset. Backed by the\nuser.containarium.idle_threshold_minutes Incus config key."
+        },
+        "ttlExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Wall-clock time at which the daemon's TTL sweeper will delete\nthis container. Unset = no TTL, container persists indefinitely.\nSet via SetContainerTTL. Consumed by internal/ttlsweeper which\nruns once a minute and force-deletes any container whose\nttl_expires_at has elapsed (with a small clock-skew grace\nmargin). Used by the containarium-run GitHub Action's\n\"keep on failure\" path to schedule auto-deletion of debug boxes."
         }
       },
       "title": "Container represents a complete container instance"
@@ -6745,6 +6791,28 @@
         }
       },
       "description": "SecretMetadata is the public-safe view of a stored secret.\n`value` is never returned by `ListSecrets` — only per-name `GetSecret`."
+    },
+    "SetContainerTTLBody": {
+      "type": "object",
+      "properties": {
+        "durationSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "Duration from now() at which the container should be deleted.\nduration_seconds == 0 clears any existing TTL (the container\npersists indefinitely). duration_seconds \u003e 0 sets ttl_expires_at\nto now() + duration. Capped at 604800 (7 days) — larger values\nreturn InvalidArgument. The cap mirrors the CLI's 168h ceiling\n(see containarium ttl set, PR #297) and bounds the worst-case\nforgotten-box cost."
+        }
+      },
+      "description": "SetContainerTTLRequest schedules or clears a container's auto-delete\ntime. The daemon's ttlsweeper goroutine consumes ttl_expires_at and\nforce-deletes once the wall clock crosses it."
+    },
+    "SetContainerTTLResponse": {
+      "type": "object",
+      "properties": {
+        "ttlExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The wall-clock deletion time the daemon committed. Unset when\nthe caller passed duration_seconds == 0 (i.e. TTL cleared)."
+        }
+      },
+      "description": "SetContainerTTLResponse reports the new TTL state."
     },
     "SetSecretRequest": {
       "type": "object",

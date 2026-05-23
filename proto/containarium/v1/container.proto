@@ -3,6 +3,7 @@ syntax = "proto3";
 package containarium.v1;
 
 import "google/protobuf/descriptor.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/footprintai/containarium/pkg/pb/containarium/v1;containariumv1";
 
@@ -169,6 +170,15 @@ message Container {
   // the container. Defaults to 15 when unset. Backed by the
   // user.containarium.idle_threshold_minutes Incus config key.
   int32 idle_threshold_minutes = 21;
+
+  // Wall-clock time at which the daemon's TTL sweeper will delete
+  // this container. Unset = no TTL, container persists indefinitely.
+  // Set via SetContainerTTL. Consumed by internal/ttlsweeper which
+  // runs once a minute and force-deletes any container whose
+  // ttl_expires_at has elapsed (with a small clock-skew grace
+  // margin). Used by the containarium-run GitHub Action's
+  // "keep on failure" path to schedule auto-deletion of debug boxes.
+  google.protobuf.Timestamp ttl_expires_at = 22;
 }
 
 // ContainerMetrics contains runtime metrics for a container
@@ -482,6 +492,31 @@ message ToggleAutoSleepResponse {
 
   // The effective idle_threshold_minutes value (15 if defaulted).
   int32 idle_threshold_minutes = 3;
+}
+
+// SetContainerTTLRequest schedules or clears a container's auto-delete
+// time. The daemon's ttlsweeper goroutine consumes ttl_expires_at and
+// force-deletes once the wall clock crosses it.
+message SetContainerTTLRequest {
+  // Container name (e.g. "alice-container"). Matches the URL path
+  // segment used by other per-container RPCs.
+  string name = 1;
+
+  // Duration from now() at which the container should be deleted.
+  // duration_seconds == 0 clears any existing TTL (the container
+  // persists indefinitely). duration_seconds > 0 sets ttl_expires_at
+  // to now() + duration. Capped at 604800 (7 days) — larger values
+  // return InvalidArgument. The cap mirrors the CLI's 168h ceiling
+  // (see containarium ttl set, PR #297) and bounds the worst-case
+  // forgotten-box cost.
+  int64 duration_seconds = 2;
+}
+
+// SetContainerTTLResponse reports the new TTL state.
+message SetContainerTTLResponse {
+  // The wall-clock deletion time the daemon committed. Unset when
+  // the caller passed duration_seconds == 0 (i.e. TTL cleared).
+  google.protobuf.Timestamp ttl_expires_at = 1;
 }
 
 // AddSSHKeyRequest is the request to add an SSH key to a container

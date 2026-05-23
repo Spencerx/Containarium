@@ -31,6 +31,7 @@ const (
 	ContainerService_AdoptMigratedContainer_FullMethodName = "/containarium.v1.ContainerService/AdoptMigratedContainer"
 	ContainerService_ToggleMonitoring_FullMethodName       = "/containarium.v1.ContainerService/ToggleMonitoring"
 	ContainerService_ToggleAutoSleep_FullMethodName        = "/containarium.v1.ContainerService/ToggleAutoSleep"
+	ContainerService_SetContainerTTL_FullMethodName        = "/containarium.v1.ContainerService/SetContainerTTL"
 	ContainerService_AddSSHKey_FullMethodName              = "/containarium.v1.ContainerService/AddSSHKey"
 	ContainerService_RemoveSSHKey_FullMethodName           = "/containarium.v1.ContainerService/RemoveSSHKey"
 	ContainerService_AddCollaborator_FullMethodName        = "/containarium.v1.ContainerService/AddCollaborator"
@@ -118,6 +119,18 @@ type ContainerServiceClient interface {
 	// HTTP wake proxy are separate work — this RPC only sets the flag
 	// they will consume.
 	ToggleAutoSleep(ctx context.Context, in *ToggleAutoSleepRequest, opts ...grpc.CallOption) (*ToggleAutoSleepResponse, error)
+	// SetContainerTTL schedules or clears a container's auto-delete time.
+	// duration_seconds == 0 clears any existing TTL; > 0 sets
+	// ttl_expires_at to now() + duration. duration_seconds is capped at
+	// 604800 (7 days); larger values return InvalidArgument. Mirrors
+	// the 168h ceiling enforced by the `containarium ttl set` CLI
+	// (PR #297) — see internal/ttlsweeper for the consumer side.
+	//
+	// The daemon-side handler is not yet implemented; this scaffold PR
+	// adds the proto + sweeper decision logic only. Until the wiring PR
+	// lands, calls return Unimplemented and the CLI degrades to a
+	// graceful no-op (per PR #297).
+	SetContainerTTL(ctx context.Context, in *SetContainerTTLRequest, opts ...grpc.CallOption) (*SetContainerTTLResponse, error)
 	// AddSSHKey adds an SSH public key to a container
 	AddSSHKey(ctx context.Context, in *AddSSHKeyRequest, opts ...grpc.CallOption) (*AddSSHKeyResponse, error)
 	// RemoveSSHKey removes an SSH public key from a container
@@ -306,6 +319,16 @@ func (c *containerServiceClient) ToggleAutoSleep(ctx context.Context, in *Toggle
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ToggleAutoSleepResponse)
 	err := c.cc.Invoke(ctx, ContainerService_ToggleAutoSleep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *containerServiceClient) SetContainerTTL(ctx context.Context, in *SetContainerTTLRequest, opts ...grpc.CallOption) (*SetContainerTTLResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetContainerTTLResponse)
+	err := c.cc.Invoke(ctx, ContainerService_SetContainerTTL_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -631,6 +654,18 @@ type ContainerServiceServer interface {
 	// HTTP wake proxy are separate work — this RPC only sets the flag
 	// they will consume.
 	ToggleAutoSleep(context.Context, *ToggleAutoSleepRequest) (*ToggleAutoSleepResponse, error)
+	// SetContainerTTL schedules or clears a container's auto-delete time.
+	// duration_seconds == 0 clears any existing TTL; > 0 sets
+	// ttl_expires_at to now() + duration. duration_seconds is capped at
+	// 604800 (7 days); larger values return InvalidArgument. Mirrors
+	// the 168h ceiling enforced by the `containarium ttl set` CLI
+	// (PR #297) — see internal/ttlsweeper for the consumer side.
+	//
+	// The daemon-side handler is not yet implemented; this scaffold PR
+	// adds the proto + sweeper decision logic only. Until the wiring PR
+	// lands, calls return Unimplemented and the CLI degrades to a
+	// graceful no-op (per PR #297).
+	SetContainerTTL(context.Context, *SetContainerTTLRequest) (*SetContainerTTLResponse, error)
 	// AddSSHKey adds an SSH public key to a container
 	AddSSHKey(context.Context, *AddSSHKeyRequest) (*AddSSHKeyResponse, error)
 	// RemoveSSHKey removes an SSH public key from a container
@@ -740,6 +775,9 @@ func (UnimplementedContainerServiceServer) ToggleMonitoring(context.Context, *To
 }
 func (UnimplementedContainerServiceServer) ToggleAutoSleep(context.Context, *ToggleAutoSleepRequest) (*ToggleAutoSleepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ToggleAutoSleep not implemented")
+}
+func (UnimplementedContainerServiceServer) SetContainerTTL(context.Context, *SetContainerTTLRequest) (*SetContainerTTLResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetContainerTTL not implemented")
 }
 func (UnimplementedContainerServiceServer) AddSSHKey(context.Context, *AddSSHKeyRequest) (*AddSSHKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddSSHKey not implemented")
@@ -1052,6 +1090,24 @@ func _ContainerService_ToggleAutoSleep_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ContainerServiceServer).ToggleAutoSleep(ctx, req.(*ToggleAutoSleepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ContainerService_SetContainerTTL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetContainerTTLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContainerServiceServer).SetContainerTTL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContainerService_SetContainerTTL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContainerServiceServer).SetContainerTTL(ctx, req.(*SetContainerTTLRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1578,6 +1634,10 @@ var ContainerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ToggleAutoSleep",
 			Handler:    _ContainerService_ToggleAutoSleep_Handler,
+		},
+		{
+			MethodName: "SetContainerTTL",
+			Handler:    _ContainerService_SetContainerTTL_Handler,
 		},
 		{
 			MethodName: "AddSSHKey",

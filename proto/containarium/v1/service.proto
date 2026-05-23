@@ -233,6 +233,29 @@ service ContainerService {
     };
   }
 
+  // SetContainerTTL schedules or clears a container's auto-delete time.
+  // duration_seconds == 0 clears any existing TTL; > 0 sets
+  // ttl_expires_at to now() + duration. duration_seconds is capped at
+  // 604800 (7 days); larger values return InvalidArgument. Mirrors
+  // the 168h ceiling enforced by the `containarium ttl set` CLI
+  // (PR #297) — see internal/ttlsweeper for the consumer side.
+  //
+  // The daemon-side handler is not yet implemented; this scaffold PR
+  // adds the proto + sweeper decision logic only. Until the wiring PR
+  // lands, calls return Unimplemented and the CLI degrades to a
+  // graceful no-op (per PR #297).
+  rpc SetContainerTTL(SetContainerTTLRequest) returns (SetContainerTTLResponse) {
+    option (google.api.http) = {
+      post: "/v1/containers/{name}/ttl"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Schedule or clear a container's auto-delete TTL";
+      description: "Stamps the container with a wall-clock auto-delete time consumed by the daemon's TTL sweeper. duration_seconds=0 clears any existing TTL; > 0 sets it to now()+duration. Capped at 604800 (7 days). Used by the containarium-run GitHub Action to auto-clean failed-CI debug boxes.";
+      tags: "Container Operations";
+    };
+  }
+
   // AddSSHKey adds an SSH public key to a container
   rpc AddSSHKey(AddSSHKeyRequest) returns (AddSSHKeyResponse) {
     option (google.api.http) = {
