@@ -174,6 +174,38 @@ func TestWakeProxy_StarterReceivesSystemIdentity(t *testing.T) {
 	}
 }
 
+// TestWakeProxy_EmptyContainerNameRoute returns 404 (not a futile
+// wake) when the resolved route has no container. The platform's
+// apex / base-domain routes have an empty ContainerName; calling the
+// starter with the resulting empty username only yields a confusing
+// "username is required" 503, so the proxy should treat it as a
+// no-match instead.
+func TestWakeProxy_EmptyContainerNameRoute(t *testing.T) {
+	const fullDomain = "apex.example.test"
+	starter := &subjectCapturingStarter{ready: true}
+
+	proxy := NewWakeProxy(
+		starter,
+		&fakeLookup{fullDomain: fullDomain, containerName: ""},
+		&fakeRouteStore{},
+		nil,
+		nil,
+		5*time.Second,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+fullDomain+"/healthz", nil)
+	req.Host = fullDomain
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404; body=%q", rec.Code, rec.Body.String())
+	}
+	if starter.gotCtx != nil {
+		t.Error("starter must not be invoked for a container-less route")
+	}
+}
+
 // TestWakeProxy_NotFound returns 404 when the Host header doesn't
 // match any route.
 func TestWakeProxy_NotFound(t *testing.T) {

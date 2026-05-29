@@ -158,6 +158,16 @@ func (w *WakeProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	containerName := route.ContainerName
+	// A resolved route with no container is not wake-eligible. The
+	// platform's own apex / base-domain routes carry an empty
+	// ContainerName; without this guard the starter is invoked with an
+	// empty username and StartContainer rejects it with a confusing
+	// "username is required" 503. A 404 matches the no-route case and
+	// is what an unmatched path on a container-less host should get.
+	if containerName == "" {
+		http.Error(rw, "wake: no matching route", http.StatusNotFound)
+		return
+	}
 	username := strings.TrimSuffix(containerName, "-container")
 
 	// Coalesce concurrent wakes for the same container.
