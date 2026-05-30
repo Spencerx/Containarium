@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/footprintai/containarium/internal/collaborator"
@@ -31,7 +32,7 @@ func NewCollaboratorManager(manager *Manager, store *collaborator.Store) *Collab
 // 3. Session logging for audit trail
 // 4. Jump server account for SSH ProxyJump access
 // 5. Persistence record in PostgreSQL
-func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUsername, sshPublicKey string, grantSudo, grantContainerRuntime bool) (*collaborator.Collaborator, error) {
+func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUsername string, sshPublicKeys []string, grantSudo, grantContainerRuntime bool) (*collaborator.Collaborator, error) {
 	// Validate inputs
 	if ownerUsername == "" {
 		return nil, fmt.Errorf("owner username cannot be empty")
@@ -39,8 +40,17 @@ func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUserna
 	if collaboratorUsername == "" {
 		return nil, fmt.Errorf("collaborator username cannot be empty")
 	}
-	if sshPublicKey == "" {
-		return nil, fmt.Errorf("SSH public key cannot be empty")
+	// Normalize keys: drop blanks/whitespace, require at least one. All
+	// the collaborator's keys are authorized so they can connect from
+	// any of their machines (#369).
+	keys := make([]string, 0, len(sshPublicKeys))
+	for _, k := range sshPublicKeys {
+		if k = strings.TrimSpace(k); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("at least one SSH public key is required")
 	}
 
 	// Validate owner username (same rules — prevents sudoers injection)
@@ -71,15 +81,25 @@ func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUserna
 	}
 
 	// Step 1: Create collaborator user in the container
-	if err := cm.createCollaboratorUser(containerName, ownerUsername, accountName, sshPublicKey, grantSudo, grantContainerRuntime); err != nil {
+	if err := cm.createCollaboratorUser(containerName, ownerUsername, accountName, keys, grantSudo, grantContainerRuntime); err != nil {
 		return nil, fmt.Errorf("failed to create collaborator user in container: %w", err)
 	}
 
-	// Step 2: Create jump server account for SSH ProxyJump access
-	if err := CreateJumpServerAccount(accountName, sshPublicKey, true); err != nil {
+	// Step 2: Create jump server account for SSH ProxyJump access.
+	// Seed it with the first key, then authorize the rest so the
+	// collaborator can ProxyJump from any of their machines (#369).
+	if err := CreateJumpServerAccount(accountName, keys[0], true); err != nil {
 		// Rollback: remove user from container
 		_ = cm.removeCollaboratorUser(containerName, accountName)
 		return nil, fmt.Errorf("failed to create jump server account: %w", err)
+	}
+	for _, k := range keys[1:] {
+		if err := updateUserSSHKey(accountName, k, true); err != nil {
+			// Rollback: container user + jump account.
+			_ = cm.removeCollaboratorUser(containerName, accountName)
+			_ = DeleteJumpServerAccount(accountName, true)
+			return nil, fmt.Errorf("failed to authorize additional SSH key on jump server: %w", err)
+		}
 	}
 
 	// Step 3: Store collaborator in database
@@ -88,7 +108,7 @@ func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUserna
 		OwnerUsername:        ownerUsername,
 		CollaboratorUsername: collaboratorUsername,
 		AccountName:          accountName,
-		SSHPublicKey:         sshPublicKey,
+		SSHPublicKey:         strings.Join(keys, "\n"),
 		CreatedAt:            time.Now(),
 		CreatedBy:            ownerUsername,
 		HasSudo:              grantSudo,
@@ -106,7 +126,7 @@ func (cm *CollaboratorManager) AddCollaborator(ownerUsername, collaboratorUserna
 }
 
 // createCollaboratorUser creates a collaborator user inside the container
-func (cm *CollaboratorManager) createCollaboratorUser(containerName, ownerUsername, accountName, sshPublicKey string, grantSudo, grantContainerRuntime bool) error {
+func (cm *CollaboratorManager) createCollaboratorUser(containerName, ownerUsername, accountName string, sshPublicKeys []string, grantSudo, grantContainerRuntime bool) error {
 	// Detect OS family from container labels or by probing
 	info, err := cm.manager.incus.GetContainer(containerName)
 	family := ostype.Debian
@@ -155,8 +175,8 @@ func (cm *CollaboratorManager) createCollaboratorUser(containerName, ownerUserna
 		_ = cm.manager.incus.Exec(containerName, []string{"usermod", "-aG", "podman", accountName})
 	}
 
-	// Setup SSH keys
-	if err := cm.manager.addSSHKeys(containerName, accountName, []string{sshPublicKey}); err != nil {
+	// Setup SSH keys — all of the collaborator's keys (#369).
+	if err := cm.manager.addSSHKeys(containerName, accountName, sshPublicKeys); err != nil {
 		return fmt.Errorf("failed to add SSH keys: %w", err)
 	}
 
@@ -361,4 +381,3 @@ func (cm *CollaboratorManager) SyncCollaboratorAccounts(verbose, force bool) (re
 func (cm *CollaboratorManager) GetStore() *collaborator.Store {
 	return cm.store
 }
-

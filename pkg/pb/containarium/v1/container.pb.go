@@ -2714,14 +2714,20 @@ type AddCollaboratorRequest struct {
 	OwnerUsername string `protobuf:"bytes,1,opt,name=owner_username,json=ownerUsername,proto3" json:"owner_username,omitempty"`
 	// Collaborator's username to add (e.g., "bob")
 	CollaboratorUsername string `protobuf:"bytes,2,opt,name=collaborator_username,json=collaboratorUsername,proto3" json:"collaborator_username,omitempty"`
-	// SSH public key for the collaborator
+	// SSH public key for the collaborator.
+	// Deprecated: prefer ssh_public_keys. Kept for back-compat — when
+	// ssh_public_keys is empty this single key is used.
 	SshPublicKey string `protobuf:"bytes,3,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`
 	// Grant full sudo access (not just su - owner)
 	GrantSudo bool `protobuf:"varint,4,opt,name=grant_sudo,json=grantSudo,proto3" json:"grant_sudo,omitempty"`
 	// Add to docker/podman group for container runtime access
 	GrantContainerRuntime bool `protobuf:"varint,5,opt,name=grant_container_runtime,json=grantContainerRuntime,proto3" json:"grant_container_runtime,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// SSH public keys for the collaborator — all are authorized, so a
+	// collaborator with several machines can connect from any of them.
+	// Takes precedence over ssh_public_key when non-empty. See #369.
+	SshPublicKeys []string `protobuf:"bytes,6,rep,name=ssh_public_keys,json=sshPublicKeys,proto3" json:"ssh_public_keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AddCollaboratorRequest) Reset() {
@@ -2787,6 +2793,13 @@ func (x *AddCollaboratorRequest) GetGrantContainerRuntime() bool {
 		return x.GrantContainerRuntime
 	}
 	return false
+}
+
+func (x *AddCollaboratorRequest) GetSshPublicKeys() []string {
+	if x != nil {
+		return x.SshPublicKeys
+	}
+	return nil
 }
 
 // AddCollaboratorResponse is the response from adding a collaborator
@@ -4159,14 +4172,15 @@ const file_containarium_v1_container_proto_rawDesc = "" +
 	"created_by\x18\b \x01(\tR\tcreatedBy\x12\x19\n" +
 	"\bhas_sudo\x18\t \x01(\bR\ahasSudo\x122\n" +
 	"\x15has_container_runtime\x18\n" +
-	" \x01(\bR\x13hasContainerRuntime\"\xf1\x01\n" +
+	" \x01(\bR\x13hasContainerRuntime\"\x99\x02\n" +
 	"\x16AddCollaboratorRequest\x12%\n" +
 	"\x0eowner_username\x18\x01 \x01(\tR\rownerUsername\x123\n" +
 	"\x15collaborator_username\x18\x02 \x01(\tR\x14collaboratorUsername\x12$\n" +
 	"\x0essh_public_key\x18\x03 \x01(\tR\fsshPublicKey\x12\x1d\n" +
 	"\n" +
 	"grant_sudo\x18\x04 \x01(\bR\tgrantSudo\x126\n" +
-	"\x17grant_container_runtime\x18\x05 \x01(\bR\x15grantContainerRuntime\"\x97\x01\n" +
+	"\x17grant_container_runtime\x18\x05 \x01(\bR\x15grantContainerRuntime\x12&\n" +
+	"\x0fssh_public_keys\x18\x06 \x03(\tR\rsshPublicKeys\"\x97\x01\n" +
 	"\x17AddCollaboratorResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12A\n" +
 	"\fcollaborator\x18\x02 \x01(\v2\x1d.containarium.v1.CollaboratorR\fcollaborator\x12\x1f\n" +

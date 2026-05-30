@@ -2059,6 +2059,20 @@ func (s *ContainerServer) SetCollaboratorManager(cm *container.CollaboratorManag
 }
 
 // AddCollaborator adds a collaborator to a container
+// collaboratorKeysFromRequest resolves the collaborator's SSH keys from
+// the request, preferring the repeated ssh_public_keys and falling back
+// to the legacy single ssh_public_key for back-compat. Returns nil when
+// neither is set. #369.
+func collaboratorKeysFromRequest(req *pb.AddCollaboratorRequest) []string {
+	if len(req.GetSshPublicKeys()) > 0 {
+		return req.GetSshPublicKeys()
+	}
+	if req.GetSshPublicKey() != "" {
+		return []string{req.GetSshPublicKey()}
+	}
+	return nil
+}
+
 func (s *ContainerServer) AddCollaborator(ctx context.Context, req *pb.AddCollaboratorRequest) (*pb.AddCollaboratorResponse, error) {
 	if req.OwnerUsername == "" {
 		return nil, fmt.Errorf("owner_username is required")
@@ -2066,8 +2080,11 @@ func (s *ContainerServer) AddCollaborator(ctx context.Context, req *pb.AddCollab
 	if req.CollaboratorUsername == "" {
 		return nil, fmt.Errorf("collaborator_username is required")
 	}
-	if req.SshPublicKey == "" {
-		return nil, fmt.Errorf("ssh_public_key is required")
+	// Accept either the repeated ssh_public_keys (preferred) or the
+	// legacy single ssh_public_key. #369.
+	sshKeys := collaboratorKeysFromRequest(req)
+	if len(sshKeys) == 0 {
+		return nil, fmt.Errorf("at least one of ssh_public_keys or ssh_public_key is required")
 	}
 	if err := auth.AuthorizeTenant(ctx, req.OwnerUsername); err != nil {
 		return nil, err
@@ -2080,8 +2097,11 @@ func (s *ContainerServer) AddCollaborator(ctx context.Context, req *pb.AddCollab
 			peer := s.peerPool.FindContainerPeer(req.OwnerUsername, authToken)
 			if peer != nil {
 				body, _ := json.Marshal(map[string]interface{}{
-					"collaborator_username":   req.CollaboratorUsername,
-					"ssh_public_key":          req.SshPublicKey,
+					"collaborator_username": req.CollaboratorUsername,
+					// ssh_public_key kept for older peers; ssh_public_keys
+					// carries the full set for #369-aware peers.
+					"ssh_public_key":          sshKeys[0],
+					"ssh_public_keys":         sshKeys,
 					"grant_sudo":              req.GrantSudo,
 					"grant_container_runtime": req.GrantContainerRuntime,
 				})
@@ -2112,7 +2132,7 @@ func (s *ContainerServer) AddCollaborator(ctx context.Context, req *pb.AddCollab
 		return nil, fmt.Errorf("collaborator management not enabled")
 	}
 
-	collab, err := s.collaboratorManager.AddCollaborator(req.OwnerUsername, req.CollaboratorUsername, req.SshPublicKey, req.GrantSudo, req.GrantContainerRuntime)
+	collab, err := s.collaboratorManager.AddCollaborator(req.OwnerUsername, req.CollaboratorUsername, sshKeys, req.GrantSudo, req.GrantContainerRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add collaborator: %w", err)
 	}

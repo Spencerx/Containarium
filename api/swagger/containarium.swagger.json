@@ -3992,7 +3992,7 @@
         },
         "sshPublicKey": {
           "type": "string",
-          "title": "SSH public key for the collaborator"
+          "description": "SSH public key for the collaborator.\nDeprecated: prefer ssh_public_keys. Kept for back-compat — when\nssh_public_keys is empty this single key is used."
         },
         "grantSudo": {
           "type": "boolean",
@@ -4001,6 +4001,13 @@
         "grantContainerRuntime": {
           "type": "boolean",
           "title": "Add to docker/podman group for container runtime access"
+        },
+        "sshPublicKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "SSH public keys for the collaborator — all are authorized, so a\ncollaborator with several machines can connect from any of them.\nTakes precedence over ssh_public_key when non-empty. See #369."
         }
       },
       "title": "AddCollaboratorRequest is the request to add a collaborator to a container"

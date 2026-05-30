@@ -20,9 +20,9 @@ var validSSHKeyPrefixes = []string{
 }
 
 var (
-	collaboratorSSHKeyFile    string
-	collaboratorGrantSudo     bool
-	collaboratorGrantRuntime  bool
+	collaboratorSSHKeyFiles  []string
+	collaboratorGrantSudo    bool
+	collaboratorGrantRuntime bool
 )
 
 var collaboratorAddCmd = &cobra.Command{
@@ -45,14 +45,17 @@ Examples:
   containarium collaborator add alice bob --ssh-key ~/.ssh/bob.pub
 
   # Add carol as a collaborator using a different SSH key
-  containarium collaborator add alice carol --ssh-key /path/to/carol.pub`,
+  containarium collaborator add alice carol --ssh-key /path/to/carol.pub
+
+  # Authorize several of bob's keys (one per machine)
+  containarium collaborator add alice bob --ssh-key ~/.ssh/bob-laptop.pub --ssh-key ~/.ssh/bob-desktop.pub`,
 	Args: cobra.ExactArgs(2),
 	RunE: runCollaboratorAdd,
 }
 
 func init() {
 	collaboratorCmd.AddCommand(collaboratorAddCmd)
-	collaboratorAddCmd.Flags().StringVar(&collaboratorSSHKeyFile, "ssh-key", "", "path to collaborator's SSH public key file (required)")
+	collaboratorAddCmd.Flags().StringArrayVar(&collaboratorSSHKeyFiles, "ssh-key", nil, "path to collaborator's SSH public key file (required; repeat to authorize multiple keys)")
 	collaboratorAddCmd.MarkFlagRequired("ssh-key")
 	collaboratorAddCmd.Flags().BoolVar(&collaboratorGrantSudo, "sudo", false, "grant full sudo access (not just su - owner)")
 	collaboratorAddCmd.Flags().BoolVar(&collaboratorGrantRuntime, "container-runtime", false, "add collaborator to docker/podman groups")
@@ -62,34 +65,36 @@ func runCollaboratorAdd(cmd *cobra.Command, args []string) error {
 	ownerUsername := args[0]
 	collaboratorUsername := args[1]
 
-	// Read SSH public key from file
-	sshKeyBytes, err := os.ReadFile(collaboratorSSHKeyFile)
-	if err != nil {
-		return fmt.Errorf("failed to read SSH key file: %w", err)
-	}
-	sshPublicKey := strings.TrimSpace(string(sshKeyBytes))
-
-	if sshPublicKey == "" {
-		return fmt.Errorf("SSH key file is empty")
-	}
-
-	// Validate SSH key format (supports standard and FIDO keys)
-	validKey := false
-	for _, prefix := range validSSHKeyPrefixes {
-		if strings.HasPrefix(sshPublicKey, prefix) {
-			validKey = true
-			break
+	// Read + validate each SSH public key file. All are authorized so
+	// the collaborator can connect from any of their machines (#369).
+	var sshPublicKeys []string
+	for _, keyFile := range collaboratorSSHKeyFiles {
+		sshKeyBytes, err := os.ReadFile(keyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read SSH key file %q: %w", keyFile, err)
 		}
-	}
-	if !validKey {
-		return fmt.Errorf("invalid SSH public key format")
+		sshPublicKey := strings.TrimSpace(string(sshKeyBytes))
+		if sshPublicKey == "" {
+			return fmt.Errorf("SSH key file %q is empty", keyFile)
+		}
+		validKey := false
+		for _, prefix := range validSSHKeyPrefixes {
+			if strings.HasPrefix(sshPublicKey, prefix) {
+				validKey = true
+				break
+			}
+		}
+		if !validKey {
+			return fmt.Errorf("invalid SSH public key format in %q", keyFile)
+		}
+		sshPublicKeys = append(sshPublicKeys, sshPublicKey)
 	}
 
 	// Local mode only for now (requires PostgreSQL)
-	return addCollaboratorLocal(ownerUsername, collaboratorUsername, sshPublicKey)
+	return addCollaboratorLocal(ownerUsername, collaboratorUsername, sshPublicKeys)
 }
 
-func addCollaboratorLocal(ownerUsername, collaboratorUsername, sshPublicKey string) error {
+func addCollaboratorLocal(ownerUsername, collaboratorUsername string, sshPublicKeys []string) error {
 	// Create container manager
 	containerMgr, err := container.New()
 	if err != nil {
@@ -113,7 +118,7 @@ func addCollaboratorLocal(ownerUsername, collaboratorUsername, sshPublicKey stri
 	collaboratorMgr := container.NewCollaboratorManager(containerMgr, collaboratorStore)
 
 	// Add collaborator
-	collab, err := collaboratorMgr.AddCollaborator(ownerUsername, collaboratorUsername, sshPublicKey, collaboratorGrantSudo, collaboratorGrantRuntime)
+	collab, err := collaboratorMgr.AddCollaborator(ownerUsername, collaboratorUsername, sshPublicKeys, collaboratorGrantSudo, collaboratorGrantRuntime)
 	if err != nil {
 		return fmt.Errorf("failed to add collaborator: %w", err)
 	}
