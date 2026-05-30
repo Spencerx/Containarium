@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/footprintai/containarium/internal/app"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/pkg/core/stacks"
 )
@@ -66,12 +67,12 @@ type CoreServicesConfig struct {
 
 // CoreServices manages the core infrastructure containers (PostgreSQL, Caddy, VictoriaMetrics+Grafana)
 type CoreServices struct {
-	incusClient        incus.Backend
-	config             CoreServicesConfig
-	postgresIP         string
-	caddyIP            string
-	victoriaMetricsIP  string
-	otelCollectorIP    string
+	incusClient       incus.Backend
+	config            CoreServicesConfig
+	postgresIP        string
+	caddyIP           string
+	victoriaMetricsIP string
+	otelCollectorIP   string
 }
 
 // NewCoreServices creates a new core services manager
@@ -442,11 +443,22 @@ func (cs *CoreServices) setupCaddy(ctx context.Context, baseDomain string) error
 		return fmt.Errorf("failed to install xcaddy: %w", err)
 	}
 
-	// Build Caddy with caddy-l4 plugin using xcaddy
-	log.Printf("Building Caddy with caddy-l4 plugin (this may take a few minutes)...")
-	if err := cs.incusClient.Exec(CoreCaddyContainer, []string{
-		"bash", "-c", "xcaddy build --with github.com/mholt/caddy-l4 --output /usr/bin/caddy",
-	}); err != nil {
+	// Build Caddy with caddy-l4 (SNI passthrough) and, when an ACME DNS-01
+	// provider is configured, the matching caddy-dns module — without it Caddy
+	// rejects the DNS-01 config the daemon emits (#378).
+	buildCmd := "xcaddy build --with github.com/mholt/caddy-l4"
+	if provider := app.DNSProviderFromEnv(); provider != "" {
+		if mod := app.DNSProviderModule(provider); mod != "" {
+			buildCmd += " --with " + mod
+			log.Printf("Building Caddy with caddy-l4 + DNS-01 provider %q (%s) (this may take a few minutes)...", provider, mod)
+		} else {
+			log.Printf("WARNING: CONTAINARIUM_ACME_DNS_PROVIDER=%q has no known caddy-dns module; building Caddy without it — DNS-01 wildcard issuance will fail until a module is added", provider)
+		}
+	} else {
+		log.Printf("Building Caddy with caddy-l4 plugin (this may take a few minutes)...")
+	}
+	buildCmd += " --output /usr/bin/caddy"
+	if err := cs.incusClient.Exec(CoreCaddyContainer, []string{"bash", "-c", buildCmd}); err != nil {
 		return fmt.Errorf("failed to build caddy with xcaddy: %w", err)
 	}
 
