@@ -118,3 +118,21 @@ func DNSChallengeFromEnvWith(t *testing.T, provider string) *CaddyACMEChallenges
 	t.Setenv("CONTAINARIUM_ACME_DNS_PROVIDER", provider)
 	return DNSChallengeFromEnv()
 }
+
+// TestDNSProviderModule maps provider names to their xcaddy module so the core
+// Caddy build can compile in the right caddy-dns plugin (#378). A config the
+// daemon emits is useless if Caddy lacks the matching module.
+func TestDNSProviderModule(t *testing.T) {
+	cases := map[string]string{
+		"cloudflare":   "github.com/caddy-dns/cloudflare",
+		"route53":      "github.com/caddy-dns/route53",
+		" cloudflare ": "github.com/caddy-dns/cloudflare", // trimmed
+		"unknown":      "",
+		"":             "",
+	}
+	for in, want := range cases {
+		if got := DNSProviderModule(in); got != want {
+			t.Errorf("DNSProviderModule(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -346,3 +346,33 @@ func DNSChallengeFromEnv() *CaddyACMEChallenges {
 	}
 	return &CaddyACMEChallenges{DNS: &CaddyDNSChallenge{Provider: prov}}
 }
+
+// dnsProviderModules maps a caddy-dns provider name to its Go module path,
+// for the xcaddy build of the core Caddy. This is the canonical list — the
+// core Caddy build (internal/server.setupCaddy) must compile in the matching
+// dns.providers.<name> module or Caddy will reject the DNS-01 config the
+// daemon emits. Mirrors internal/hosting/caddy.go's provider list.
+var dnsProviderModules = map[string]string{
+	"cloudflare":     "github.com/caddy-dns/cloudflare",
+	"route53":        "github.com/caddy-dns/route53",
+	"godaddy":        "github.com/caddy-dns/godaddy",
+	"googleclouddns": "github.com/caddy-dns/googleclouddns",
+	"digitalocean":   "github.com/caddy-dns/digitalocean",
+	"azure":          "github.com/caddy-dns/azure",
+	"vultr":          "github.com/caddy-dns/vultr",
+	"duckdns":        "github.com/caddy-dns/duckdns",
+	"namecheap":      "github.com/caddy-dns/namecheap",
+}
+
+// DNSProviderModule returns the xcaddy `--with` module path for a caddy-dns
+// provider name, or "" if unknown. Used by the core Caddy build to compile in
+// the DNS-01 provider the daemon is configured to emit (#378).
+func DNSProviderModule(provider string) string {
+	return dnsProviderModules[strings.TrimSpace(provider)]
+}
+
+// DNSProviderFromEnv returns the configured caddy-dns provider name (from
+// CONTAINARIUM_ACME_DNS_PROVIDER), or "" when DNS-01 isn't opted into.
+func DNSProviderFromEnv() string {
+	return strings.TrimSpace(os.Getenv("CONTAINARIUM_ACME_DNS_PROVIDER"))
+}
