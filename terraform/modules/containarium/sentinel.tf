@@ -88,6 +88,16 @@ resource "google_compute_instance" "sentinel" {
     ignore_changes = [
       metadata["ssh-keys"],
     ]
+
+    # Phase 0.5 peer mTLS rides on the sentinel↔daemon HMAC channel, so it
+    # is inert without a shared secret. Fail at plan time rather than let
+    # the deployment come up and silently 401 every keysync/certsync (the
+    # lockout described in issue #341). 32 bytes matches the daemon's
+    # auth.SentinelMinSecretLen.
+    precondition {
+      condition     = !var.enable_peer_mtls || length(var.sentinel_auth_secret) >= 32
+      error_message = "enable_peer_mtls = true requires sentinel_auth_secret to be a 32+ byte shared secret (currently ${length(var.sentinel_auth_secret)} bytes). An empty/short secret silently 401s every sentinel↔daemon sync — see issue #341."
+    }
   }
 }
 

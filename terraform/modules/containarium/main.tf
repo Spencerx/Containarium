@@ -5,7 +5,9 @@
 # Network references are parameterized for both default and VPC networks.
 
 terraform {
-  required_version = ">= 1.0"
+  # >= 1.2 for the lifecycle precondition guarding sentinel_auth_secret
+  # when enable_peer_mtls is set (see sentinel.tf, issue #341).
+  required_version = ">= 1.2"
 
   required_providers {
     google = {
