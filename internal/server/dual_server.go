@@ -121,6 +121,26 @@ type DualServerConfig struct {
 	ProxyProtocolTrusted []string
 }
 
+// managementRouteDomains returns the domains the daemon serves its own
+// management UI/API apex on. These are the PublicBaseDomains — the same
+// list advertised to the sentinel for suffix routing — so what Caddy
+// serves and what the sentinel routes here stay identical by construction
+// (#213). Falls back to the single BaseDomain when PublicBaseDomains is
+// unset (e.g. configs built without resolvePublicBaseDomains), keeping
+// single-domain deployments unchanged.
+func managementRouteDomains(cfg *DualServerConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.PublicBaseDomains) > 0 {
+		return cfg.PublicBaseDomains
+	}
+	if cfg.BaseDomain != "" {
+		return []string{cfg.BaseDomain}
+	}
+	return nil
+}
+
 // DualServer runs both gRPC and HTTP/REST servers
 type DualServer struct {
 	config               *DualServerConfig
@@ -1667,22 +1687,29 @@ func (ds *DualServer) Start(ctx context.Context) error {
 		log.Printf("Passthrough sync job started")
 	}
 
-	// Ensure management route persists in PostgreSQL (RouteSyncJob will push to Caddy)
-	if ds.routeStore != nil && ds.config.BaseDomain != "" && ds.config.HostIP != "" {
-		mgmtRoute := &app.RouteRecord{
-			Subdomain:   ds.config.BaseDomain,
-			FullDomain:  ds.config.BaseDomain,
-			TargetIP:    ds.config.HostIP,
-			TargetPort:  ds.config.HTTPPort,
-			Protocol:    "http",
-			Description: "Containarium management UI",
-			Active:      true,
-			CreatedBy:   string(app.RouteCreatorSystem),
-		}
-		if err := ds.routeStore.Save(ctx, mgmtRoute); err != nil {
-			log.Printf("Warning: Failed to ensure management route: %v", err)
-		} else {
-			log.Printf("Management route ensured: %s -> %s:%d", ds.config.BaseDomain, ds.config.HostIP, ds.config.HTTPPort)
+	// Ensure a management route per served base domain persists in
+	// PostgreSQL (RouteSyncJob pushes each to Caddy — host matcher + TLS
+	// subject). One route per PublicBaseDomains entry, so the daemon
+	// Caddies+serves the apex of every parent domain the sentinel routes
+	// here (#213). Single-domain deployments resolve to [BaseDomain],
+	// unchanged.
+	if ds.routeStore != nil && ds.config.HostIP != "" {
+		for _, domain := range managementRouteDomains(ds.config) {
+			mgmtRoute := &app.RouteRecord{
+				Subdomain:   domain,
+				FullDomain:  domain,
+				TargetIP:    ds.config.HostIP,
+				TargetPort:  ds.config.HTTPPort,
+				Protocol:    "http",
+				Description: "Containarium management UI",
+				Active:      true,
+				CreatedBy:   string(app.RouteCreatorSystem),
+			}
+			if err := ds.routeStore.Save(ctx, mgmtRoute); err != nil {
+				log.Printf("Warning: Failed to ensure management route for %s: %v", domain, err)
+			} else {
+				log.Printf("Management route ensured: %s -> %s:%d", domain, ds.config.HostIP, ds.config.HTTPPort)
+			}
 		}
 	}
 
