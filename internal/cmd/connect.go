@@ -11,10 +11,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/footprintai/containarium/internal/connectcore"
 	"github.com/footprintai/containarium/internal/sshkey"
 	"github.com/spf13/cobra"
 )
@@ -26,16 +26,12 @@ import (
 // command and returns its output (--exec, the agent-native path), or just
 // prints the ready ssh invocation (--print).
 //
-// CLI-first per CLAUDE.md: this is the canonical surface; an MCP `connect`
-// tool is a thin wrapper over the same resolve+authorize core.
+// CLI-first per CLAUDE.md: this is the canonical surface; the MCP `connect`
+// tool is a thin wrapper over the same connectcore resolve+authorize core.
 //
 // It is glue over primitives the daemon already serves:
 //   - GET  /v1/containers/{box}            → ssh_host, username, state, IP
 //   - POST /v1/containers/{box}/ssh-keys   → authorize a key (idempotent)
-//
-// The SSH target is `username@host` where host prefers Container.ssh_host
-// (FootprintAI/Containarium#452) and falls back to the container IP — so
-// connect works against both sentinel-fronted and direct deployments.
 var (
 	connectServer   string
 	connectExec     string
@@ -76,28 +72,6 @@ func init() {
 	connectCmd.Flags().StringVar(&connectHost, "host", "", "override the SSH host (default: the box's ssh_host, else its IP)")
 	connectCmd.Flags().IntVar(&connectPort, "port", 22, "SSH port")
 	rootCmd.AddCommand(connectCmd)
-}
-
-// ---- wire DTOs (grpc-gateway emits camelCase; UseProtoNames=false) -----
-
-type connectContainer struct {
-	Username string `json:"username"`
-	State    string `json:"state"`
-	SshHost  string `json:"sshHost"`
-	Network  struct {
-		IpAddress string `json:"ipAddress"`
-	} `json:"network"`
-}
-
-type getContainerResp struct {
-	Container connectContainer `json:"container"`
-}
-
-// AddSSHKeyRequest body. The {username} path segment carries the box; the
-// body only needs the key. Body accepts camelCase or snake_case on the
-// wire — we send camelCase to match the daemon's emit convention.
-type authorizeKeyReq struct {
-	SshPublicKey string `json:"sshPublicKey"`
 }
 
 // ---- thin REST client (deliberately not ssh.go's sshHTTPClient: that
@@ -158,8 +132,8 @@ func (c *connectAPI) do(ctx context.Context, method, path string, body, out any)
 	return resp.StatusCode, fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(rb)))
 }
 
-func (c *connectAPI) GetContainer(ctx context.Context, box string) (*connectContainer, error) {
-	var out getContainerResp
+func (c *connectAPI) GetContainer(ctx context.Context, box string) (*connectcore.Container, error) {
+	var out connectcore.GetContainerResponse
 	st, err := c.do(ctx, http.MethodGet, "/v1/containers/"+url.PathEscape(box), nil, &out)
 	if st == http.StatusNotFound {
 		return nil, fmt.Errorf("box %q not found (check the name, or `containarium list`)", box)
@@ -173,82 +147,8 @@ func (c *connectAPI) GetContainer(ctx context.Context, box string) (*connectCont
 func (c *connectAPI) AuthorizeKey(ctx context.Context, box, pub string) error {
 	_, err := c.do(ctx, http.MethodPost,
 		"/v1/containers/"+url.PathEscape(box)+"/ssh-keys",
-		authorizeKeyReq{SshPublicKey: pub}, nil)
+		connectcore.AuthorizeKeyRequest{SshPublicKey: pub}, nil)
 	return err
-}
-
-// ---- pure resolution (unit-tested without network/exec) ----------------
-
-type connectTarget struct {
-	User string
-	Host string
-	Port int
-}
-
-// containerIsRunning reports whether a box can accept connections.
-// protojson emits the enum identifier ("CONTAINER_STATE_RUNNING");
-// we also accept the friendly "Running" defensively.
-func containerIsRunning(state string) bool {
-	return state == "CONTAINER_STATE_RUNNING" || strings.EqualFold(state, "running")
-}
-
-// prettyState trims the proto enum prefix for human-facing messages.
-func prettyState(state string) string {
-	s := strings.TrimPrefix(state, "CONTAINER_STATE_")
-	if s == "" {
-		return "unknown"
-	}
-	return strings.ToLower(s)
-}
-
-// buildConnectTarget derives user@host:port, preferring overrides, then
-// the daemon's ssh_host, then the container IP. Returns an actionable
-// error when neither a host nor an IP is known yet (box still placing).
-func buildConnectTarget(c *connectContainer, userOverride, hostOverride string, port int) (connectTarget, error) {
-	user := userOverride
-	if user == "" {
-		user = c.Username
-	}
-	if user == "" {
-		return connectTarget{}, fmt.Errorf("could not determine the SSH user for this box — pass --user")
-	}
-	host := hostOverride
-	if host == "" {
-		host = c.SshHost
-	}
-	if host == "" {
-		host = c.Network.IpAddress
-	}
-	if host == "" {
-		return connectTarget{}, fmt.Errorf("box has no ssh_host or IP yet (still being placed?) — retry shortly, or pass --host")
-	}
-	if port == 0 {
-		port = 22
-	}
-	return connectTarget{User: user, Host: host, Port: port}, nil
-}
-
-// buildSSHArgs assembles the ssh argv. A managed key is pinned with
-// IdentitiesOnly so ssh-agent's other keys don't shadow it; accept-new
-// avoids a first-connect prompt (important for --exec / agents) without
-// the blanket insecurity of StrictHostKeyChecking=no.
-func buildSSHArgs(t connectTarget, identity, execCmd string) []string {
-	args := []string{
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
-	}
-	if identity != "" {
-		args = append(args, "-i", identity)
-	}
-	if t.Port != 0 && t.Port != 22 {
-		args = append(args, "-p", strconv.Itoa(t.Port))
-	}
-	args = append(args, t.User+"@"+t.Host)
-	if execCmd != "" {
-		// One command string, run by the box's login shell.
-		args = append(args, execCmd)
-	}
-	return args
 }
 
 // ---- command handler ---------------------------------------------------
@@ -303,11 +203,11 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !containerIsRunning(c.State) {
+	if !connectcore.IsRunning(c.State) {
 		return fmt.Errorf("box %q is %s, not running — start it first (`containarium start %s`)",
-			box, prettyState(c.State), box)
+			box, connectcore.PrettyState(c.State), box)
 	}
-	target, err := buildConnectTarget(c, connectUser, connectHost, connectPort)
+	target, err := connectcore.BuildTarget(c, connectUser, connectHost, connectPort)
 	if err != nil {
 		return err
 	}
@@ -322,7 +222,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	fp, _ := sshkey.Fingerprint(pub)
 	fmt.Fprintf(diag, "✓ %s → %s@%s (authorized %s)\n", box, target.User, target.Host, fp)
 
-	sshArgs := buildSSHArgs(target, privPath, connectExec)
+	sshArgs := connectcore.BuildSSHArgs(target, privPath, connectExec)
 	if connectPrint {
 		// The ready invocation is the deliverable here → stdout.
 		fmt.Fprintf(cmd.OutOrStdout(), "ssh %s\n", strings.Join(sshArgs, " "))
