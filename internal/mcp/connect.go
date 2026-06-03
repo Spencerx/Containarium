@@ -101,6 +101,9 @@ func runMCPSSHExec(sshArgs []string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ssh not found in PATH: %w", err)
 	}
+	// #nosec G204 -- sshBin is the resolved `ssh` binary; sshArgs are built
+	// from a validated box name + daemon-resolved target. Running ssh is the
+	// tool's job.
 	cmd := exec.Command(sshBin, sshArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -143,6 +146,9 @@ func runMCPSessionExec(target connectcore.Target, identity, session, command str
 	defer cancel()
 
 	args := connectcore.BuildSessionExecArgs(target, identity, session, marker, connectcore.EncodeCommand(command), 60)
+	// #nosec G204 -- sshBin is the resolved `ssh` binary; args are built from
+	// a validated box name + daemon-resolved target. Running ssh is the tool's
+	// job.
 	cmd := exec.CommandContext(ctx, sshBin, args...)
 	cmd.Stdin = strings.NewReader(connectcore.SessionExecScript())
 	var stdout, stderr bytes.Buffer

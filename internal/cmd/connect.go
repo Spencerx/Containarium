@@ -271,6 +271,9 @@ func runSessionExec(diag, out io.Writer, target connectcore.Target, identity, se
 	defer cancel()
 
 	args := connectcore.BuildSessionExecArgs(target, identity, session, marker, connectcore.EncodeCommand(command), 60)
+	// #nosec G204 -- sshBin is the resolved `ssh` binary; args are built from
+	// a validated box name + daemon-resolved target + user flags. Running ssh
+	// is precisely this command's job.
 	c := exec.CommandContext(ctx, sshBin, args...)
 	c.Stdin = strings.NewReader(connectcore.SessionExecScript())
 	var stdout bytes.Buffer
@@ -311,6 +314,9 @@ func runSSH(args []string) error {
 	if err != nil {
 		return fmt.Errorf("ssh not found in PATH: %w", err)
 	}
+	// #nosec G204 -- sshBin is the resolved `ssh` binary; args are built from
+	// a validated box name + daemon-resolved target + user flags. Running ssh
+	// is precisely this command's job.
 	c := exec.Command(sshBin, args...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
