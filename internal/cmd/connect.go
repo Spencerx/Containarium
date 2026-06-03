@@ -41,6 +41,7 @@ var (
 	connectUser     string
 	connectHost     string
 	connectPort     int
+	connectSession  string
 )
 
 var connectCmd = &cobra.Command{
@@ -50,11 +51,19 @@ var connectCmd = &cobra.Command{
 logged in with — connect authorizes a managed key for you, so you never
 have to set up or copy an SSH key yourself.
 
-Three modes:
+Modes:
 
-  containarium connect my-box                 # interactive shell
-  containarium connect my-box --exec "make"   # run one command, return its output
-  containarium connect my-box --print         # authorize + print the ssh command, don't connect
+  containarium connect my-box                       # interactive shell
+  containarium connect my-box --exec "make"         # run one command, return its output
+  containarium connect my-box --print               # authorize + print the ssh command, don't connect
+
+Stateful sessions (--session) run inside a named tmux session ON THE BOX,
+so state (cd, exports, background jobs) persists across calls and you can
+attach a terminal to watch:
+
+  containarium connect my-box --session work --exec "cd /app"   # state persists...
+  containarium connect my-box --session work --exec "pwd"       # ...to the next call → /app
+  containarium connect my-box --session work                    # attach your terminal to it
 
 The SSH target is the box's ssh_host (or its IP if the daemon reports no
 ssh_host) and its SSH username. Override either with --host / --user.`,
@@ -71,6 +80,7 @@ func init() {
 	connectCmd.Flags().StringVar(&connectUser, "user", "", "override the SSH login user (default: the box's SSH username)")
 	connectCmd.Flags().StringVar(&connectHost, "host", "", "override the SSH host (default: the box's ssh_host, else its IP)")
 	connectCmd.Flags().IntVar(&connectPort, "port", 22, "SSH port")
+	connectCmd.Flags().StringVar(&connectSession, "session", "", "run inside a named tmux session on the box (stateful; persists across calls). With --exec runs the command there; without --exec attaches your terminal.")
 	rootCmd.AddCommand(connectCmd)
 }
 
@@ -222,6 +232,18 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	fp, _ := sshkey.Fingerprint(pub)
 	fmt.Fprintf(diag, "✓ %s → %s@%s (authorized %s)\n", box, target.User, target.Host, fp)
 
+	// Tier 2 — stateful tmux session on the box.
+	if connectSession != "" {
+		if err := connectcore.ValidateSessionName(connectSession); err != nil {
+			return err
+		}
+		if connectExec != "" {
+			return runSessionExec(diag, cmd.OutOrStdout(), target, privPath, connectSession, connectExec)
+		}
+		// No --exec: attach the user's terminal to the session (create if absent).
+		return runSSH(connectcore.BuildAttachArgs(target, privPath, connectSession))
+	}
+
 	sshArgs := connectcore.BuildSSHArgs(target, privPath, connectExec)
 	if connectPrint {
 		// The ready invocation is the deliverable here → stdout.
@@ -229,6 +251,55 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return runSSH(sshArgs)
+}
+
+// runSessionExec runs one command inside a named tmux session on the box
+// and prints its captured output. The remote exit code is propagated
+// (os.Exit) so CI / scripts see failures, matching plain --exec.
+func runSessionExec(diag, out io.Writer, target connectcore.Target, identity, session, command string) error {
+	marker, err := connectcore.NewMarker()
+	if err != nil {
+		return err
+	}
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found in PATH: %w", err)
+	}
+	// Box-side poll caps at the timeout; give the ssh process a little more
+	// before we abandon it.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := connectcore.BuildSessionExecArgs(target, identity, session, marker, connectcore.EncodeCommand(command), 60)
+	c := exec.CommandContext(ctx, sshBin, args...)
+	c.Stdin = strings.NewReader(connectcore.SessionExecScript())
+	var stdout bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = diag // ssh's own diagnostics (host-key, connection) to stderr
+	runErr := c.Run()
+	if runErr != nil {
+		var ee *exec.ExitError
+		if !errors.As(runErr, &ee) {
+			return fmt.Errorf("session exec: %w", runErr)
+		}
+		// Non-zero ssh exit (e.g. orchestration exit 127) still has framed
+		// output we can parse below; fall through.
+	}
+
+	cmdOut, code, perr := connectcore.ParseSessionResult(stdout.String(), marker)
+	if perr != nil {
+		return perr
+	}
+	if cmdOut != "" {
+		fmt.Fprint(out, cmdOut)
+		if !strings.HasSuffix(cmdOut, "\n") {
+			fmt.Fprintln(out)
+		}
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
 }
 
 // runSSH execs the local ssh client, inheriting the terminal. For an

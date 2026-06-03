@@ -848,9 +848,13 @@ func (s *Server) registerTools() {
 				"  - Exec (set `exec`): runs that one command on the box over SSH and returns " +
 				"    its stdout, stderr, and exit_code. Use this to operate the box — run a " +
 				"    build, tail a log, check a process — without a terminal.\n\n" +
-				"Each `exec` call is independent (stateless), so make commands self-contained " +
-				"(e.g. `cd /app && make`, not two calls). The SSH target is the box's ssh_host " +
-				"(or its IP if the daemon reports none) and its SSH username.",
+				"By default each `exec` call is independent (stateless), so make commands " +
+				"self-contained (e.g. `cd /app && make`). For state that must persist across " +
+				"calls (a working dir, env vars, a background process), pass `session` with a " +
+				"name: the command runs inside a named tmux session ON THE BOX, so a later call " +
+				"with the same `session` sees the same shell — `cd /app` then `pwd` returns " +
+				"/app. A human can `tmux attach` to that session too. The SSH target is the " +
+				"box's ssh_host (or its IP if the daemon reports none) and its SSH username.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -861,6 +865,10 @@ func (s *Server) registerTools() {
 					"exec": map[string]interface{}{
 						"type":        "string",
 						"description": "A single command to run on the box; returns its stdout/stderr/exit_code. Omit for config mode (returns the ready ssh command instead).",
+					},
+					"session": map[string]interface{}{
+						"type":        "string",
+						"description": "Run inside a named tmux session on the box (stateful — cd/env/background jobs persist across calls with the same name). Requires `exec`. Needs tmux on the box.",
 					},
 					"user": map[string]interface{}{
 						"type":        "string",

@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/footprintai/containarium/internal/connectcore"
 	"github.com/footprintai/containarium/internal/sshkey"
@@ -61,6 +63,22 @@ func handleConnect(client *Client, args map[string]interface{}) (string, error) 
 		return "", fmt.Errorf("authorize key on %q: %w", box, err)
 	}
 
+	// Tier 2 — stateful tmux session on the box. State (cd, exports,
+	// background jobs) persists across calls with the same session name.
+	if session := strings.TrimSpace(getStringArg(args, "session", "")); session != "" {
+		if err := connectcore.ValidateSessionName(session); err != nil {
+			return "", err
+		}
+		if execCmd == "" {
+			// No terminal in an MCP call — hand off the attach command.
+			attach := "ssh " + strings.Join(connectcore.BuildAttachArgs(target, privPath, session), " ")
+			return fmt.Sprintf(
+				"Session %q on %s is ready. Pass `exec` to run a command inside it, or attach a terminal:\n\n    %s\n",
+				session, box, attach), nil
+		}
+		return runMCPSessionExec(target, privPath, session, execCmd)
+	}
+
 	sshArgs := connectcore.BuildSSHArgs(target, privPath, execCmd)
 
 	if execCmd == "" {
@@ -105,6 +123,50 @@ func runMCPSSHExec(sshArgs []string) (string, error) {
 	}
 	if stderr.Len() > 0 {
 		fmt.Fprintf(&b, "\n--- stderr ---\n%s", stderr.String())
+	}
+	return b.String(), nil
+}
+
+// runMCPSessionExec runs one command inside a named tmux session on the
+// box (Tier 2) and returns the framed output + exit code. Like
+// runMCPSSHExec, a non-zero remote exit is data, not a tool error.
+func runMCPSessionExec(target connectcore.Target, identity, session, command string) (string, error) {
+	marker, err := connectcore.NewMarker()
+	if err != nil {
+		return "", err
+	}
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return "", fmt.Errorf("ssh not found in PATH: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := connectcore.BuildSessionExecArgs(target, identity, session, marker, connectcore.EncodeCommand(command), 60)
+	cmd := exec.CommandContext(ctx, sshBin, args...)
+	cmd.Stdin = strings.NewReader(connectcore.SessionExecScript())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if runErr := cmd.Run(); runErr != nil {
+		var ee *exec.ExitError
+		if !errors.As(runErr, &ee) {
+			return "", fmt.Errorf("session exec: %w", runErr)
+		}
+		// Non-zero ssh exit still carries framed output we parse below.
+	}
+
+	out, code, perr := connectcore.ParseSessionResult(stdout.String(), marker)
+	if perr != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("%w (ssh: %s)", perr, strings.TrimSpace(stderr.String()))
+		}
+		return "", perr
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "session: %s\nexit_code: %d\n", session, code)
+	if out != "" {
+		fmt.Fprintf(&b, "\n--- output ---\n%s", out)
 	}
 	return b.String(), nil
 }
