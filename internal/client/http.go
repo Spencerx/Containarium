@@ -45,9 +45,21 @@ func NewHTTPClient(baseURL string, token string) (*HTTPClient, error) {
 	// buys nothing here. Clearing TLSNextProto on a cloned default transport
 	// is the documented way to force HTTP/1.1 on net/http while keeping the
 	// default dial/timeout/proxy behaviour. See FootprintAI/Containarium#422.
+	//
+	// Clearing TLSNextProto only removes the h2 *handler* — it does NOT
+	// constrain ALPN. A fronting edge that defaults to h2 when the client
+	// advertises no ALPN protocols (e.g. Cloudflare) then still negotiates
+	// HTTP/2, the server sends h2 frames, and the h1 parser chokes on them:
+	// `malformed HTTP response "\x00\x00\x12\x04..."` (an h2 SETTINGS frame),
+	// deterministically. Pin the ALPN offer to http/1.1 so the edge serves
+	// HTTP/1.1 — matching the clean `curl --http1.1` path.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = map[string]func(authority string, c *tls.Conn) http.RoundTripper{}
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		NextProtos: []string{"http/1.1"},
+	}
 
 	return &HTTPClient{
 		baseURL: baseURL,
