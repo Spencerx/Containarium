@@ -838,6 +838,52 @@ func (s *Server) registerTools() {
 			Handler: handleSyncSSHConfig,
 		},
 		{
+			Name: "connect",
+			Description: "Get SSH access to one of your boxes using the token you're already " +
+				"authenticated with — connect authorizes a managed key for you, so there's " +
+				"no SSH-key setup. Two modes:\n\n" +
+				"  - Config (default, omit `exec`): authorizes the key and returns the ready " +
+				"    `ssh user@host` command for a human to run in their terminal. An MCP " +
+				"    call has no interactive terminal, so this hands the connection off.\n" +
+				"  - Exec (set `exec`): runs that one command on the box over SSH and returns " +
+				"    its stdout, stderr, and exit_code. Use this to operate the box — run a " +
+				"    build, tail a log, check a process — without a terminal.\n\n" +
+				"By default each `exec` call is independent (stateless), so make commands " +
+				"self-contained (e.g. `cd /app && make`). For state that must persist across " +
+				"calls (a working dir, env vars, a background process), pass `session` with a " +
+				"name: the command runs inside a named tmux session ON THE BOX, so a later call " +
+				"with the same `session` sees the same shell — `cd /app` then `pwd` returns " +
+				"/app. A human can `tmux attach` to that session too. The SSH target is the " +
+				"box's ssh_host (or its IP if the daemon reports none) and its SSH username.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"box": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the box to connect to.",
+					},
+					"exec": map[string]interface{}{
+						"type":        "string",
+						"description": "A single command to run on the box; returns its stdout/stderr/exit_code. Omit for config mode (returns the ready ssh command instead).",
+					},
+					"session": map[string]interface{}{
+						"type":        "string",
+						"description": "Run inside a named tmux session on the box (stateful — cd/env/background jobs persist across calls with the same name). Requires `exec`. Needs tmux on the box.",
+					},
+					"user": map[string]interface{}{
+						"type":        "string",
+						"description": "Override the SSH login user (default: the box's SSH username).",
+					},
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Override the SSH host (default: the box's ssh_host, else its IP).",
+					},
+				},
+				"required": []interface{}{"box"},
+			},
+			Handler: handleConnect,
+		},
+		{
 			Name: "list_routes",
 			Description: "List the proxy routes currently registered on the sentinel — the " +
 				"domain → container:port mappings that `expose_port` creates. Returns each " +
@@ -1051,6 +1097,7 @@ func toolScopeAssignments() map[string]string {
 		"push":            auth.ScopeCodeWrite,
 		"sync":            auth.ScopeCodeWrite,
 		"sync_ssh_config": auth.ScopeSSHWrite,
+		"connect":         auth.ScopeSSHWrite,
 		// JWT lifecycle (admin)
 		"revoke_token": auth.ScopeTokensWrite,
 		// Runner provisioning — provision/remove create or delete
