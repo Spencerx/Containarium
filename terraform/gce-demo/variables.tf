@@ -68,6 +68,12 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
+variable "sentinel_auth_secret" {
+  description = "Shared HMAC secret (32+ bytes) the sentinel uses to authenticate its keysync/certsync calls to the backend daemon. REQUIRED on v0.22.x — an empty secret makes every sentinel↔daemon sync 401, breaking SSH key sync and the create→ssh→install demo flow. Generate with `openssl rand -hex 32`."
+  type        = string
+  sensitive   = true
+}
+
 // DNS -----------------------------------------------------------------
 
 variable "dns_managed_zone_name" {
