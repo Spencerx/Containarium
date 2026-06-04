@@ -26,8 +26,8 @@ output "zone" {
 }
 
 output "demo_base_domain" {
-  description = "Base hostname for the demo. Apps deployed during the demo land at <name>.<this>."
-  value       = var.dns_managed_zone_name == "" ? "(set DNS manually)" : "${var.demo_subdomain}.${var.dns_zone_domain}"
+  description = "Base hostname the daemon serves apps under (and where the platform API is reachable at https://<this>). Apps deployed during the demo land at <name>.<this>. Wildcard DNS for *.<this> must point at sentinel_ip."
+  value       = var.base_domain != "" ? var.base_domain : "(app-hosting disabled)"
 }
 
 output "ssh_command" {
@@ -43,10 +43,12 @@ output "next_steps" {
     Demo cluster ready. Next steps:
     ─────────────────────────────────────────────────────────────────
 
-    1. Issue a 24h admin JWT (run on the sentinel via gcloud SSH):
+    1. Issue a 24h admin JWT. The daemon + jwt.secret live on the BACKEND,
+       which has no public IP — reach it over IAP (the sentinel's port 22 is
+       sshpiper, not a host shell, so issue the token on the backend):
 
-       gcloud compute ssh ${module.containarium.sentinel_vm_name} \
-           --project=${var.project_id} --zone=${var.zone} \
+       gcloud compute ssh ${module.containarium.spot_vm_name} \
+           --project=${var.project_id} --zone=${var.zone} --tunnel-through-iap \
            --command='sudo /usr/local/bin/containarium token generate \
                        --username demo --roles admin --expiry 24h \
                        --secret-file /etc/containarium/jwt.secret \
@@ -54,11 +56,13 @@ output "next_steps" {
            > ~/.containarium-demo-token.txt && \
        chmod 600 ~/.containarium-demo-token.txt
 
-    2. Build the platform MCP binary and wire Claude Code:
+    2. Build the platform MCP binary and wire Claude Code. The API is reached
+       through the sentinel's Caddy over HTTPS (port 8080 is not exposed
+       publicly), so point the MCP server at https://${var.base_domain}:
 
        make build-mcp
        claude mcp add containarium-demo --scope user \
-         --env CONTAINARIUM_SERVER_URL=http://${module.containarium.jump_server_ip}:8080 \
+         --env CONTAINARIUM_SERVER_URL=https://${var.base_domain} \
          --env CONTAINARIUM_JWT_TOKEN="$(cat ~/.containarium-demo-token.txt)" \
          -- $(pwd)/bin/mcp-server
 
@@ -67,7 +71,7 @@ output "next_steps" {
     4. Drive the demo with one prompt:
 
        "Spin up a sandbox called 'demo-blog', install nginx, serve a
-        hello-world page, and expose it at demo-blog.${var.dns_managed_zone_name == "" ? "<your-domain>" : "${var.demo_subdomain}.${var.dns_zone_domain}"}."
+        hello-world page, and expose it at demo-blog.${var.base_domain}."
 
     5. When the recording is done:
 

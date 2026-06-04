@@ -94,19 +94,51 @@ module "containarium" {
   allowed_ssh_sources = var.allowed_ssh_sources
   jwt_secret          = var.jwt_secret
 
-  // Networking — for the demo we give the backend a public IP so apt
-  // can reach Ubuntu repos and the daemon binary download works without
-  // provisioning Cloud NAT separately. Production deploys typically run
-  // with spot_vm_external_ip=false + a separately-provisioned Cloud NAT
-  // (see footprintai-prod), but that's out of scope for a 15-min
-  // self-contained demo apply. ~$3/month extra for the static IP.
-  spot_vm_external_ip = true
+  // Shared HMAC secret for sentinel→daemon keysync/certsync. Mandatory
+  // on v0.22.x: without it the backend 401s every sync and tenant SSH
+  // never wires up. Both sentinel and backend get it via startup env.
+  sentinel_auth_secret = var.sentinel_auth_secret
+
+  // Networking — the backend has NO external IP. It isn't internet-
+  // reachable; outbound (apt, container image pulls, container egress)
+  // goes through the Cloud NAT provisioned below. The shared module
+  // assumes a NAT already exists when spot_vm_external_ip=false but
+  // doesn't create one, so this consumer provisions it. Inbound stays
+  // intact: sentinel→backend is internal VPC, admin SSH is via IAP.
+  spot_vm_external_ip = false
   enable_iap_firewall = true
 
   labels = merge({
     environment = "demo"
     managed_by  = "terraform"
   }, var.labels)
+}
+
+// Cloud NAT — outbound internet for the backend (and its containers)
+// now that it has no external IP. Without this the backend can't apt,
+// pull LXC/docker images, or let containers reach the network. The
+// shared module expects a NAT to exist but doesn't create one, so the
+// demo consumer provisions a minimal one on the default network.
+// Cost: ~$1.40/month for the gateway + $0.045/GB processed.
+resource "google_compute_router" "demo" {
+  name    = "${var.instance_name}-router"
+  project = var.project_id
+  region  = var.region
+  network = "default"
+}
+
+resource "google_compute_router_nat" "demo" {
+  name                               = "${var.instance_name}-nat"
+  project                            = var.project_id
+  region                             = var.region
+  router                             = google_compute_router.demo.name
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = false
+    filter = "ERRORS_ONLY"
+  }
 }
 
 // Wildcard DNS record (*.<demo_subdomain>.<zone>) → sentinel IP.

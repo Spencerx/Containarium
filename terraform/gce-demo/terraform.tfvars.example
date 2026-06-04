@@ -18,6 +18,14 @@ admin_ssh_keys = {
 // Keep this secret — anyone who has it can mint admin tokens.
 jwt_secret = "REPLACE_ME_WITH_OPENSSL_RAND_HEX_32"
 
+// REQUIRED on v0.22.x: shared HMAC secret the sentinel uses to
+// authenticate keysync/certsync to the backend daemon. An empty value
+// makes every sentinel↔daemon sync 401 — SSH key sync never wires up
+// and the create→ssh→install demo flow silently breaks. Generate a
+// separate value from jwt_secret:
+//   openssl rand -hex 32
+sentinel_auth_secret = "REPLACE_ME_WITH_OPENSSL_RAND_HEX_32"
+
 // Optional: lock down SSH to your egress IP for the recording window.
 // "0.0.0.0/0" is fine for a quick test; tighter is better.
 allowed_ssh_sources = ["0.0.0.0/0"]
