@@ -1647,7 +1647,7 @@ func writeBackendDetail(b *strings.Builder, bk *Backend) {
 	}
 	fmt.Fprintf(b, "   Containers: %d running\n", bk.ContainerCount)
 	if bk.UptimeSeconds > 0 {
-		fmt.Fprintf(b, "   Uptime:     %s\n", formatUptime(bk.UptimeSeconds))
+		fmt.Fprintf(b, "   Uptime:     %s\n", formatUptime(int64(bk.UptimeSeconds)))
 	}
 	if bk.LastSeenAt != "" && bk.Type != "local" {
 		fmt.Fprintf(b, "   Last seen:  %s\n", bk.LastSeenAt)
@@ -1657,7 +1657,7 @@ func writeBackendDetail(b *strings.Builder, bk *Backend) {
 		for _, g := range bk.GPUs {
 			vram := ""
 			if g.VRAMBytes > 0 {
-				vram = fmt.Sprintf(" — %s VRAM", humanBytes(g.VRAMBytes))
+				vram = fmt.Sprintf(" — %s VRAM", humanBytes(int64(g.VRAMBytes)))
 			}
 			fmt.Fprintf(b, "     - %s %s%s\n", g.Vendor, g.ModelName, vram)
 		}

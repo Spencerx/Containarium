@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1176,12 +1177,17 @@ type GetSystemInfoResponse struct {
 	Info SystemInfo `json:"info"`
 }
 
-// ListBackendsResponse mirrors the /v1/backends wire shape — now the
-// proto-first ContainerService.ListBackends RPC (BackendInfo), which
-// replaced the former hand-coded handler (#354). The MCP client keeps its
-// own struct rather than importing the generated type; the field tags are
-// the grpc-gateway camelCase the gateway emits, and int64 fields arrive as
-// numbers, so no `,string` tags are needed.
+// ListBackendsResponse mirrors the /v1/backends wire shape — the proto-first
+// ContainerService.ListBackends RPC (BackendInfo), which replaced the former
+// hand-coded handler (#354). The MCP client keeps its own struct rather than
+// importing the generated type.
+//
+// 64-bit int fields use flexInt64: grpc-gateway's protojson serializes int64
+// as a QUOTED STRING ("12345"), not a number. The original plain-int64 fields
+// here therefore failed to decode every response from a proto-first daemon
+// ("cannot unmarshal string into int64"), silently breaking list_backends.
+// flexInt64 accepts both the string and number forms, so it works across
+// mixed daemon versions.
 type ListBackendsResponse struct {
 	Backends []Backend `json:"backends"`
 }
@@ -1192,7 +1198,7 @@ type Backend struct {
 	Healthy        bool         `json:"healthy"`
 	Version        string       `json:"version,omitempty"`
 	Hostname       string       `json:"hostname,omitempty"`
-	UptimeSeconds  int64        `json:"uptimeSeconds,omitempty"`
+	UptimeSeconds  flexInt64    `json:"uptimeSeconds,omitempty"`
 	LastSeenAt     string       `json:"lastSeenAt,omitempty"`
 	OS             string       `json:"os,omitempty"`
 	ContainerCount int32        `json:"containerCount"`
@@ -1200,9 +1206,28 @@ type Backend struct {
 }
 
 type BackendGPU struct {
-	Vendor    string `json:"vendor,omitempty"`
-	ModelName string `json:"modelName,omitempty"`
-	VRAMBytes int64  `json:"vramBytes,omitempty"`
+	Vendor    string    `json:"vendor,omitempty"`
+	ModelName string    `json:"modelName,omitempty"`
+	VRAMBytes flexInt64 `json:"vramBytes,omitempty"`
+}
+
+// flexInt64 decodes an int64 that may arrive as a JSON number OR, as
+// grpc-gateway's protojson encodes 64-bit ints, a quoted string. encoding/json
+// would reject the string form into a plain int64; this accepts both.
+type flexInt64 int64
+
+func (n *flexInt64) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*n = 0
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("flexInt64: cannot parse %q as int64: %w", s, err)
+	}
+	*n = flexInt64(v)
+	return nil
 }
 
 // AddRouteRequest mirrors network.proto's AddRouteRequest. JSON field
