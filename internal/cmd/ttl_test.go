@@ -175,3 +175,23 @@ func TestIsUnimplemented(t *testing.T) {
 		})
 	}
 }
+
+func TestIsAlreadyExists(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil is not AlreadyExists", nil, false},
+		{"plain error is not AlreadyExists", errors.New("boom"), false},
+		{"gRPC AlreadyExists is detected", status.Errorf(codes.AlreadyExists, "dup"), true},
+		{"gRPC Unimplemented is not AlreadyExists", status.Errorf(codes.Unimplemented, "nope"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAlreadyExists(tt.err); got != tt.want {
+				t.Errorf("isAlreadyExists(%v) = %v; want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}

@@ -277,6 +277,12 @@ func (c *sshHTTPClient) doJSON(ctx context.Context, method, path string, body, o
 		// can fall through gracefully — matching ttl.go's posture.
 		return status.Errorf(codes.Unimplemented, "%s %s: route not found (server may not support this RPC yet)", method, path)
 	}
+	if resp.StatusCode == http.StatusConflict {
+		// 409 = the resource already exists (e.g. this SSH key is already
+		// registered). Surface it as a typed AlreadyExists so callers can
+		// treat re-registration as idempotent success rather than a failure.
+		return status.Errorf(codes.AlreadyExists, "%s %s: %s", method, path, strings.TrimSpace(string(rb)))
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(rb)))
 	}
@@ -392,6 +398,13 @@ func runSSHSetup(cmd *cobra.Command, args []string) error {
 	if isUnimplemented(err) {
 		fmt.Fprintf(out, "\n⚠ SSH-key registration not yet supported by %s (UserService.AddSSHKey returned Unimplemented).\n", srv)
 		fmt.Fprintf(out, "  Your key is on disk at %s — once the cloud-side endpoint ships, re-run `containarium ssh setup`.\n", source)
+		return nil
+	}
+	if isAlreadyExists(err) {
+		// Re-registering the same key is a no-op, not a failure. This is the
+		// common case on a repeat `containarium login` from the same machine —
+		// report success so the post-login banner doesn't look like an error.
+		fmt.Fprintf(out, "✓ SSH key %q already registered with %s — nothing to do\n", name, srv)
 		return nil
 	}
 	if err != nil {

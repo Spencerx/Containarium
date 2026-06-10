@@ -224,6 +224,18 @@ func isUnimplemented(err error) bool {
 	return false
 }
 
+// isAlreadyExists reports whether err is a gRPC AlreadyExists (a 409 from the
+// REST surface, see sshHTTPClient.doJSON). Callers use it to treat a duplicate
+// create — e.g. re-registering an SSH key already on file — as idempotent
+// success rather than a hard failure.
+func isAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	s, ok := status.FromError(err)
+	return ok && s.Code() == codes.AlreadyExists
+}
+
 // ttlClientSet / ttlClientGet / ttlClientUnset are thin wrappers over the
 // transport client (grpc or http per the global httpMode flag), mirroring
 // how scale_down.go's toggleAutoSleepViaServer dispatches.

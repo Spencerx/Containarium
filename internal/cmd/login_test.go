@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -543,6 +544,29 @@ func TestDefaultDeviceName_SanitizesAndClamps(t *testing.T) {
 	// (still a valid, non-empty device name).
 	if got := defaultDeviceName("@@@", "abc123"); got != "abc123" {
 		t.Errorf("all-disallowed base: got %q, want bare suffix", got)
+	}
+}
+
+// TestEmailFromToken covers the identity-from-JWT recovery used for the
+// "Logged in as …" banner (the cloud session-status response omits the email).
+func TestEmailFromToken(t *testing.T) {
+	mk := func(claims string) string {
+		return "hdr." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".sig"
+	}
+	cases := []struct{ name, tok, want string }{
+		{"email claim wins", mk(`{"email":"alice@example.com","sub":"u1"}`), "alice@example.com"},
+		{"preferred_username fallback", mk(`{"preferred_username":"alice","sub":"u1"}`), "alice"},
+		{"sub fallback", mk(`{"sub":"user-123"}`), "user-123"},
+		{"empty claims", mk(`{}`), ""},
+		{"opaque non-jwt token", "opaque-api-token", ""},
+		{"too few segments", "a.b", ""},
+		{"bad base64 payload", "hdr.!!!notb64!!!.sig", ""},
+		{"non-json payload", "hdr." + base64.RawURLEncoding.EncodeToString([]byte("not json")) + ".sig", ""},
+	}
+	for _, c := range cases {
+		if got := emailFromToken(c.tok); got != c.want {
+			t.Errorf("%s: emailFromToken() = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 

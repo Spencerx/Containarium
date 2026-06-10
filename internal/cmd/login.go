@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -232,6 +233,41 @@ type sessionStatusResp struct {
 	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
+// emailFromToken best-effort extracts a human identity from a JWT access
+// token WITHOUT verifying its signature — display only. The cloud's
+// CLI-session-status response doesn't carry the user email (identity lives in
+// the token itself, see sessionStatusResp), so we read it from the token's
+// claims to label the login ("Logged in as …") and persist it for `whoami`.
+// Returns "" for anything that isn't a decodable JWT, so the caller falls back
+// gracefully (previously every login showed "unknown user", #634 follow-up).
+func emailFromToken(tok string) string {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return "" // not a JWT (e.g. an opaque token) — nothing to decode
+	}
+	// JWT segments are unpadded base64url; tolerate accidental padding too.
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Email             string `json:"email"`
+		PreferredUsername string `json:"preferred_username"`
+		Sub               string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	switch {
+	case claims.Email != "":
+		return claims.Email
+	case claims.PreferredUsername != "":
+		return claims.PreferredUsername
+	default:
+		return claims.Sub
+	}
+}
+
 // loginHTTPClient is the unauthenticated HTTP client used by the
 // device-flow handshake. Kept private so nothing else accidentally
 // uses it.
@@ -434,10 +470,17 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 3. Persist credentials.
+	// 3. Persist credentials. The status response doesn't carry the user
+	//    email (identity lives in the token), so recover it from the token's
+	//    JWT claims for the banner + `whoami`; falls back to "" if the token
+	//    isn't a decodable JWT.
+	email := status.UserEmail
+	if email == "" {
+		email = emailFromToken(status.Token)
+	}
 	creds := credentials.ServerCreds{
 		Token:     status.Token,
-		UserEmail: status.UserEmail,
+		UserEmail: email,
 		OrgID:     status.OrgID,
 		IssuedAt:  time.Now().UTC(),
 	}
@@ -463,7 +506,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
-	who := status.UserEmail
+	who := email
 	if who == "" {
 		who = "unknown user"
 	}
