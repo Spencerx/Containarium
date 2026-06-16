@@ -305,6 +305,104 @@ the LXC implementation as a pure wrapper over today's `Manager` (no behavior
 change, golden test parity), and only then lands the K8s implementation
 against the same contract.
 
+## Packaging & repo strategy — one repo now, extract later
+
+Should the K8s bridge be its own repository? **Not yet.** The decision is
+dominated by one factor and gated by one future fork.
+
+### The dominating factor: `client-go` dependency weight
+
+The K8s backend pulls in `k8s.io/client-go` — a large transitive tree. As an
+ordinary package in the main module, **every LXC-only daemon build carries that
+weight** (slower builds, bigger binary, wider attack surface for users who never
+touch K8s). The fix is a **Go build tag**, not a separate repo:
+
+```go
+//go:build k8s
+```
+
+The K8s implementation compiles only into a `containarium-k8s` build variant;
+the default daemon never imports `client-go`. Dependency blast radius is
+isolated while everything stays in one tree.
+
+### Why same-repo wins now
+
+- **The interface will churn.** `BoxBackend` is new and will change as the K8s
+  impl teaches us what's wrong with it. In one repo, "change interface + update
+  LXC + update K8s" is one atomic PR with compile-time enforcement. Split into
+  two repos and every tweak becomes a version-bump-and-coordinate dance.
+- **Go's `internal/` rule.** A separate repo *cannot* import `internal/server`.
+  Splitting forces promoting the interface to `pkg/` anyway — doing that early
+  freezes an unstable contract.
+
+### Cheap insurance to lock in today
+
+Put the interface where a future extraction is free: **`pkg/core/box`**
+(public), not `internal/`. Domain types (`BoxSpec`, `BoxHandle`, `BoxEndpoint`)
+live there too. Then "extract to its own repo" is a `git mv` + a `go.mod`, not a
+redesign.
+
+### The fork that gates a future split
+
+| | Compiled-in (build tag) | Out-of-process bridge |
+| --- | --- | --- |
+| What it is | K8s impl linked into a daemon variant | separate binary the daemon calls over gRPC |
+| `client-go` location | daemon-k8s variant only | fully outside core — no daemon binary |
+| Fits existing pattern | a new backend | **the multi-backend-peer model already in the tree** |
+| Release cadence | tied to daemon | independent |
+| Cost | one binary | a process to deploy + a wire protocol |
+
+The out-of-process bridge is the natural end state **because the PeerPool /
+`backend_id` routing already exists** — a K8s bridge can register like a peer,
+and `client-go` leaves the core dependency graph entirely. That is the version
+where an independent repo clearly pays for itself. It is a **Phase 2** move,
+after the interface stabilizes.
+
+### Decided path
+
+1. **Now:** one repo, K8s impl behind `//go:build k8s`, interface in
+   `pkg/core/box`.
+2. **Later (interface stable):** extract to its own repo as an **out-of-process
+   bridge that registers like a peer**.
+
+Per the OSS/Cloud convention, the bridge is a **generic mechanism → it ships in
+OSS**, wherever it lives. BYO-cluster *support/packaging* may be a commercial
+concern; the backend itself is not task-specific.
+
+## Why a K8s operator would want this
+
+The pitch is **not** "another way to run pods" — Kubernetes already runs pods.
+It is: *give an AI agent a safe, SSH-native foothold in your cluster without
+handing it `kubectl` or a kube-apiserver token.*
+
+- **No kube-apiserver credential in the agent's hands.** The agent reaches a
+  box over SSH and gets a `ForceCommand`-pinned `agent-box` stdio MCP — never a
+  cluster client. The box runs with `automountServiceAccountToken: false`. The
+  blast radius of a compromised agent is one hardened pod, not the cluster API.
+  `kubectl exec`-based agent access, by contrast, requires RBAC that almost
+  always over-grants.
+- **Passes `restricted` PodSecurity as-is.** Non-root, drop-ALL, seccomp
+  `RuntimeDefault`, read-only rootfs. It is a *better-behaved* tenant than most
+  workloads — installs cleanly on locked-down clusters.
+- **Auditable, namespaced RBAC footprint.** A reviewable Helm chart + a
+  namespaced ServiceAccount. No cluster-admin at steady state (only a one-time
+  CRD install). Security teams can reason about exactly what it can touch.
+- **In-kernel egress isolation, the K8s-native way.** Default-deny
+  NetworkPolicy + egress allowlist — the same deny-by-default posture shipped
+  via eBPF on the LXC backend, expressed in primitives the cluster already
+  enforces.
+- **Bring your own cluster, your own nodes, your own GPUs.** No new control
+  plane to run, no second scheduler. The agent foothold lives next to the data
+  and the GPUs it needs, inside the network boundary the operator already
+  trusts.
+- **One agent contract across runtimes.** The same `agent-box` surface, the
+  same scoped-JWT model, the same CLI (`containarium box create`) whether the
+  box lands on LXC or K8s. Teams standardize the agent interface once and pick
+  the substrate per environment.
+
+In one line: **the safest blast-radius for an autonomous agent in your cluster —
+SSH-native, RBAC-minimal, default-deny — with zero new control plane.**
+
 ## Integrating with an existing cluster (BYO)
 
 The primary target is **not** a dedicated cluster — it is a cluster the
@@ -371,6 +469,11 @@ fallback** — and surface which mode is active in box status.
    interface"). Open sub-questions: does K8s v1 implement `ExecCapable` at all
    (vs. fully image-baked provisioning), and does `SetMeta` need a typed struct
    rather than `map[string]string` per the repo's strong-typing convention.
+4. **Packaging** — *decided* (see "Packaging & repo strategy"): one repo +
+   `//go:build k8s` now, interface in `pkg/core/box`; extract to an
+   out-of-process peer-registering bridge once the interface stabilizes.
+   Remaining: confirm the build-tag split keeps `client-go` out of the default
+   `go.sum`, and whether CI gains a `containarium-k8s` build target.
 
 ## Deferred (not in v1)
 
