@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/footprintai/containarium/pkg/core/box"
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/container"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/pkg/core/incus/incustest"
@@ -52,7 +54,7 @@ func newDeletePolicyTestServer(t *testing.T, seed map[string]*incus.ContainerInf
 		return nil
 	}
 	mgr := container.NewWithBackend(mock)
-	return &ContainerServer{manager: mgr}, &calls
+	return &ContainerServer{manager: mgr, boxBackend: boxlxc.New(mgr)}, &calls
 }
 
 // TestSetContainerDeletePolicy_ProtectStampsKey — PROTECTED writes one SetConfig
@@ -115,7 +117,8 @@ func TestSetContainerDeletePolicy_UnknownContainer(t *testing.T) {
 	mock.GetContainerFunc = func(name string) (*incus.ContainerInfo, error) {
 		return nil, errors.New("container not found: " + name)
 	}
-	s := &ContainerServer{manager: container.NewWithBackend(mock)}
+	mgr := container.NewWithBackend(mock)
+	s := &ContainerServer{manager: mgr, boxBackend: boxlxc.New(mgr)}
 	_, err := s.SetContainerDeletePolicy(testCtx(), &pb.SetContainerDeletePolicyRequest{
 		Name:         "ghost",
 		DeletePolicy: pb.DeletePolicy_DELETE_POLICY_PROTECTED,
@@ -171,17 +174,17 @@ func TestSetContainerDeletePolicy_CoreContainerRejected(t *testing.T) {
 // TestToProtoContainer_DeletePolicySurfaced — a protected box surfaces as the
 // PROTECTED enum on the read path; an unprotected box as UNSPECIFIED.
 func TestToProtoContainer_DeletePolicySurfaced(t *testing.T) {
-	protected := toProtoContainer(&incus.ContainerInfo{
-		Name:         "alice-container",
-		State:        "Running",
+	protected := toProtoContainer(&box.BoxStatus{
+		Ref:          box.BoxRef{Name: "alice-container"},
+		State:        pb.ContainerState_CONTAINER_STATE_RUNNING,
 		DeletePolicy: incus.DeletePolicyProtected,
 	})
 	if protected.DeletePolicy != pb.DeletePolicy_DELETE_POLICY_PROTECTED {
 		t.Errorf("protected box delete_policy = %v, want PROTECTED", protected.DeletePolicy)
 	}
-	unprotected := toProtoContainer(&incus.ContainerInfo{
-		Name:  "bob-container",
-		State: "Running",
+	unprotected := toProtoContainer(&box.BoxStatus{
+		Ref:   box.BoxRef{Name: "bob-container"},
+		State: pb.ContainerState_CONTAINER_STATE_RUNNING,
 	})
 	if unprotected.DeletePolicy != pb.DeletePolicy_DELETE_POLICY_UNSPECIFIED {
 		t.Errorf("unprotected box delete_policy = %v, want UNSPECIFIED", unprotected.DeletePolicy)

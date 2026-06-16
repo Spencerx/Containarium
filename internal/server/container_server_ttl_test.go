@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/container"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/pkg/core/incus/incustest"
@@ -60,7 +61,7 @@ func newTTLTestServer(t *testing.T, seed map[string]*incus.ContainerInfo) (*Cont
 		return nil
 	}
 	mgr := container.NewWithBackend(mock)
-	return &ContainerServer{manager: mgr}, &calls, mock
+	return &ContainerServer{manager: mgr, boxBackend: boxlxc.New(mgr)}, &calls, mock
 }
 
 // TestSetContainerTTL_ValidDurationStampsExpiry — happy path: a 1h TTL
@@ -188,7 +189,8 @@ func TestSetContainerTTL_UnknownContainer(t *testing.T) {
 	mock.GetContainerFunc = func(name string) (*incus.ContainerInfo, error) {
 		return nil, errors.New("container not found: " + name)
 	}
-	s := &ContainerServer{manager: container.NewWithBackend(mock)}
+	mgr := container.NewWithBackend(mock)
+	s := &ContainerServer{manager: mgr, boxBackend: boxlxc.New(mgr)}
 	_, err := s.SetContainerTTL(testCtx(), &pb.SetContainerTTLRequest{
 		Name:            "ghost",
 		DurationSeconds: 3600,

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/footprintai/containarium/internal/auth"
+	"github.com/footprintai/containarium/pkg/core/box"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"google.golang.org/grpc/codes"
@@ -45,14 +46,17 @@ func (s *ContainerServer) SetContainerDeletePolicy(ctx context.Context, req *pb.
 		return nil, err
 	}
 
-	info, err := s.manager.Get(username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "container for user %s not found: %v", username, err)
 	}
-	if info.Role.IsCoreRole() {
-		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; delete policy is for user containers only", info.Name)
+	if info == nil {
+		return nil, status.Errorf(codes.NotFound, "container for user %s not found", username)
 	}
-	containerName := info.Name
+	if info.IsCore {
+		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; delete policy is for user containers only", info.Ref.Name)
+	}
+	containerName := info.Ref.Name
 
 	if req.DeletePolicy == pb.DeletePolicy_DELETE_POLICY_PROTECTED {
 		if err := s.manager.SetConfig(containerName, incus.DeletePolicyKey, incus.DeletePolicyProtected); err != nil {

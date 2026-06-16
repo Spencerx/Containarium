@@ -105,22 +105,21 @@ func TestInfoToStatus(t *testing.T) {
 		Labels:    map[string]string{"team": "infra"},
 		BackendID: "node-a",
 	}
-	st := infoToStatus(info)
+	st := StatusFromInfo(info)
 	if st.Ref != (box.BoxRef{Tenant: "alice", Name: "alice-container"}) {
 		t.Errorf("Ref = %+v", st.Ref)
 	}
 	if st.State != pb.ContainerState_CONTAINER_STATE_RUNNING {
 		t.Errorf("State = %v", st.State)
 	}
-	wantEP := box.BoxEndpoint{SSHUser: "alice", DirectIP: "10.0.0.5", AccessType: pb.AccessType_ACCESS_TYPE_SSH}
-	if st.Endpoint != wantEP {
-		t.Errorf("Endpoint = %+v, want %+v", st.Endpoint, wantEP)
+	if st.IPAddress != "10.0.0.5" {
+		t.Errorf("IPAddress = %q", st.IPAddress)
 	}
 	if st.Resources != (box.ResourceLimits{CPU: "2", Memory: "4GB", Disk: "20GB"}) {
 		t.Errorf("Resources = %+v", st.Resources)
 	}
-	if st.BackendID != "node-a" || !reflect.DeepEqual(st.Meta, info.Labels) {
-		t.Errorf("BackendID/Meta = %q / %+v", st.BackendID, st.Meta)
+	if st.BackendID != "node-a" || !reflect.DeepEqual(st.Labels, info.Labels) {
+		t.Errorf("BackendID/Labels = %q / %+v", st.BackendID, st.Labels)
 	}
 }
 
@@ -140,7 +139,7 @@ func TestLifecycleDelegation(t *testing.T) {
 	if err != nil || st == nil {
 		t.Fatalf("Get returned (%v, %v)", st, err)
 	}
-	if st.Ref.Tenant != "alice" || st.Endpoint.DirectIP != "10.0.0.5" {
+	if st.Ref.Tenant != "alice" || st.IPAddress != "10.0.0.5" {
 		t.Errorf("Get status = %+v", st)
 	}
 

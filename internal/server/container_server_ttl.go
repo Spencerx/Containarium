@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/footprintai/containarium/internal/auth"
+	"github.com/footprintai/containarium/pkg/core/box"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"google.golang.org/grpc/codes"
@@ -60,14 +61,17 @@ func (s *ContainerServer) SetContainerTTL(ctx context.Context, req *pb.SetContai
 		return nil, err
 	}
 
-	info, err := s.manager.Get(username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "container for user %s not found: %v", username, err)
 	}
-	if info.Role.IsCoreRole() {
-		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; TTL is for user containers only", info.Name)
+	if info == nil {
+		return nil, status.Errorf(codes.NotFound, "container for user %s not found", username)
 	}
-	containerName := info.Name
+	if info.IsCore {
+		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; TTL is for user containers only", info.Ref.Name)
+	}
+	containerName := info.Ref.Name
 
 	resp := &pb.SetContainerTTLResponse{}
 	if req.DurationSeconds == 0 {

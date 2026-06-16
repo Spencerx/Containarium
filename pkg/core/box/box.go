@@ -13,6 +13,7 @@ package box
 
 import (
 	"context"
+	"time"
 
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
@@ -48,7 +49,7 @@ type ResourceLimits struct {
 }
 
 // BoxSpec is the declarative input to Create. The backend makes a box matching
-// the spec exist and returns a BoxHandle. Create must be idempotent on
+// the spec exist and returns a BoxStatus. Create must be idempotent on
 // re-create (the agent-skills bring-up taught us this the hard way, #669).
 type BoxSpec struct {
 	Ref        BoxRef
@@ -58,7 +59,14 @@ type BoxSpec struct {
 	GPUs       []string // empty on K8s v1 (deferred)
 	SSHKeys    []string
 	Labels     map[string]string
+	StaticIP   string // empty = DHCP
 	Monitoring bool
+
+	// EnablePodman / EnablePodmanPrivileged request Docker/Podman support
+	// inside the box (the privileged variant is gated by policy at the server
+	// layer before it reaches here).
+	EnablePodman           bool
+	EnablePodmanPrivileged bool
 
 	// Provisioning intent — NOT an exec script. The backend decides how to
 	// realize it: LXC runs incus exec; K8s bakes it into the image / an init
@@ -66,8 +74,28 @@ type BoxSpec struct {
 	Stack       string
 	StackParams map[string]string
 
+	// Git source provisioning (optional): the backend fetches the repo into
+	// WorkspacePath at create time, no caller→box SSH.
+	GitSource     string
+	GitRef        string
+	GitCredential string
+	WorkspacePath string
+
+	// Monitoring wiring, only meaningful when Monitoring is true. These are
+	// daemon-runtime values the server supplies per-create (collector
+	// endpoint, the originating backend's id for OTel resource attributes,
+	// and the collector bearer). A K8s backend may ignore them.
+	OTelCollectorEndpoint string
+	OTelBackendID         string
+	OTelBearer            string
+
 	// AutoStart requests the box be started as part of Create.
 	AutoStart bool
+
+	// OnProvisioning, if set, is called once the box is running but still
+	// installing packages/stack — the daemon uses it to flip async-create
+	// state to "provisioning". A K8s backend may never call it.
+	OnProvisioning func()
 }
 
 // BoxEndpoint describes how an agent reaches a box over SSH. The server turns
@@ -88,26 +116,36 @@ type BoxEndpoint struct {
 	AccessType pb.AccessType
 }
 
-// BoxHandle is returned by Create: the resolved ref, how to reach the box, and
-// its state at creation time.
-type BoxHandle struct {
-	Ref      BoxRef
-	Endpoint BoxEndpoint
-	State    pb.ContainerState
-}
-
-// BoxStatus is the runtime-neutral view of an existing box.
+// BoxStatus is the runtime-neutral view of a box, returned by Create / Get /
+// List. It carries the box concepts the daemon reasons about (lifecycle,
+// addressing, resources, and the metadata that LXC stores in
+// user.containarium.* config keys and K8s would store in pod annotations).
+// The backend is responsible for translating its substrate's native form into
+// this shape — the server depends on BoxStatus, not on any incus type.
 type BoxStatus struct {
 	Ref       BoxRef
 	State     pb.ContainerState
-	Endpoint  BoxEndpoint
+	IPAddress string
 	Resources ResourceLimits
-	// Meta is the runtime-neutral replacement for raw incus config keys —
-	// labels today, and (as wiring lands) TTL / delete-policy /
-	// monitoring-enabled. LXC maps it to user.containarium.*; K8s maps it to
-	// pod annotations/labels.
-	Meta      map[string]string
-	BackendID string
+	Labels    map[string]string
+	GPU       string   // first GPU device, for display/back-compat
+	GPUs      []string // all attached GPU devices
+	BackendID string   // which backend/peer the box runs on
+	CreatedAt time.Time
+	// IsCore marks an infrastructure box (the platform's own core services)
+	// rather than a user/tenant box. The server's user-facing guards (TTL,
+	// delete-policy, monitoring, auto-sleep are "for user containers only")
+	// key off this. On LXC it's derived from the incus core-role label.
+	IsCore bool
+
+	// Lifecycle metadata (LXC: user.containarium.* config keys).
+	MonitoringEnabled         bool
+	AutoSleepEnabled          bool
+	IdleThresholdMinutes      int32
+	TTLExpiresAt              time.Time
+	StoppedAt                 time.Time
+	DeleteAfterStoppedSeconds int64
+	DeletePolicy              string // "protected" or "" (unprotected)
 }
 
 // BoxMetrics is the runtime-neutral form of a box's runtime metrics.
@@ -129,9 +167,9 @@ type BoxBackend interface {
 	// Kind reports which substrate this backend manages.
 	Kind() BackendKind
 
-	// Create makes a box matching spec exist and returns its handle.
+	// Create makes a box matching spec exist and returns its status.
 	// Idempotent on re-create.
-	Create(ctx context.Context, spec BoxSpec) (*BoxHandle, error)
+	Create(ctx context.Context, spec BoxSpec) (*BoxStatus, error)
 	// Start starts a stopped box.
 	Start(ctx context.Context, ref BoxRef) error
 	// Stop stops a running box; force skips graceful shutdown.
