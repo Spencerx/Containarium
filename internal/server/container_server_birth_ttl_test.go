@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/footprintai/containarium/pkg/core/box"
 	"github.com/footprintai/containarium/pkg/core/incus"
+	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -124,9 +126,9 @@ func TestStampBirthDeleteAfterStopped_PersistsWindow(t *testing.T) {
 // (nil) when the box isn't stopped; the window passes through as-is.
 func TestToProtoContainer_SurfacesStoppedDeleteStatus(t *testing.T) {
 	stoppedAt := time.Now().Add(-15 * time.Minute).UTC().Truncate(time.Second)
-	pc := toProtoContainer(&incus.ContainerInfo{
-		Name:                      "alice-container",
-		State:                     "Stopped",
+	pc := toProtoContainer(&box.BoxStatus{
+		Ref:                       box.BoxRef{Name: "alice-container"},
+		State:                     pb.ContainerState_CONTAINER_STATE_STOPPED,
 		StoppedAt:                 stoppedAt,
 		DeleteAfterStoppedSeconds: 86400,
 	})
@@ -138,7 +140,7 @@ func TestToProtoContainer_SurfacesStoppedDeleteStatus(t *testing.T) {
 	}
 
 	// Running box (zero StoppedAt) → no stopped_at on the wire.
-	running := toProtoContainer(&incus.ContainerInfo{Name: "bob-container", State: "Running"})
+	running := toProtoContainer(&box.BoxStatus{Ref: box.BoxRef{Name: "bob-container"}, State: pb.ContainerState_CONTAINER_STATE_RUNNING})
 	if running.GetStoppedAt() != nil {
 		t.Errorf("running box should have no stopped_at, got %v", running.GetStoppedAt())
 	}

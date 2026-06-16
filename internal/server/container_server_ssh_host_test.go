@@ -3,6 +3,7 @@ package server
 import (
 	"testing"
 
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/container"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/pkg/core/incus/incustest"
@@ -20,7 +21,8 @@ func newSSHHostTestServer(t *testing.T, sshHost string) *ContainerServer {
 		State:     "Running",
 		IPAddress: "10.0.0.5",
 	}
-	return &ContainerServer{manager: container.NewWithBackend(mock), sshHost: sshHost}
+	mgr := container.NewWithBackend(mock)
+	return &ContainerServer{manager: mgr, boxBackend: boxlxc.New(mgr), sshHost: sshHost}
 }
 
 // TestGetContainer_StampsSSHHost — sentinel-jump mode: a configured

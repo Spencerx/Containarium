@@ -18,6 +18,7 @@ import (
 	"github.com/footprintai/containarium/internal/audit"
 	"github.com/footprintai/containarium/internal/auth"
 	"github.com/footprintai/containarium/internal/netpolicy"
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/skills"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 	"github.com/footprintai/containarium/pkg/version"
@@ -190,7 +191,8 @@ func (s *AgentSkillServer) provisionSkillBox(ctx context.Context, skill *pb.Agen
 				info = reread
 			}
 		}
-		container = toProtoContainer(info)
+		st := boxlxc.StatusFromInfo(info)
+		container = toProtoContainer(&st)
 	} else {
 		// First provision. Pass the daemon's version as the agent-runtime
 		// recipe's `release` param so the box's post_start pulls matching

@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/footprintai/containarium/internal/auth"
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/recipes"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
@@ -161,7 +162,8 @@ func (s *RecipeServer) deploy(ctx context.Context, req *pb.DeployRecipeRequest) 
 	info, _ := s.containers.manager.Get(req.Name)
 	var container *pb.Container
 	if info != nil {
-		container = toProtoContainer(info)
+		st := boxlxc.StatusFromInfo(info)
+		container = toProtoContainer(&st)
 	}
 	return &pb.DeployRecipeResponse{Container: container, Url: url, Message: msg}, nil
 }

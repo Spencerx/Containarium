@@ -23,6 +23,8 @@ import (
 	"github.com/footprintai/containarium/internal/releasecheck"
 	"github.com/footprintai/containarium/internal/safecast"
 	"github.com/footprintai/containarium/internal/secrets"
+	"github.com/footprintai/containarium/pkg/core/box"
+	boxlxc "github.com/footprintai/containarium/pkg/core/box/lxc"
 	"github.com/footprintai/containarium/pkg/core/container"
 	"github.com/footprintai/containarium/pkg/core/incus"
 	"github.com/footprintai/containarium/pkg/core/ostype"
@@ -48,7 +50,13 @@ type PendingCreation struct {
 // ContainerServer implements the gRPC ContainerService
 type ContainerServer struct {
 	pb.UnimplementedContainerServiceServer
-	manager             *container.Manager
+	manager *container.Manager
+	// boxBackend is the runtime-neutral seam over the box substrate. Today it
+	// wraps the same *container.Manager (LXC/incus); a K8s backend slots in
+	// here behind a build tag. Box-lifecycle operations (Create/Get/…) route
+	// through it; the LXC-specific surface (Exec, config keys, security scans,
+	// app hosting) still calls manager directly during the transition.
+	boxBackend          box.BoxBackend
 	collaboratorManager *container.CollaboratorManager
 	emitter             *events.Emitter
 	pendingCreations    map[string]*PendingCreation
@@ -194,9 +202,22 @@ func NewContainerServer() (*ContainerServer, error) {
 	}
 	return &ContainerServer{
 		manager:          mgr,
+		boxBackend:       boxlxc.New(mgr),
 		emitter:          events.NewEmitter(events.GetBus()),
 		pendingCreations: make(map[string]*PendingCreation),
 	}, nil
+}
+
+// boxes returns the box-lifecycle backend. Production wires boxBackend in
+// NewContainerServer; this lazily wraps the Manager when it's unset so a
+// server constructed directly (legacy tests that set only `manager`) still
+// routes lifecycle calls through the same LXC seam. The wrapper is a cheap
+// struct over the Manager, so constructing it per call is fine.
+func (s *ContainerServer) boxes() box.BoxBackend {
+	if s.boxBackend != nil {
+		return s.boxBackend
+	}
+	return boxlxc.New(s.manager)
 }
 
 // CreateContainer creates a new container
@@ -309,9 +330,9 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		enablePodmanPrivileged = allowed
 	}
 
-	// Build create options
-	opts := container.CreateOptions{
-		Username:               req.Username,
+	// Build the runtime-neutral box spec
+	spec := box.BoxSpec{
+		Ref:                    box.BoxRef{Tenant: req.Username},
 		Image:                  req.Image,
 		SSHKeys:                req.SshKeys,
 		Labels:                 req.Labels,
@@ -319,18 +340,20 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		EnablePodmanPrivileged: enablePodmanPrivileged,
 		AutoStart:              true,
 		Stack:                  req.Stack,
-		StackParameters:        req.StackParameters,
+		StackParams:            req.StackParameters,
 		OSType:                 req.OsType,
+		GPUs:                   req.Gpus, // legacy singular `gpu` no longer honored (#673)
+		StaticIP:               req.StaticIp,
 		// OTel app-monitoring opt-in. The daemon-level collector
 		// endpoint is configured at startup via --otel-collector-
 		// endpoint (or auto-discovered from the core OTel collector
-		// LXC; configured by DualServer). BackendID lets the
+		// LXC; configured by DualServer). OTelBackendID lets the
 		// collector tag emissions with the originating VM for
 		// cross-VM Grafana queries. Both are no-ops when
 		// req.Monitoring is false.
 		Monitoring:            req.Monitoring,
 		OTelCollectorEndpoint: s.otelCollectorEndpoint,
-		BackendID:             s.localBackendID(),
+		OTelBackendID:         s.localBackendID(),
 		// Git source provisioning (optional) — the daemon fetches the
 		// repo into the box at create time, no caller→box SSH.
 		GitSource:     req.GitSource,
@@ -340,7 +363,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	}
 	// Phase 2.5 follow-up — load the OTel bearer for
 	// monitoring=true containers. Best-effort: an error
-	// loading the bearer leaves opts.OTelBearer empty, which
+	// loading the bearer leaves OTelBearer empty, which
 	// makes the env-stamping path skip the header (pre-2.5
 	// behavior). Operators see the WARNING in the daemon log.
 	if req.Monitoring {
@@ -348,37 +371,28 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		if err != nil {
 			log.Printf("[create] OTel bearer load failed: %v (header omitted; collector remains open)", err)
 		}
-		opts.OTelBearer = bearer
+		spec.OTelBearer = bearer
 	}
 
 	// Set resource limits
 	if req.Resources != nil {
-		opts.CPU = req.Resources.Cpu
-		opts.Memory = req.Resources.Memory
-		opts.Disk = req.Resources.Disk
-	}
-
-	// Set GPU passthrough from the repeated `gpus` field. The legacy singular
-	// `gpu` is no longer honored (#673) — multi-GPU is the only supported shape.
-	opts.GPUs = req.Gpus
-
-	// Set static IP if specified
-	if req.StaticIp != "" {
-		opts.StaticIP = req.StaticIp
+		spec.Resources.CPU = req.Resources.Cpu
+		spec.Resources.Memory = req.Resources.Memory
+		spec.Resources.Disk = req.Resources.Disk
 	}
 
 	// Use defaults if not specified (os_type takes precedence in manager.go)
-	if opts.Image == "" && opts.OSType == 0 {
-		opts.Image = "images:ubuntu/24.04"
+	if spec.Image == "" && spec.OSType == 0 {
+		spec.Image = "images:ubuntu/24.04"
 	}
-	if opts.CPU == "" {
-		opts.CPU = "4"
+	if spec.Resources.CPU == "" {
+		spec.Resources.CPU = "4"
 	}
-	if opts.Memory == "" {
-		opts.Memory = "4GB"
+	if spec.Resources.Memory == "" {
+		spec.Resources.Memory = "4GB"
 	}
-	if opts.Disk == "" {
-		opts.Disk = "50GB"
+	if spec.Resources.Disk == "" {
+		spec.Resources.Disk = "50GB"
 	}
 
 	// Async mode - return immediately and create in background
@@ -398,7 +412,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		s.pendingMu.Unlock()
 
 		// Set provisioning callback
-		opts.OnProvisioning = func() {
+		spec.OnProvisioning = func() {
 			s.pendingMu.Lock()
 			if pending, exists := s.pendingCreations[req.Username]; exists {
 				pending.Provisioning = true
@@ -406,9 +420,10 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 			s.pendingMu.Unlock()
 		}
 
-		// Start async creation
+		// Start async creation. Use a background context — the request ctx is
+		// cancelled once this handler returns the CREATING response.
 		go func() {
-			info, err := s.manager.Create(opts)
+			info, err := s.boxes().Create(context.Background(), spec)
 
 			// Phase 3.1 Phase-C: post-pull verification.
 			// In async mode the HTTP response has already
@@ -419,9 +434,9 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 			// polling for status sees a Done=true,
 			// Error=<digest-mismatch> result.
 			if err == nil && info != nil {
-				if verr := verifyImageDigestPostPull(context.Background(), req.Image, info.Name, s.manager); verr != nil {
+				if verr := verifyImageDigestPostPull(context.Background(), req.Image, info.Ref.Name, s.manager); verr != nil {
 					if delErr := s.manager.Delete(req.Username, true); delErr != nil {
-						log.Printf("[image-digest] async post-pull mismatch: failed to delete container %q: %v", info.Name, delErr)
+						log.Printf("[image-digest] async post-pull mismatch: failed to delete container %q: %v", info.Ref.Name, delErr)
 					}
 					err = verr
 					info = nil
@@ -435,7 +450,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 			// stampBirthTTL deletes the box on failure so an ephemeral box
 			// never leaks just because the async stamp lost a race.
 			if err == nil && info != nil && req.TtlSeconds > 0 {
-				if terr := s.stampBirthTTL(info.Name, req.Username, req.TtlSeconds); terr != nil {
+				if terr := s.stampBirthTTL(info.Ref.Name, req.Username, req.TtlSeconds); terr != nil {
 					err = terr
 					info = nil
 				}
@@ -445,11 +460,11 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 			// path — auto-sleep is an optimization, not a leak contract, so a
 			// failed stamp never turns a created box into a failed creation.
 			if err == nil && info != nil && req.IdleStopMinutes > 0 {
-				s.stampBirthAutoSleep(info.Name, req.IdleStopMinutes)
+				s.stampBirthAutoSleep(info.Ref.Name, req.IdleStopMinutes)
 			}
 			// Birth stopped→delete (#525), async path. Best-effort like above.
 			if err == nil && info != nil && req.DeleteAfterStoppedSeconds > 0 {
-				s.stampBirthDeleteAfterStopped(info.Name, req.DeleteAfterStoppedSeconds)
+				s.stampBirthDeleteAfterStopped(info.Ref.Name, req.DeleteAfterStoppedSeconds)
 			}
 
 			s.pendingMu.Lock()
@@ -477,9 +492,9 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 				Username: req.Username,
 				State:    pb.ContainerState_CONTAINER_STATE_CREATING,
 				Resources: &pb.ResourceLimits{
-					Cpu:    opts.CPU,
-					Memory: opts.Memory,
-					Disk:   opts.Disk,
+					Cpu:    spec.Resources.CPU,
+					Memory: spec.Resources.Memory,
+					Disk:   spec.Resources.Disk,
 				},
 			},
 			Message: fmt.Sprintf("Container creation started for user %s. Poll GET /v1/containers/%s to check status.", req.Username, req.Username),
@@ -487,7 +502,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	}
 
 	// Sync mode - wait for completion
-	info, err := s.manager.Create(opts)
+	info, err := s.boxes().Create(ctx, spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
@@ -497,13 +512,13 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// the operator declared. Mismatch means cache tampering
 	// or an index race — delete the just-created container
 	// rather than leave the attacker's payload running.
-	if err := verifyImageDigestPostPull(ctx, req.Image, info.Name, s.manager); err != nil {
+	if err := verifyImageDigestPostPull(ctx, req.Image, info.Ref.Name, s.manager); err != nil {
 		// Best-effort cleanup; the error we surface is the
 		// digest mismatch, which is the load-bearing
 		// signal. A failed delete is logged but doesn't
 		// shadow the security event.
 		if delErr := s.manager.Delete(req.Username, true); delErr != nil {
-			log.Printf("[image-digest] failed to delete container %q after post-pull mismatch: %v", info.Name, delErr)
+			log.Printf("[image-digest] failed to delete container %q after post-pull mismatch: %v", info.Ref.Name, delErr)
 		}
 		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
@@ -514,7 +529,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// errors if it can't honor the requested TTL — an ephemeral box that
 	// would leak is worse than no box.
 	if req.TtlSeconds > 0 {
-		if err := s.stampBirthTTL(info.Name, req.Username, req.TtlSeconds); err != nil {
+		if err := s.stampBirthTTL(info.Ref.Name, req.Username, req.TtlSeconds); err != nil {
 			return nil, err
 		}
 	}
@@ -526,7 +541,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// contract), auto-sleep is an optimization — a failed stamp logs and the
 	// box keeps running (it can be toggled later), it never fails the create.
 	if req.IdleStopMinutes > 0 {
-		s.stampBirthAutoSleep(info.Name, req.IdleStopMinutes)
+		s.stampBirthAutoSleep(info.Ref.Name, req.IdleStopMinutes)
 	}
 
 	// Birth stopped→delete (#525): record the window so the ttlsweeper reaps
@@ -535,7 +550,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// (StopContainer stamps stopped_at), so just persisting the window here
 	// is enough.
 	if req.DeleteAfterStoppedSeconds > 0 {
-		s.stampBirthDeleteAfterStopped(info.Name, req.DeleteAfterStoppedSeconds)
+		s.stampBirthDeleteAfterStopped(info.Ref.Name, req.DeleteAfterStoppedSeconds)
 	}
 
 	// Stamp tenant secrets into the LXC's env (best-effort — a
@@ -543,9 +558,9 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 	// retried via RefreshSecrets).
 	if s.secretsStore != nil {
 		if n, err := s.stampSecretsOnLXC(ctx, req.Username); err != nil {
-			log.Printf("[secrets] failed to stamp on %s: %v (continuing)", info.Name, err)
+			log.Printf("[secrets] failed to stamp on %s: %v (continuing)", info.Ref.Name, err)
 		} else if n > 0 {
-			log.Printf("[secrets] stamped %d secret(s) on %s at create time", n, info.Name)
+			log.Printf("[secrets] stamped %d secret(s) on %s at create time", n, info.Ref.Name)
 		}
 	}
 
@@ -563,7 +578,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 
 	resp := &pb.CreateContainerResponse{
 		Container: protoContainer,
-		Message:   fmt.Sprintf("Container %s created successfully", info.Name),
+		Message:   fmt.Sprintf("Container %s created successfully", info.Ref.Name),
 	}
 
 	if ostype.IsWindows(req.OsType) {
@@ -573,7 +588,7 @@ func (s *ContainerServer) CreateContainer(ctx context.Context, req *pb.CreateCon
 		// Register RDP connection in Guacamole (best-effort, runs in background)
 		go func() {
 			rdpPassword := info.Labels["rdp-password"]
-			connID := s.registerGuacamoleConnection(info.Name, info.IPAddress, "Administrator", rdpPassword)
+			connID := s.registerGuacamoleConnection(info.Ref.Name, info.IPAddress, "Administrator", rdpPassword)
 			if connID != "" {
 				// Store connection ID as a label for cleanup on delete
 				_ = s.manager.AddLabel(req.Username, guacamoleConnectionIDLabel, connID)
@@ -691,10 +706,13 @@ func (s *ContainerServer) ListContainers(ctx context.Context, req *pb.ListContai
 		}
 	}
 
-	// Convert to protobuf
+	// Convert to protobuf. ListContainers still filters on incus-specific
+	// fields (Role) so it stays on the Manager + the exported converter; the
+	// proto layer below sees only the runtime-neutral box.BoxStatus.
 	var protoContainers []*pb.Container
 	for i := range filtered {
-		pc := toProtoContainer(&filtered[i])
+		st := boxlxc.StatusFromInfo(&filtered[i])
+		pc := toProtoContainer(&st)
 		pc.Pool = s.resolvePool(pc.BackendId)
 		pc.SshHost = s.sshHost
 		protoContainers = append(protoContainers, pc)
@@ -705,7 +723,8 @@ func (s *ContainerServer) ListContainers(ctx context.Context, req *pb.ListContai
 		authToken := extractAuthToken(ctx)
 		peerContainers := s.peerPool.ListContainers(authToken)
 		for i := range peerContainers {
-			pc := toProtoContainer(&peerContainers[i])
+			st := boxlxc.StatusFromInfo(&peerContainers[i])
+			pc := toProtoContainer(&st)
 			pc.Pool = s.resolvePool(pc.BackendId)
 			pc.SshHost = s.sshHost
 			protoContainers = append(protoContainers, pc)
@@ -763,8 +782,8 @@ func (s *ContainerServer) GetContainer(ctx context.Context, req *pb.GetContainer
 	}
 
 	// Try to get from Incus
-	info, err := s.manager.Get(req.Username)
-	if err != nil {
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
+	if err != nil || info == nil {
 		// Not found locally — try peers
 		if s.peerPool != nil {
 			authToken := extractAuthToken(ctx)
@@ -772,7 +791,8 @@ func (s *ContainerServer) GetContainer(ctx context.Context, req *pb.GetContainer
 			containerName := req.Username + "-container"
 			for _, pc := range peerContainers {
 				if pc.Name == containerName {
-					proto := toProtoContainer(&pc)
+					st := boxlxc.StatusFromInfo(&pc)
+					proto := toProtoContainer(&st)
 					proto.Pool = s.resolvePool(proto.BackendId)
 					proto.SshHost = s.sshHost
 					return &pb.GetContainerResponse{
@@ -787,6 +807,9 @@ func (s *ContainerServer) GetContainer(ctx context.Context, req *pb.GetContainer
 			s.pendingMu.Lock()
 			delete(s.pendingCreations, req.Username)
 			s.pendingMu.Unlock()
+		}
+		if err == nil {
+			err = fmt.Errorf("container not found")
 		}
 		return nil, fmt.Errorf("failed to get container: %w", err)
 	}
@@ -992,9 +1015,12 @@ func (s *ContainerServer) StartContainer(ctx context.Context, req *pb.StartConta
 		}
 	}
 
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("container started but failed to get info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("container started but not found on read-back")
 	}
 
 	timedOut := false
@@ -1104,9 +1130,12 @@ func (s *ContainerServer) StopContainer(ctx context.Context, req *pb.StopContain
 		return nil, fmt.Errorf("failed to stop container: %w", err)
 	}
 
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("container stopped but failed to get info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("container stopped but not found on read-back")
 	}
 
 	// Two-phase reaping (#525): record when the box became stopped so the
@@ -1115,8 +1144,8 @@ func (s *ContainerServer) StopContainer(ctx context.Context, req *pb.StopContain
 	// stop restamps it; it never fails the stop. Only matters for boxes that
 	// opted into delete_after_stopped, but stamping unconditionally keeps the
 	// timestamp honest for any box and costs one config write.
-	if serr := s.manager.SetConfig(info.Name, incus.StoppedAtKey, time.Now().UTC().Format(time.RFC3339)); serr != nil {
-		log.Printf("[ttl] failed to stamp %s on %s: %v (stopped→delete timer not started)", incus.StoppedAtKey, info.Name, serr)
+	if serr := s.manager.SetConfig(info.Ref.Name, incus.StoppedAtKey, time.Now().UTC().Format(time.RFC3339)); serr != nil {
+		log.Printf("[ttl] failed to stamp %s on %s: %v (stopped→delete timer not started)", incus.StoppedAtKey, info.Ref.Name, serr)
 	}
 
 	s.emitter.EmitContainerStopped(toProtoContainer(info))
@@ -1218,9 +1247,12 @@ func (s *ContainerServer) ResizeContainer(ctx context.Context, req *pb.ResizeCon
 	}
 
 	// Get updated container info
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get updated container info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("container resized but not found on read-back")
 	}
 
 	// Convert to protobuf
@@ -1275,9 +1307,12 @@ func (s *ContainerServer) CleanupDisk(ctx context.Context, req *pb.CleanupDiskRe
 	}
 
 	// Get updated container info
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("disk cleaned but failed to get container info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("disk cleaned but container not found on read-back")
 	}
 
 	return &pb.CleanupDiskResponse{
@@ -1300,7 +1335,7 @@ func (s *ContainerServer) InstallStack(ctx context.Context, req *pb.InstallStack
 	}
 
 	// Reject stack installation on Windows VMs
-	if containerInfo, getErr := s.manager.Get(req.Username); getErr == nil {
+	if containerInfo, getErr := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username}); getErr == nil && containerInfo != nil {
 		if osLabel, ok := containerInfo.Labels[ostype.OSTypeLabelKey]; ok {
 			if ostype.IsWindows(ostype.OSTypeFromLabel(osLabel)) {
 				return nil, fmt.Errorf("stack installation is not supported on Windows VMs")
@@ -1313,9 +1348,12 @@ func (s *ContainerServer) InstallStack(ctx context.Context, req *pb.InstallStack
 	}
 
 	// Get updated container info
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("stack installed but failed to get container info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("stack installed but container not found on read-back")
 	}
 
 	return &pb.InstallStackResponse{
@@ -1406,7 +1444,7 @@ func (s *ContainerServer) AdoptMigratedContainer(ctx context.Context, req *pb.Ad
 	// OTEL_EXPORTER_OTLP_ENDPOINT is non-empty in the destination's
 	// config map right now (just pointing at the wrong place).
 	if s.otelCollectorEndpoint != "" {
-		if info, _ := s.manager.Get(req.Username); info != nil && info.MonitoringEnabled {
+		if info, _ := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username}); info != nil && info.MonitoringEnabled {
 			// Phase 2.5 follow-up — re-stamp the bearer at
 			// the destination too. Best-effort; an empty
 			// bearer omits the header so monitoring still
@@ -1437,8 +1475,8 @@ func (s *ContainerServer) AdoptMigratedContainer(ctx context.Context, req *pb.Ad
 		}
 	}
 
-	// Get the new IP. The container manager's Get() reads from incus.
-	info, err := s.manager.Get(req.Username)
+	// Get the new IP. The box backend's Get() reads from the substrate.
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, fmt.Errorf("get adopted container info: %w", err)
 	}
@@ -1522,15 +1560,18 @@ func (s *ContainerServer) ToggleMonitoring(ctx context.Context, req *pb.ToggleMo
 		return nil, err
 	}
 
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "container for user %s not found: %v", req.Username, err)
 	}
-	if info.Role.IsCoreRole() {
-		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; monitoring is for user containers only", info.Name)
+	if info == nil {
+		return nil, status.Errorf(codes.NotFound, "container for user %s not found", req.Username)
+	}
+	if info.IsCore {
+		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; monitoring is for user containers only", info.Ref.Name)
 	}
 
-	containerName := info.Name
+	containerName := info.Ref.Name
 
 	if req.Enabled {
 		if s.otelCollectorEndpoint == "" {
@@ -1570,7 +1611,7 @@ func (s *ContainerServer) ToggleMonitoring(ctx context.Context, req *pb.ToggleMo
 	// Restart so the new env reaches the app. The container was
 	// running before — we ignore stop errors (LXC might be already
 	// stopped, in which case stop is a no-op).
-	wasRunning := info.State == "Running"
+	wasRunning := info.State == pb.ContainerState_CONTAINER_STATE_RUNNING
 	if wasRunning {
 		if err := s.manager.Stop(req.Username, false); err != nil {
 			log.Printf("[togglemonitor] %s stop returned %v (continuing)", containerName, err)
@@ -1622,15 +1663,18 @@ func (s *ContainerServer) ToggleAutoSleep(ctx context.Context, req *pb.ToggleAut
 		return nil, err
 	}
 
-	info, err := s.manager.Get(req.Username)
+	info, err := s.boxes().Get(ctx, box.BoxRef{Tenant: req.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "container for user %s not found: %v", req.Username, err)
 	}
-	if info.Role.IsCoreRole() {
-		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; auto-sleep is for user containers only", info.Name)
+	if info == nil {
+		return nil, status.Errorf(codes.NotFound, "container for user %s not found", req.Username)
+	}
+	if info.IsCore {
+		return nil, status.Errorf(codes.InvalidArgument, "container %s is a core container; auto-sleep is for user containers only", info.Ref.Name)
 	}
 
-	containerName := info.Name
+	containerName := info.Ref.Name
 	effectiveThreshold := info.IdleThresholdMinutes
 	if req.IdleThresholdMinutes > 0 {
 		effectiveThreshold = req.IdleThresholdMinutes
@@ -2878,29 +2922,10 @@ func toProtoMetrics(m *incus.ContainerMetrics) *pb.ContainerMetrics {
 }
 
 // toProtoContainer converts internal container info to protobuf
-func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
-	// Parse state
-	var state pb.ContainerState
-	switch info.State {
-	case "Running":
-		state = pb.ContainerState_CONTAINER_STATE_RUNNING
-	case "Stopped":
-		state = pb.ContainerState_CONTAINER_STATE_STOPPED
-	case "Frozen":
-		state = pb.ContainerState_CONTAINER_STATE_FROZEN
-	default:
-		state = pb.ContainerState_CONTAINER_STATE_UNSPECIFIED
-	}
-
-	// Extract username from container name (format: username-container)
-	username := info.Name
-	if len(info.Name) > 10 && info.Name[len(info.Name)-10:] == "-container" {
-		username = info.Name[:len(info.Name)-10]
-	}
-
+func toProtoContainer(st *box.BoxStatus) *pb.Container {
 	// Resolve OS type from labels
 	var osTypeEnum pb.OSType
-	if osLabel, ok := info.Labels[ostype.OSTypeLabelKey]; ok {
+	if osLabel, ok := st.Labels[ostype.OSTypeLabelKey]; ok {
 		osTypeEnum = ostype.OSTypeFromLabel(osLabel)
 	}
 
@@ -2909,55 +2934,54 @@ func toProtoContainer(info *incus.ContainerInfo) *pb.Container {
 	var rdpAddress string
 	if ostype.IsWindows(osTypeEnum) {
 		accessType = pb.AccessType_ACCESS_TYPE_RDP
-		if info.IPAddress != "" {
-			rdpAddress = fmt.Sprintf("%s:3389", info.IPAddress)
+		if st.IPAddress != "" {
+			rdpAddress = fmt.Sprintf("%s:3389", st.IPAddress)
 		}
 	}
 
 	pc := &pb.Container{
-		Name:     info.Name,
-		Username: username,
-		State:    state,
+		Name:     st.Ref.Name,
+		Username: st.Ref.Tenant,
+		State:    st.State,
 		Resources: &pb.ResourceLimits{
-			Cpu:    info.CPU,
-			Memory: info.Memory,
-			Disk:   info.Disk,
+			Cpu:    st.Resources.CPU,
+			Memory: st.Resources.Memory,
+			Disk:   st.Resources.Disk,
 		},
 		Network: &pb.NetworkInfo{
-			IpAddress: info.IPAddress,
+			IpAddress: st.IPAddress,
 		},
-		Labels:               info.Labels,
-		CreatedAt:            info.CreatedAt.Unix(),
+		Labels:               st.Labels,
+		CreatedAt:            st.CreatedAt.Unix(),
 		PodmanEnabled:        true, // TODO: Get from container config
 		Stack:                "",   // TODO: Get from container labels
-		GpuDevice:            info.GPU,
-		GpuDevices:           info.GPUs,
-		BackendId:            info.BackendID,
+		GpuDevice:            st.GPU,
+		GpuDevices:           st.GPUs,
+		BackendId:            st.BackendID,
 		OsType:               osTypeEnum,
 		AccessType:           accessType,
 		RdpAddress:           rdpAddress,
-		MonitoringEnabled:    info.MonitoringEnabled,
-		AutoSleepEnabled:     info.AutoSleepEnabled,
-		IdleThresholdMinutes: info.IdleThresholdMinutes,
+		MonitoringEnabled:    st.MonitoringEnabled,
+		AutoSleepEnabled:     st.AutoSleepEnabled,
+		IdleThresholdMinutes: st.IdleThresholdMinutes,
 	}
-	// TTL — populated by SetContainerTTL on the writer side, read here
-	// from the Incus config map. Zero value means no TTL set (parser
-	// silently drops missing/unparseable keys; a corrupted key shouldn't
-	// 5xx the list endpoint).
-	if !info.TTLExpiresAt.IsZero() {
-		pc.TtlExpiresAt = timestamppb.New(info.TTLExpiresAt)
+	// TTL — populated by SetContainerTTL on the writer side. Zero value means
+	// no TTL set (parser silently drops missing/unparseable keys; a corrupted
+	// key shouldn't 5xx the list endpoint).
+	if !st.TTLExpiresAt.IsZero() {
+		pc.TtlExpiresAt = timestamppb.New(st.TTLExpiresAt)
 	}
 	// Two-phase reaping status (#525): stopped_at (cleared on start, so unset
-	// while running) + the stopped→delete window. Read from the Incus config;
-	// surfaced so a reader sees the full lifecycle (#264).
-	if !info.StoppedAt.IsZero() {
-		pc.StoppedAt = timestamppb.New(info.StoppedAt)
+	// while running) + the stopped→delete window, so a reader sees the full
+	// lifecycle (#264).
+	if !st.StoppedAt.IsZero() {
+		pc.StoppedAt = timestamppb.New(st.StoppedAt)
 	}
-	pc.DeleteAfterStoppedSeconds = info.DeleteAfterStoppedSeconds
+	pc.DeleteAfterStoppedSeconds = st.DeleteAfterStoppedSeconds
 	// Delete policy (#284): protected boxes are skipped by the ttlsweeper
-	// auto-reap and `containarium prune`. Read from the Incus config; absent /
-	// any non-"protected" value maps to UNSPECIFIED (the default, unprotected).
-	if info.DeletePolicy == incus.DeletePolicyProtected {
+	// auto-reap and `containarium prune`. Absent / any non-"protected" value
+	// maps to UNSPECIFIED (the default, unprotected).
+	if st.DeletePolicy == incus.DeletePolicyProtected {
 		pc.DeletePolicy = pb.DeletePolicy_DELETE_POLICY_PROTECTED
 	}
 	return pc
@@ -3440,8 +3464,8 @@ func (s *ContainerServer) deregisterGuacamoleConnection(username string) {
 	}
 
 	// Look up the connection ID from container labels
-	info, err := s.manager.Get(username)
-	if err != nil {
+	info, err := s.boxes().Get(context.Background(), box.BoxRef{Tenant: username})
+	if err != nil || info == nil {
 		return
 	}
 

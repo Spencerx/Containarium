@@ -37,14 +37,14 @@ func New(mgr *container.Manager) *Backend {
 // Kind reports the LXC substrate.
 func (b *Backend) Kind() box.BackendKind { return box.KindLXC }
 
-// Create makes a container matching spec exist and returns its handle.
-func (b *Backend) Create(_ context.Context, spec box.BoxSpec) (*box.BoxHandle, error) {
+// Create makes a container matching spec exist and returns its status.
+func (b *Backend) Create(_ context.Context, spec box.BoxSpec) (*box.BoxStatus, error) {
 	info, err := b.mgr.Create(specToCreateOptions(spec))
 	if err != nil {
 		return nil, err
 	}
-	st := infoToStatus(info)
-	return &box.BoxHandle{Ref: st.Ref, Endpoint: st.Endpoint, State: st.State}, nil
+	st := StatusFromInfo(info)
+	return &st, nil
 }
 
 // Start starts a stopped container.
@@ -71,7 +71,7 @@ func (b *Backend) Get(_ context.Context, ref box.BoxRef) (*box.BoxStatus, error)
 	if info == nil {
 		return nil, nil
 	}
-	st := infoToStatus(info)
+	st := StatusFromInfo(info)
 	return &st, nil
 }
 
@@ -83,7 +83,7 @@ func (b *Backend) List(_ context.Context) ([]box.BoxStatus, error) {
 	}
 	out := make([]box.BoxStatus, 0, len(infos))
 	for i := range infos {
-		out = append(out, infoToStatus(&infos[i]))
+		out = append(out, StatusFromInfo(&infos[i]))
 	}
 	return out, nil
 }
@@ -99,8 +99,11 @@ func (b *Backend) Resolve(ctx context.Context, ref box.BoxRef) (*box.BoxEndpoint
 	if st == nil {
 		return nil, nil
 	}
-	ep := st.Endpoint
-	return &ep, nil
+	return &box.BoxEndpoint{
+		SSHUser:    st.Ref.Tenant,
+		DirectIP:   st.IPAddress,
+		AccessType: pb.AccessType_ACCESS_TYPE_SSH,
+	}, nil
 }
 
 // SetAuthorizedKeys sets the container's authorized SSH keys to exactly the
@@ -161,41 +164,56 @@ func (b *Backend) Metrics(_ context.Context, ref box.BoxRef) (*box.BoxMetrics, e
 // --- pure mapping helpers (unit-tested directly) ---
 
 // specToCreateOptions maps the runtime-neutral spec onto the Manager's
-// CreateOptions. Fields the box seam does not yet model (StaticIP, podman,
-// git source, OTel endpoint) stay at their zero value and are added as the
-// server wiring needs them.
+// CreateOptions.
 func specToCreateOptions(spec box.BoxSpec) container.CreateOptions {
 	return container.CreateOptions{
-		Username:        spec.Ref.Tenant,
-		Image:           spec.Image,
-		CPU:             spec.Resources.CPU,
-		Memory:          spec.Resources.Memory,
-		Disk:            spec.Resources.Disk,
-		GPUs:            spec.GPUs,
-		SSHKeys:         spec.SSHKeys,
-		Labels:          spec.Labels,
-		OSType:          spec.OSType,
-		Monitoring:      spec.Monitoring,
-		Stack:           spec.Stack,
-		StackParameters: spec.StackParams,
-		AutoStart:       spec.AutoStart,
+		Username:               spec.Ref.Tenant,
+		Image:                  spec.Image,
+		CPU:                    spec.Resources.CPU,
+		Memory:                 spec.Resources.Memory,
+		Disk:                   spec.Resources.Disk,
+		GPUs:                   spec.GPUs,
+		SSHKeys:                spec.SSHKeys,
+		Labels:                 spec.Labels,
+		StaticIP:               spec.StaticIP,
+		EnablePodman:           spec.EnablePodman,
+		EnablePodmanPrivileged: spec.EnablePodmanPrivileged,
+		OSType:                 spec.OSType,
+		Monitoring:             spec.Monitoring,
+		OTelCollectorEndpoint:  spec.OTelCollectorEndpoint,
+		BackendID:              spec.OTelBackendID,
+		OTelBearer:             spec.OTelBearer,
+		Stack:                  spec.Stack,
+		StackParameters:        spec.StackParams,
+		GitSource:              spec.GitSource,
+		GitRef:                 spec.GitRef,
+		GitCredential:          spec.GitCredential,
+		WorkspacePath:          spec.WorkspacePath,
+		AutoStart:              spec.AutoStart,
+		OnProvisioning:         spec.OnProvisioning,
 	}
 }
 
-// infoToStatus maps incus.ContainerInfo onto the runtime-neutral BoxStatus.
-func infoToStatus(info *incus.ContainerInfo) box.BoxStatus {
-	tenant := tenantOf(info)
+// StatusFromInfo maps incus.ContainerInfo onto the runtime-neutral BoxStatus.
+func StatusFromInfo(info *incus.ContainerInfo) box.BoxStatus {
 	return box.BoxStatus{
-		Ref:   box.BoxRef{Tenant: tenant, Name: info.Name},
-		State: parseState(info.State),
-		Endpoint: box.BoxEndpoint{
-			SSHUser:    tenant,
-			DirectIP:   info.IPAddress,
-			AccessType: pb.AccessType_ACCESS_TYPE_SSH,
-		},
-		Resources: box.ResourceLimits{CPU: info.CPU, Memory: info.Memory, Disk: info.Disk},
-		Meta:      info.Labels,
-		BackendID: info.BackendID,
+		Ref:                       box.BoxRef{Tenant: tenantOf(info), Name: info.Name},
+		State:                     parseState(info.State),
+		IPAddress:                 info.IPAddress,
+		Resources:                 box.ResourceLimits{CPU: info.CPU, Memory: info.Memory, Disk: info.Disk},
+		Labels:                    info.Labels,
+		GPU:                       info.GPU,
+		GPUs:                      info.GPUs,
+		BackendID:                 info.BackendID,
+		CreatedAt:                 info.CreatedAt,
+		IsCore:                    info.Role.IsCoreRole(),
+		MonitoringEnabled:         info.MonitoringEnabled,
+		AutoSleepEnabled:          info.AutoSleepEnabled,
+		IdleThresholdMinutes:      info.IdleThresholdMinutes,
+		TTLExpiresAt:              info.TTLExpiresAt,
+		StoppedAt:                 info.StoppedAt,
+		DeleteAfterStoppedSeconds: info.DeleteAfterStoppedSeconds,
+		DeletePolicy:              info.DeletePolicy,
 	}
 }
 
