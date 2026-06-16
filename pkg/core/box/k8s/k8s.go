@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -57,12 +58,14 @@ type Config struct {
 type Backend struct {
 	cfg       Config
 	clientset kubernetes.Interface
+	dyn       dynamic.Interface // for the sshpiper Pipe CRD; nil disables gateway routing
 }
 
 var _ box.BoxBackend = (*Backend)(nil)
 
-// New constructs a K8s backend: it builds a client-go clientset (in-cluster,
-// an explicit kubeconfig, or the ambient rules) and applies config defaults.
+// New constructs a K8s backend: it builds a client-go clientset + dynamic
+// client (in-cluster, an explicit kubeconfig, or the ambient rules) and applies
+// config defaults.
 func New(cfg Config) (*Backend, error) {
 	restCfg, err := buildRestConfig(cfg.Kubeconfig)
 	if err != nil {
@@ -72,19 +75,33 @@ func New(cfg Config) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s: build clientset: %w", err)
 	}
-	return NewWithClientset(cs, cfg), nil
+	dyn, err := dynamic.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("k8s: build dynamic client: %w", err)
+	}
+	return newBackend(cs, dyn, cfg), nil
 }
 
-// NewWithClientset builds a Backend over an injected clientset (a kind cluster
-// for e2e, or a fake for unit tests). Skips rest-config discovery.
+// NewWithClientset builds a Backend over an injected clientset, with gateway
+// (Pipe) routing disabled (no dynamic client). Used by lifecycle unit tests.
 func NewWithClientset(cs kubernetes.Interface, cfg Config) *Backend {
+	return newBackend(cs, nil, cfg)
+}
+
+// NewWithClients builds a Backend over injected clientset + dynamic client
+// (fakes for unit tests, a kind cluster for e2e), exercising gateway routing.
+func NewWithClients(cs kubernetes.Interface, dyn dynamic.Interface, cfg Config) *Backend {
+	return newBackend(cs, dyn, cfg)
+}
+
+func newBackend(cs kubernetes.Interface, dyn dynamic.Interface, cfg Config) *Backend {
 	if cfg.TenantNamespacePrefix == "" {
 		cfg.TenantNamespacePrefix = "tenant-"
 	}
 	if cfg.GatewaySSHPort == 0 {
 		cfg.GatewaySSHPort = 22
 	}
-	return &Backend{cfg: cfg, clientset: cs}
+	return &Backend{cfg: cfg, clientset: cs, dyn: dyn}
 }
 
 func buildRestConfig(kubeconfig string) (*rest.Config, error) {
@@ -126,6 +143,11 @@ func (b *Backend) Create(ctx context.Context, spec box.BoxSpec) (*box.BoxStatus,
 	}
 	if _, err := b.clientset.AppsV1().StatefulSets(ns).Create(ctx, statefulSetObject(ns, spec), metav1.CreateOptions{}); ignoreExists(err) != nil {
 		return nil, fmt.Errorf("k8s: ensure statefulset: %w", err)
+	}
+	// Program the SSH gateway so username=<tenant> routes to this box (no-op
+	// when the gateway isn't configured).
+	if err := b.upsertPipe(ctx, tenant, spec.SSHKeys); err != nil {
+		return nil, fmt.Errorf("k8s: ensure gateway pipe: %w", err)
 	}
 	return b.Get(ctx, spec.Ref)
 }
@@ -178,8 +200,13 @@ func (b *Backend) List(ctx context.Context) ([]box.BoxStatus, error) {
 	return out, nil
 }
 
-// Delete removes the per-tenant namespace, cascading every box object.
+// Delete removes the per-tenant namespace (cascading every box object) and the
+// tenant's gateway Pipe, which lives in the gateway namespace and so is not
+// covered by the namespace cascade.
 func (b *Backend) Delete(ctx context.Context, ref box.BoxRef, force bool) error {
+	if err := b.deletePipe(ctx, ref.Tenant); err != nil {
+		return fmt.Errorf("k8s: delete gateway pipe: %w", err)
+	}
 	err := b.clientset.CoreV1().Namespaces().Delete(ctx, b.namespaceFor(ref.Tenant), metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -220,7 +247,12 @@ func (b *Backend) SetAuthorizedKeys(ctx context.Context, ref box.BoxRef, keys []
 	if apierrors.IsNotFound(err) {
 		_, err = b.clientset.CoreV1().Secrets(ns).Create(ctx, sec, metav1.CreateOptions{})
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// Re-program the gateway Pipe so the rotated keys take effect at the front
+	// (no-op when the gateway isn't configured).
+	return b.upsertPipe(ctx, ref.Tenant, keys)
 }
 
 // Resize patches the box container's resource limits. Unparseable (incus-native)

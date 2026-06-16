@@ -8,6 +8,15 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
 	"github.com/footprintai/containarium/pkg/core/box"
 	pb "github.com/footprintai/containarium/pkg/pb/containarium/v1"
 )
@@ -101,4 +110,129 @@ func waitForState(t *testing.T, b *Backend, ref box.BoxRef, want pb.ContainerSta
 	}
 	t.Fatalf("box did not reach %v within %s (last: %+v)", want, timeout, last)
 	return nil
+}
+
+var crdGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
+
+// TestE2E_GatewayPipe installs the sshpiper Pipe CRD into the kind cluster
+// (just the CRD, not sshpiper itself), then asserts the reconciler programs and
+// removes the Pipe against the real apiserver — validating the GVR + spec shape
+// end to end. A full data-plane e2e (deploy sshpiper, SSH through the gateway)
+// needs the real agent-box image and is a follow-up.
+func TestE2E_GatewayPipe(t *testing.T) {
+	if os.Getenv("CONTAINARIUM_K8S_E2E") == "" {
+		t.Skip("set CONTAINARIUM_K8S_E2E=1 (and KUBECONFIG) to run the kind e2e")
+	}
+	kubeconfig := os.Getenv("KUBECONFIG")
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		t.Fatalf("rest config: %v", err)
+	}
+	dyn, err := dynamic.NewForConfig(restCfg)
+	if err != nil {
+		t.Fatalf("dynamic client: %v", err)
+	}
+	cs, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		t.Fatalf("clientset: %v", err)
+	}
+	ctx := context.Background()
+
+	installPipeCRD(t, dyn)
+
+	const gwNS = "sshpiper"
+	if _, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: gwNS}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create gateway namespace: %v", err)
+	}
+
+	b, err := New(Config{
+		Kubeconfig:       kubeconfig,
+		BoxImage:         "registry.k8s.io/pause:3.9",
+		GatewayNamespace: gwNS,
+		GatewayHost:      "gateway.example.com",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ref := box.BoxRef{Tenant: "gw-e2e"}
+	t.Cleanup(func() { _ = b.Delete(context.Background(), ref, true) })
+
+	if _, err := b.Create(ctx, box.BoxSpec{
+		Ref:       ref,
+		Image:     "registry.k8s.io/pause:3.9",
+		SSHKeys:   []string{"ssh-ed25519 AAAAExampleKey test@gw-e2e"},
+		AutoStart: true,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The reconciler should have created a Pipe in the gateway namespace.
+	p, err := dyn.Resource(pipeGVR).Namespace(gwNS).Get(ctx, pipeName("gw-e2e"), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pipe: %v", err)
+	}
+	host, _, _ := unstructured.NestedString(p.Object, "spec", "to", "host")
+	if host != "box-0.boxes.tenant-gw-e2e.svc.cluster.local:22" {
+		t.Errorf("pipe to.host = %q", host)
+	}
+
+	// Delete removes the Pipe (it lives in the gateway ns, outside the cascade).
+	if err := b.Delete(ctx, ref, true); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := dyn.Resource(pipeGVR).Namespace(gwNS).Get(ctx, pipeName("gw-e2e"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("pipe still present after Delete (err=%v)", err)
+	}
+}
+
+// installPipeCRD applies a minimal sshpiper Pipe CRD (open schema via
+// x-kubernetes-preserve-unknown-fields) and waits for it to be Established.
+func installPipeCRD(t *testing.T, dyn dynamic.Interface) {
+	t.Helper()
+	ctx := context.Background()
+	crd := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "pipes.sshpiper.com"},
+		"spec": map[string]any{
+			"group": "sshpiper.com",
+			"scope": "Namespaced",
+			"names": map[string]any{
+				"plural":   "pipes",
+				"singular": "pipe",
+				"kind":     "Pipe",
+				"listKind": "PipeList",
+			},
+			"versions": []any{map[string]any{
+				"name":    "v1beta1",
+				"served":  true,
+				"storage": true,
+				"schema": map[string]any{
+					"openAPIV3Schema": map[string]any{
+						"type":                                 "object",
+						"x-kubernetes-preserve-unknown-fields": true,
+					},
+				},
+			}},
+		},
+	}}
+	if _, err := dyn.Resource(crdGVR).Create(ctx, crd, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("install Pipe CRD: %v", err)
+	}
+
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := dyn.Resource(crdGVR).Get(ctx, "pipes.sshpiper.com", metav1.GetOptions{})
+		if err == nil {
+			conds, _, _ := unstructured.NestedSlice(got.Object, "status", "conditions")
+			for _, c := range conds {
+				cm, ok := c.(map[string]any)
+				if ok && cm["type"] == "Established" && cm["status"] == "True" {
+					return
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatal("Pipe CRD not Established within 60s")
 }

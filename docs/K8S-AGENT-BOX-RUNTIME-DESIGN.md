@@ -110,9 +110,12 @@ The new piece is a thin **upstream controller** replacing the sentinel's
 
 - Watches tenant objects (CRD or labeled namespaces) + their box pods.
 - Programs the sshpiper upstream map via the maintained sshpiper **Kubernetes
-  plugin** (`PiperUpstream` CRD): `username=<tenant>` →
-  `box-0.boxes.<tenant>.svc:22`. CRD-driven removes the file-write race that
-  bit the sentinel (the `#301`/`#404` class of bug) entirely.
+  plugin** CRD — the `Pipe` resource (`sshpiper.com/v1beta1`, plural `pipes`;
+  earlier drafts of this note called it "PiperUpstream"): `spec.from[].username
+  = <tenant>` → `spec.to.host = box-0.boxes.<tenant>.svc:22`, with the box's
+  authorized keys inline as `authorized_keys_data`. The daemon manages Pipes via
+  the dynamic client (no sshpiper Go types imported). CRD-driven removes the
+  file-write race that bit the sentinel (the `#301`/`#404` class of bug).
 - Reconciles each tenant's authorized key into the per-tenant Secret.
 
 ### 3. Isolation (NetworkPolicy)
@@ -131,7 +134,7 @@ Per tenant namespace:
 | --- | --- |
 | `agent-box` over stdio, SSH-wrapped | identical — same binary, same `ForceCommand` |
 | sshpiper on sentinel :22 | sshpiper Deployment + LB Service :22 |
-| sentinel key-sync → YAML | controller → `PiperUpstream` CRD + Secret |
+| sentinel key-sync → YAML | controller → `Pipe` CRD + Secret |
 | LXC box per tenant | StatefulSet `box-0` per tenant namespace |
 | eBPF deny-by-default + egress allowlist | default-deny NetworkPolicy + egress allowlist |
 | sshd 2222 (mgmt) vs sshpiper 22 | mgmt via `kubectl`/RBAC; sshpiper owns 22 |
@@ -146,7 +149,7 @@ containarium box create --runtime=k8s --tenant=<t>
 ```
 
 templates the namespace + StatefulSet + headless Service + NetworkPolicy +
-`PiperUpstream` CRD + per-tenant key Secret. The platform MCP tool wraps the
+`Pipe` CRD + per-tenant key Secret. The platform MCP tool wraps the
 **same Go function** the CLI handler calls. The backend is selected behind a
 runtime interface; LXC stays the default.
 
@@ -163,7 +166,7 @@ fork. Two facts about the current code shape where it goes:
 2. SSH addressing + key-sync currently live **above** the incus backend, in
    the `Manager`/`jump_server` layer (host user + `authorized_keys` consumed by
    the sentinel keysync). But those are **runtime-specific**: LXC uses a host
-   jump-server account; K8s uses a per-tenant Secret + `PiperUpstream`. So
+   jump-server account; K8s uses a per-tenant Secret + `Pipe`. So
    addressing and key-sync must move **below** the seam.
 
 So the seam sits one altitude **above** `incus.Backend` (a coarse,
@@ -199,7 +202,7 @@ type BoxBackend interface {
 
     // SSH identity. Below the seam because the mechanism differs per runtime:
     // LXC writes the host jump-server authorized_keys; K8s reconciles the
-    // per-tenant Secret + PiperUpstream.
+    // per-tenant Secret + Pipe.
     SetAuthorizedKeys(ctx context.Context, ref BoxRef, keys []string) error
 
     // Mutation. Meta is the runtime-neutral replacement for raw incus config
@@ -489,7 +492,7 @@ clusters cleanly. That is a feature: the RBAC ask is small and auditable.
 | Verb scope | Resources | Boundary |
 | --- | --- | --- |
 | create/get/delete | StatefulSet, Service, Secret, NetworkPolicy | **label-selected tenant namespaces only** |
-| CRUD | `PiperUpstream` | gateway namespace only |
+| CRUD | `Pipe` | gateway namespace only |
 | create | Namespace | only if the controller owns tenant-namespace lifecycle |
 
 Shipped as a **Helm chart / operator bundle** the customer reviews and installs.
@@ -501,7 +504,7 @@ Containarium then drives the cluster through the controller's ServiceAccount.
 | --- | --- | --- |
 | **L4/TCP ingress** (LoadBalancer / NodePort / Gateway API `TCPRoute`) | SSH is TCP; K8s Ingress is HTTP-only | NodePort + external LB; `kubectl port-forward` for dev |
 | **NetworkPolicy-enforcing CNI** (Calico, Cilium, …) | default-deny isolation is a **no-op** under a CNI that ignores it | degrade to namespace-only isolation — **must flag loudly** |
-| **CRD install rights** (cluster-admin, once) for `PiperUpstream` | the sshpiper Kubernetes plugin is CRD-driven | `yaml` plugin — re-inherits the sentinel file-write race |
+| **CRD install rights** (cluster-admin, once) for `Pipe` | the sshpiper Kubernetes plugin is CRD-driven | `yaml` plugin — re-inherits the sentinel file-write race |
 | **Namespace-create rights** for the controller | namespace-per-tenant | pin to one shared namespace + label/pod-selector separation (weaker) |
 
 ### Degraded modes (named, not silent)
