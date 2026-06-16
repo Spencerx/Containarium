@@ -715,6 +715,15 @@ func (m *Manager) createUser(containerName, username string, family ostype.OSFam
 	return nil
 }
 
+// SetAuthorizedKeys sets a user's authorized_keys to exactly the given set of
+// SSH public keys. It is the exported entry point for the box.BoxBackend seam
+// (pkg/core/box/lxc); it delegates to the same addSSHKeys path the create flow
+// uses, which overwrites authorized_keys via the Incus file push API. The
+// container name follows the create-time convention (<username>-container).
+func (m *Manager) SetAuthorizedKeys(username string, sshKeys []string) error {
+	return m.addSSHKeys(username+"-container", username, sshKeys)
+}
+
 // addSSHKeys adds SSH public keys to a user's authorized_keys
 // SECURITY: Uses Incus file push API to avoid shell injection vulnerabilities
 func (m *Manager) addSSHKeys(containerName, username string, sshKeys []string) error {
