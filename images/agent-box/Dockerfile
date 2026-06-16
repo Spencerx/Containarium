@@ -38,7 +38,10 @@ RUN apt-get update \
     && chown -R agent:agent /home/agent /etc/agent-box
 
 COPY --from=build /out/agent-box /usr/local/bin/agent-box
-COPY --chmod=0755 images/agent-box/entrypoint.sh /usr/local/bin/agent-box-entrypoint.sh
+# Plain COPY + chmod (not COPY --chmod) so the image also builds with the
+# legacy builder, not only BuildKit.
+COPY images/agent-box/entrypoint.sh /usr/local/bin/agent-box-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/agent-box-entrypoint.sh
 
 USER agent
 ENV HOME=/home/agent

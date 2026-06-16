@@ -47,6 +47,17 @@ func (b *Backend) pipeObject(tenant string, keys []string) *unstructured.Unstruc
 		buf = append(buf, []byte(k)...)
 		buf = append(buf, '\n')
 	}
+	to := map[string]any{
+		"host":     b.upstreamHost(tenant),
+		"username": boxSSHUser, // fixed box login user; tenant identity is enforced by from.username
+		// ignore_hostkey for now (host-key pinning is a follow-up).
+		"ignore_hostkey": true,
+	}
+	// The upstream credential: sshpiper authenticates to the box with this key
+	// (its public half is authorized on the box). Set only when configured.
+	if b.cfg.GatewayUpstreamKeySecret != "" {
+		to["private_key_secret"] = map[string]any{"name": b.cfg.GatewayUpstreamKeySecret}
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "sshpiper.com/v1beta1",
 		"kind":       "Pipe",
@@ -60,14 +71,7 @@ func (b *Backend) pipeObject(tenant string, keys []string) *unstructured.Unstruc
 				"username":             tenant,
 				"authorized_keys_data": base64.StdEncoding.EncodeToString(buf),
 			}},
-			"to": map[string]any{
-				"host":     b.upstreamHost(tenant),
-				"username": boxSSHUser, // fixed box login user; tenant identity is enforced by from.username
-				// ignore_hostkey for now (host-key pinning is a follow-up). The
-				// upstream credential (spec.to.private_key_secret authorized on
-				// the box) is part of the end-to-end SSH data-plane follow-up.
-				"ignore_hostkey": true,
-			},
+			"to": to,
 		},
 	}}
 }

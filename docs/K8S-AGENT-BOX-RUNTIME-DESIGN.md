@@ -127,6 +127,15 @@ The new piece is a thin **upstream controller** replacing the sentinel's
   file-write race that bit the sentinel (the `#301`/`#404` class of bug).
 - Reconciles each tenant's authorized key into the per-tenant Secret.
 
+**Credential chain (two keypairs).** sshpiper terminates the client connection
+and opens a *new* one to the box, so two hops authenticate independently:
+client→sshpiper against the Pipe's `spec.from.authorized_keys_data` (the agent's
+key), and sshpiper→box against `spec.to.private_key_secret` (sshpiper's
+**upstream** key, whose public half the daemon authorizes on the box — the box
+never authorizes the agent's key in gateway mode). Deployable manifests +
+runbook live in [`deploy/k8s/sshpiper/`](../deploy/k8s/sshpiper/); the daemon is
+wired via `CONTAINARIUM_K8S_GATEWAY_UPSTREAM_{PUBLIC_KEY,KEY_SECRET}`.
+
 ### 3. Isolation (NetworkPolicy)
 
 Per tenant namespace:

@@ -34,6 +34,10 @@ const (
 	metaAnnotationPrefix = "containarium.dev/meta."
 
 	authorizedKeysKey = "authorized_keys"
+	// authorizedKeysMount is where the box image (dropbear entrypoint) reads
+	// authorized_keys; the box's Secret is mounted here.
+	authorizedKeysMount  = "/etc/agent-box"
+	authorizedKeysVolume = "authorized-keys"
 )
 
 func int32p(i int32) *int32 { return &i }
@@ -142,6 +146,13 @@ func statefulSetObject(ns string, spec box.BoxSpec) *appsv1.StatefulSet {
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
+		// Mount the box's authorized_keys Secret where the image reads it.
+		// Without this the box has no keys and rejects every login.
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      authorizedKeysVolume,
+			MountPath: authorizedKeysMount,
+			ReadOnly:  true,
+		}},
 	}
 	if res := resourceRequirements(spec.Resources); res != nil {
 		container.Resources = *res
@@ -163,6 +174,12 @@ func statefulSetObject(ns string, spec box.BoxSpec) *appsv1.StatefulSet {
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{container},
+					Volumes: []corev1.Volume{{
+						Name: authorizedKeysVolume,
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{SecretName: secretName(spec.Ref.Tenant)},
+						},
+					}},
 				},
 			},
 		},

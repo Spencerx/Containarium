@@ -47,6 +47,18 @@ type Config struct {
 
 	// StorageClass is reserved for the box PVC (not wired in this slice).
 	StorageClass string
+
+	// Gateway upstream credential (sshpiper → box hop). sshpiper terminates the
+	// client connection and opens a NEW connection to the box as user `agent`,
+	// authenticating with its own key. So:
+	//   - GatewayUpstreamPublicKey is authorized ON each box (sshpiper logs in).
+	//   - GatewayUpstreamKeySecret is the Secret in GatewayNamespace holding the
+	//     matching private key, referenced by each Pipe's spec.to.private_key_secret.
+	// The agent's own keys (spec.SSHKeys) authenticate client→gateway via the
+	// Pipe's spec.from.authorized_keys_data. When these are unset, boxes
+	// authorize the agent keys directly (no-gateway / direct-SSH mode).
+	GatewayUpstreamPublicKey string
+	GatewayUpstreamKeySecret string
 }
 
 // Backend implements box.BoxBackend on Kubernetes.
@@ -135,7 +147,7 @@ func (b *Backend) Create(ctx context.Context, spec box.BoxSpec) (*box.BoxStatus,
 	if _, err := b.clientset.CoreV1().Namespaces().Create(ctx, namespaceObject(ns, tenant), metav1.CreateOptions{}); ignoreExists(err) != nil {
 		return nil, fmt.Errorf("k8s: ensure namespace: %w", err)
 	}
-	if _, err := b.clientset.CoreV1().Secrets(ns).Create(ctx, secretObject(ns, tenant, spec.SSHKeys), metav1.CreateOptions{}); ignoreExists(err) != nil {
+	if _, err := b.clientset.CoreV1().Secrets(ns).Create(ctx, secretObject(ns, tenant, b.boxAuthorizedKeys(spec.SSHKeys)), metav1.CreateOptions{}); ignoreExists(err) != nil {
 		return nil, fmt.Errorf("k8s: ensure secret: %w", err)
 	}
 	if _, err := b.clientset.CoreV1().Services(ns).Create(ctx, serviceObject(ns, tenant), metav1.CreateOptions{}); ignoreExists(err) != nil {
@@ -242,20 +254,37 @@ func (b *Backend) Resolve(ctx context.Context, ref box.BoxRef) (*box.BoxEndpoint
 	}, nil
 }
 
-// SetAuthorizedKeys upserts the box's authorized_keys Secret.
+// SetAuthorizedKeys rotates the keys that authenticate the agent.
+//
+// In the gateway path (sshpiper authenticates to the box with its own upstream
+// key) the box's authorized_keys stays the gateway key — the agent's keys live
+// in the Pipe's spec.from, so we only re-program the Pipe. In the direct path
+// the agent's keys authorize the box itself, so we update the box Secret too.
 func (b *Backend) SetAuthorizedKeys(ctx context.Context, ref box.BoxRef, keys []string) error {
 	ns := b.namespaceFor(ref.Tenant)
-	sec := secretObject(ns, ref.Tenant, keys)
-	_, err := b.clientset.CoreV1().Secrets(ns).Update(ctx, sec, metav1.UpdateOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = b.clientset.CoreV1().Secrets(ns).Create(ctx, sec, metav1.CreateOptions{})
+	if !(b.gatewayEnabled() && b.cfg.GatewayUpstreamPublicKey != "") {
+		sec := secretObject(ns, ref.Tenant, keys)
+		_, err := b.clientset.CoreV1().Secrets(ns).Update(ctx, sec, metav1.UpdateOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = b.clientset.CoreV1().Secrets(ns).Create(ctx, sec, metav1.CreateOptions{})
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	// Re-program the gateway Pipe so the rotated keys take effect at the front
-	// (no-op when the gateway isn't configured).
+	// Re-program the gateway Pipe so the rotated client keys take effect at the
+	// front (no-op when the gateway isn't configured).
 	return b.upsertPipe(ctx, ref.Tenant, keys)
+}
+
+// boxAuthorizedKeys returns the keys the box itself should authorize: the
+// gateway's upstream key when routing through sshpiper, else the agent's keys
+// (direct access).
+func (b *Backend) boxAuthorizedKeys(agentKeys []string) []string {
+	if b.gatewayEnabled() && b.cfg.GatewayUpstreamPublicKey != "" {
+		return []string{b.cfg.GatewayUpstreamPublicKey}
+	}
+	return agentKeys
 }
 
 // Resize patches the box container's resource limits. Unparseable (incus-native)

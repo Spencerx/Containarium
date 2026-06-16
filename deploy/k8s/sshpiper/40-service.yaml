@@ -1,0 +1,19 @@
+# Public SSH entrypoint. Agents connect here on :22; the Service forwards to
+# sshpiper's :2222. On bare-metal clusters without a LoadBalancer provider, swap
+# type to NodePort (or front it with your own LB) — see the runbook.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sshpiper
+  namespace: agent-gateway
+  labels:
+    app.kubernetes.io/name: sshpiper
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: sshpiper
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 2222
+      protocol: TCP

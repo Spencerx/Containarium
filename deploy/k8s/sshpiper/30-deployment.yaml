@@ -1,0 +1,46 @@
+# sshpiperd with the kubernetes plugin. It watches Pipes in its own namespace
+# and reverse-proxies SSH: client → sshpiper (authenticated by the Pipe's
+# spec.from authorized_keys_data) → box pod (authenticated by the upstream key
+# in spec.to.private_key_secret). sshpiperd listens on :2222.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sshpiper
+  namespace: agent-gateway
+  labels:
+    app.kubernetes.io/name: sshpiper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sshpiper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sshpiper
+    spec:
+      serviceAccountName: sshpiper
+      containers:
+        - name: sshpiperd
+          # Pin to a release tag in production rather than :latest.
+          image: farmer1992/sshpiperd:latest
+          env:
+            # Activates the kubernetes plugin (watches Pipes in this namespace).
+            - name: PLUGIN
+              value: "kubernetes"
+            # Host key sshpiper presents to CLIENTS (see the runbook for how the
+            # sshpiper-server-key Secret is generated).
+            - name: SSHPIPERD_SERVER_KEY
+              value: /etc/sshpiper/server_key
+          ports:
+            - name: ssh
+              containerPort: 2222
+          volumeMounts:
+            - name: server-key
+              mountPath: /etc/sshpiper
+              readOnly: true
+      volumes:
+        - name: server-key
+          secret:
+            secretName: sshpiper-server-key
+            defaultMode: 0400

@@ -34,6 +34,10 @@ func newBoxBackend(_ *container.Manager) (box.BoxBackend, error) {
 		TenantNamespacePrefix: k8sEnvOr("CONTAINARIUM_K8S_TENANT_NS_PREFIX", "tenant-"),
 		BoxImage:              os.Getenv("CONTAINARIUM_K8S_BOX_IMAGE"),
 		StorageClass:          os.Getenv("CONTAINARIUM_K8S_STORAGE_CLASS"),
+		// sshpiper upstream credential: the public key boxes authorize, and the
+		// Secret (in the gateway namespace) holding the matching private key.
+		GatewayUpstreamPublicKey: os.Getenv("CONTAINARIUM_K8S_GATEWAY_UPSTREAM_PUBLIC_KEY"),
+		GatewayUpstreamKeySecret: os.Getenv("CONTAINARIUM_K8S_GATEWAY_UPSTREAM_KEY_SECRET"),
 	})
 }
 
