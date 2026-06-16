@@ -150,6 +150,161 @@ templates the namespace + StatefulSet + headless Service + NetworkPolicy +
 **same Go function** the CLI handler calls. The backend is selected behind a
 runtime interface; LXC stays the default.
 
+## The box-backend Go interface (sketch)
+
+The seam is the thing that makes `--runtime=k8s` a backend swap rather than a
+fork. Two facts about the current code shape where it goes:
+
+1. There is already a `pkg/core/incus.Backend` interface, but it is a
+   **leaky, LXC-shaped seam** — `Exec`, `WriteFile`, `ResolveGPUInputToPCI`,
+   `GetRawInstance` (returns incus config maps), per-key `SetConfig` over the
+   `user.containarium.*` namespace. Kubernetes cannot implement that cleanly,
+   and shouldn't have to.
+2. SSH addressing + key-sync currently live **above** the incus backend, in
+   the `Manager`/`jump_server` layer (host user + `authorized_keys` consumed by
+   the sentinel keysync). But those are **runtime-specific**: LXC uses a host
+   jump-server account; K8s uses a per-tenant Secret + `PiperUpstream`. So
+   addressing and key-sync must move **below** the seam.
+
+So the seam sits one altitude **above** `incus.Backend` (a coarse,
+runtime-neutral lifecycle contract) and **absorbs** SSH identity + addressing.
+The LXC implementation keeps using `incus.Backend` internally; the K8s
+implementation talks to the kube-apiserver. `incus.Backend` is unchanged.
+
+### Core interface
+
+```go
+// BoxBackend is the runtime-neutral seam. LXC/incus and Kubernetes both
+// implement it. Coarse-grained on purpose — no Exec/WriteFile/config-key
+// leakage. ctx is threaded (the K8s client needs it; LXC ignores it).
+type BoxBackend interface {
+    Kind() BackendKind // "lxc" | "k8s"
+
+    // Lifecycle. Create is declarative: given a runtime-neutral spec, make
+    // the box exist and return a handle. Idempotent on re-create (the #669
+    // lesson from the agent-skills bring-up).
+    Create(ctx context.Context, spec BoxSpec) (*BoxHandle, error)
+    Start(ctx context.Context, ref BoxRef) error
+    Stop(ctx context.Context, ref BoxRef, force bool) error
+    Delete(ctx context.Context, ref BoxRef, force bool) error
+
+    // Introspection.
+    Get(ctx context.Context, ref BoxRef) (*BoxStatus, error)
+    List(ctx context.Context) ([]BoxStatus, error)
+
+    // Addressing — how an agent reaches this box over SSH. THE method that
+    // makes the K8s value real. LXC returns sentinel-host|IP; K8s returns
+    // the gateway LB host + the username sshpiper routes by.
+    Resolve(ctx context.Context, ref BoxRef) (*BoxEndpoint, error)
+
+    // SSH identity. Below the seam because the mechanism differs per runtime:
+    // LXC writes the host jump-server authorized_keys; K8s reconciles the
+    // per-tenant Secret + PiperUpstream.
+    SetAuthorizedKeys(ctx context.Context, ref BoxRef, keys []string) error
+
+    // Mutation. Meta is the runtime-neutral replacement for raw incus config
+    // keys: TTL, delete-policy, labels, monitoring-enabled. LXC maps it to
+    // user.containarium.*; K8s maps it to pod annotations/labels.
+    Resize(ctx context.Context, ref BoxRef, r ResourceLimits) error
+    SetMeta(ctx context.Context, ref BoxRef, meta map[string]string) error
+    GetMeta(ctx context.Context, ref BoxRef) (map[string]string, error)
+}
+```
+
+### Runtime-neutral types
+
+```go
+type BoxRef struct {
+    Tenant string // routing key / SSH username
+    Name   string // box name (LXC: "<tenant>-container"; K8s: StatefulSet "box-0")
+}
+
+type BoxSpec struct {
+    Ref        BoxRef
+    Image      string
+    OSType     pb.OSType
+    Resources  ResourceLimits   // cpu / memory / disk
+    GPUs       []string         // empty on K8s v1 (deferred)
+    SSHKeys    []string
+    Labels     map[string]string
+    Monitoring bool
+    // Provisioning intent — NOT an Exec script. The backend decides how to
+    // realize it: LXC runs incus exec; K8s bakes it into the image / an
+    // init container. Keeps stack-install runtime-specific, below the seam.
+    Stack       string
+    StackParams map[string]string
+}
+
+type BoxHandle struct {
+    Ref      BoxRef
+    Endpoint BoxEndpoint
+    State    pb.ContainerState
+}
+
+type BoxEndpoint struct {
+    // The server turns this into Container.ssh_host + the ssh command.
+    SSHHost    string // gateway/sentinel public host ("" = direct IP mode)
+    SSHPort    int    // 22 via sshpiper
+    SSHUser    string // routing key for sshpiper (the tenant)
+    DirectIP   string // fallback when no gateway is in front
+    AccessType pb.AccessType
+}
+
+type BoxStatus struct {
+    Ref       BoxRef
+    State     pb.ContainerState
+    Endpoint  BoxEndpoint
+    Resources ResourceLimits
+    Meta      map[string]string // TTL, delete-policy, labels, monitoring…
+    BackendID string
+}
+```
+
+### Capability interfaces (not every backend supports everything)
+
+Optional surfaces stay off the core interface and are discovered by type
+assertion, so a backend only implements what it can honor:
+
+```go
+// In-box exec/file seed. LXC implements it (incus exec / file push). The K8s
+// agent-box uses ForceCommand, so v1 may NOT implement this — provisioning is
+// image-baked. Callers must handle the unsupported case.
+type ExecCapable interface {
+    Exec(ctx context.Context, ref BoxRef, cmd []string) (stdout, stderr string, err error)
+    WriteFile(ctx context.Context, ref BoxRef, path string, content []byte, mode string) error
+}
+
+type MetricsCapable interface {
+    Metrics(ctx context.Context, ref BoxRef) (*BoxMetrics, error)
+}
+
+type GPUCapable interface { // LXC v1; K8s deferred
+    ResolveGPU(ctx context.Context, input string) (deviceID string, err error)
+}
+```
+
+### What stays ABOVE the seam (runtime-neutral, unchanged)
+
+These keep living in `ContainerServer` / a slimmed `Manager` and call the
+backend — they are not duplicated per runtime:
+
+- **Auth** (JWT scope checks), **peer routing** (`PeerPool`, `backend_id`
+  fan-out), **async create tracking** (`PendingCreation`), **event emission**.
+- **Cascade cleanup orchestration** (routes, TLS subjects) — though the
+  *teardown of SSH identity* now flows through `Delete` + `SetAuthorizedKeys`.
+- **The proto ↔ domain mapping** (`toProtoContainer` reads `BoxStatus`, not
+  incus config maps directly).
+
+### Wiring
+
+`ContainerServer` holds a `BoxBackend` instead of a concrete `Manager`. The
+runtime is chosen at daemon start (flag/env) and per-request via
+`--runtime` → `BoxSpec`; `incus.Backend` continues to back the LXC
+implementation untouched. The first refactor PR introduces `BoxBackend` +
+the LXC implementation as a pure wrapper over today's `Manager` (no behavior
+change, golden test parity), and only then lands the K8s implementation
+against the same contract.
+
 ## Integrating with an existing cluster (BYO)
 
 The primary target is **not** a dedicated cluster — it is a cluster the
@@ -212,9 +367,10 @@ fallback** — and surface which mode is active in box status.
    race) vs. the `yaml` plugin run today. Leaning CRD.
 2. **Host-key trust** — pre-distribute the gateway host key (ConfigMap →
    agent known_hosts) so first-connect is not a TOFU prompt.
-3. **Runtime interface shape** — what the box-backend Go interface looks like
-   so LXC and K8s implement the same `Create/Delete/Resolve` contract the
-   box-create path consumes.
+3. **Runtime interface shape** — sketched above ("The box-backend Go
+   interface"). Open sub-questions: does K8s v1 implement `ExecCapable` at all
+   (vs. fully image-baked provisioning), and does `SetMeta` need a typed struct
+   rather than `map[string]string` per the repo's strong-typing convention.
 
 ## Deferred (not in v1)
 
