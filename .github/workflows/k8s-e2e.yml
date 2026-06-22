@@ -36,7 +36,7 @@ jobs:
     name: build + unit (-tags k8s)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25.11'
@@ -49,7 +49,7 @@ jobs:
     name: kind e2e
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25.11'
